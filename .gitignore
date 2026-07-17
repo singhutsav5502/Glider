@@ -1,0 +1,6 @@
+glider.exe
+glider
+coverage.out
+*.exe
+.env
+*.test
