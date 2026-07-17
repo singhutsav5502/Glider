@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glider</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">Glider</div>
+      <nav class="tabs" aria-label="Primary">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="vram">VRAM & Models</button>
+        <button class="tab" data-tab="rules">Rules Engine</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+      <div class="status" id="status">Status: OK</div>
+    </header>
+
+    <main>
+      <section id="panel-overview" class="panel active">
+        <div class="metrics">
+          <div class="metric"><span class="label">REQUESTS</span><span class="value" id="m-requests">0</span></div>
+          <div class="metric"><span class="label">LOCAL / CLOUD</span><span class="value" id="m-split">—</span></div>
+          <div class="metric"><span class="label">SAVED</span><span class="value" id="m-saved">$0.00</span></div>
+          <div class="metric"><span class="label">LATENCY</span><span class="value" id="m-latency">—</span></div>
+        </div>
+        <div class="log-wrap">
+          <div class="log-head">
+            <span>TIME</span><span>ROUTE</span><span>TARGET</span><span>REASON</span><span>LATENCY</span><span>TOKENS</span>
+          </div>
+          <div id="request-log" class="log"></div>
+        </div>
+      </section>
+
+      <section id="panel-vram" class="panel">
+        <div id="gpu-gauges" class="gauges"></div>
+        <table class="models" id="models-table">
+          <thead>
+            <tr><th>MODEL</th><th>BACKEND</th><th>VRAM SIZE</th><th>STATE</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="panel-rules" class="panel">
+        <ol id="rules-list" class="rules"></ol>
+        <label class="editor-label" for="star-editor">Starlark</label>
+        <textarea id="star-editor" class="editor" spellcheck="false" placeholder="def evaluate(request):\n    return {&quot;matched&quot;: False}"></textarea>
+      </section>
+
+      <section id="panel-settings" class="panel">
+        <form id="settings-form" class="settings">
+          <label>Max local context tokens
+            <input type="number" id="cfg-tokens" min="0" />
+          </label>
+          <label>Idle unload timeout
+            <input type="text" id="cfg-idle" />
+          </label>
+          <button type="submit">Save</button>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
