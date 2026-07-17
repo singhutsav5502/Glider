@@ -1,6 +1,6 @@
-glider.exe
-glider
-coverage.out
+/glider.exe
+/glider
+/coverage.out
 *.exe
 .env
 *.test
