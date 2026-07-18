@@ -416,3 +416,14 @@ func TestEvaluateStopUsesPersistedCounters(t *testing.T) {
 	}
 }
 
+
+func TestEvaluateStopMaxLatency(t *testing.T) {
+	mgr := &Manager{}
+	st := &LoopState{
+		Spec: LoopSpec{Stop: StopConditions{MaxLatencyMS: 100}},
+	}
+	reason := mgr.evaluateStop(st, IterationOutcome{Success: true, LatencyMS: 500}, "ok")
+	if reason != "max_latency" {
+		t.Fatalf("reason=%q want max_latency", reason)
+	}
+}
