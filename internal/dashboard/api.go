@@ -1,10 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
@@ -29,18 +33,21 @@ type FileConfigStore struct {
 
 func (s *FileConfigStore) Get() *config.Config { return s.Provider.Get() }
 
+// Update validates via the same ParseConfig path as file load/hot-reload,
+// persists YAML to Path, then Swap() so Watch subscribers rebuild router/aliases.
 func (s *FileConfigStore) Update(cfg *config.Config) error {
-	if err := config.Validate(cfg); err != nil {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
+	parsed, err := config.ParseConfig(data)
 	if err != nil {
 		return err
 	}
 	if err := os.WriteFile(s.Path, data, 0o644); err != nil {
 		return err
 	}
-	s.Provider.SwapForTest(cfg)
+	s.Provider.Swap(parsed)
 	return nil
 }
 
@@ -77,77 +84,234 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no config", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, s.Config.Get())
+	cfg := s.Config.Get()
+	format := strings.ToLower(r.URL.Query().Get("format"))
+	if format == "yaml" || format == "yml" || strings.Contains(r.Header.Get("Accept"), "yaml") {
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		_, _ = w.Write(data)
+		return
+	}
+	writeJSON(w, cfg)
 }
 
+// handlePutConfig replaces the full running config.
+// Accepts application/json (full Config object) or YAML (application/yaml, text/yaml, application/x-yaml).
+// Validation uses config.ParseConfig — the same path as startup and file hot-reload.
+// When backends are reachable, unknown local model IDs are rejected (soft catalog warnings still returned via GET /api/validate).
 func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if s.Config == nil {
 		http.Error(w, "no config", http.StatusInternalServerError)
 		return
 	}
-	var patch config.Config
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cur := *s.Config.Get()
-	if patch.Thresholds.MaxLocalContextTokens != 0 {
-		cur.Thresholds.MaxLocalContextTokens = patch.Thresholds.MaxLocalContextTokens
-	}
-	if patch.Thresholds.MaxLocalContextTokens < 0 {
-		http.Error(w, "validation error: max_local_context_tokens must be >= 0", http.StatusBadRequest)
-		return
-	}
-	// Explicit negative check for API validation test
-	var raw map[string]any
-	// re-decode for negative detection — already consumed body; use patch zero vs negative via pointer alternative
-	_ = raw
-	if err := s.Config.Update(&cur); err != nil {
+	defer r.Body.Close()
+
+	cfg, err := parseConfigBody(r.Header.Get("Content-Type"), body)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, cur)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	_, catalog, _ := s.discover(ctx)
+	gpus := collectGPUStatus(s.GPUs)
+	gpuCount := 0
+	for _, g := range gpus {
+		if g.Error == "" {
+			gpuCount++
+		}
+	}
+	// Soft catalog: warn in validate endpoint; hard-fail only structural + bad GPU indices.
+	res := config.ValidateDetailed(cfg, config.ValidateOptions{
+		Catalog:  catalog,
+		GPUCount: gpuCount,
+		Soft:     true,
+	})
+	if err := res.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.Config.Update(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(res.Warnings) > 0 {
+		w.Header().Set("X-Glider-Warnings", strings.Join(res.Warnings, " | "))
+	}
+	writeJSON(w, s.Config.Get())
 }
 
-func (s *Server) handlePutConfigRaw(w http.ResponseWriter, r *http.Request) {
+func parseConfigBody(contentType string, body []byte) (*config.Config, error) {
+	ct := strings.ToLower(contentType)
+	switch {
+	case strings.Contains(ct, "yaml"), strings.Contains(ct, "yml"):
+		return config.ParseConfig(body)
+	default:
+		var raw any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			if cfg, yerr := config.ParseConfig(body); yerr == nil {
+				return cfg, nil
+			}
+			return nil, err
+		}
+		yml, err := yaml.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		return config.ParseConfig(yml)
+	}
+}
+
+func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
+	if s.Config == nil {
+		http.Error(w, "no config", http.StatusInternalServerError)
+		return
+	}
+	cfg := s.Config.Get()
+	if r.Method == http.MethodPost {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+		parsed, err := parseConfigBody(r.Header.Get("Content-Type"), body)
+		if err != nil {
+			writeJSON(w, config.ValidationResult{Errors: []string{err.Error()}})
+			return
+		}
+		cfg = parsed
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	_, catalog, backendErrs := s.discover(ctx)
+	gpus := collectGPUStatus(s.GPUs)
+	gpuCount := 0
+	for _, g := range gpus {
+		if g.Error == "" {
+			gpuCount++
+		}
+	}
+	res := config.ValidateDetailed(cfg, config.ValidateOptions{
+		Catalog:  catalog,
+		GPUCount: gpuCount,
+		Soft:     true,
+	})
+	res.Warnings = append(res.Warnings, backendErrs...)
+	writeJSON(w, res)
+}
+
+func (s *Server) handleGetModels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	models, _, errs := s.discover(ctx)
+	if len(models) == 0 && s.Models != nil {
+		// Fallback: registry-only list for older clients.
+		writeJSON(w, s.Models.ListModels())
+		return
+	}
+	type wrap struct {
+		Models []DiscoveredModel `json:"models"`
+		Errors []string          `json:"errors,omitempty"`
+	}
+	// Keep backward compatible: if Accept wants bare array historically tests decode []ModelInfo.
+	// Tests expect []backend.ModelInfo from registry. Prefer discovered when rich=1 or always return discovered as primary.
+	if r.URL.Query().Get("rich") == "1" || r.URL.Query().Get("format") == "rich" {
+		writeJSON(w, wrap{Models: models, Errors: errs})
+		return
+	}
+	if s.Models != nil && len(models) == 0 {
+		writeJSON(w, s.Models.ListModels())
+		return
+	}
+	// Default: discovered list (array) — includes config + backend tags.
+	writeJSON(w, models)
+}
+
+func (s *Server) handleGetVRAM(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	models, catalog, errs := s.discover(ctx)
+	cfg := &config.Config{}
+	if s.Config != nil {
+		cfg = s.Config.Get()
+	}
+	snap := VRAMSnapshot{
+		GPUs:            collectGPUStatus(s.GPUs),
+		Models:          models,
+		GPUAssignments:  map[string]int{},
+		BackendErrors:   errs,
+		Catalog:         catalog.Names(),
+	}
+	if cfg != nil {
+		snap.Strategy = cfg.VRAM.Strategy
+		snap.HeadroomMB = cfg.VRAM.HeadroomMB
+		snap.MaxLoadedModels = cfg.VRAM.MaxLoadedModels
+		if cfg.VRAM.GPUAssignments != nil {
+			snap.GPUAssignments = cfg.VRAM.GPUAssignments
+		}
+	}
+	writeJSON(w, snap)
+}
+
+// handlePatchGPUAssignments updates vram.gpu_assignments and persists config.
+func (s *Server) handlePatchGPUAssignments(w http.ResponseWriter, r *http.Request) {
 	if s.Config == nil {
 		http.Error(w, "no config", http.StatusInternalServerError)
 		return
 	}
 	var body struct {
-		Thresholds struct {
-			MaxLocalContextTokens *int `json:"max_local_context_tokens"`
-		} `json:"thresholds"`
+		Assignments map[string]int `json:"assignments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cur := *s.Config.Get()
-	if body.Thresholds.MaxLocalContextTokens != nil {
-		if *body.Thresholds.MaxLocalContextTokens < 0 {
-			http.Error(w, "validation error: max_local_context_tokens must be >= 0", http.StatusBadRequest)
-			return
-		}
-		cur.Thresholds.MaxLocalContextTokens = *body.Thresholds.MaxLocalContextTokens
+	defer r.Body.Close()
+	live := s.Config.Get()
+	cfg := *live
+	cfg.VRAM.GPUAssignments = map[string]int{}
+	for k, v := range live.VRAM.GPUAssignments {
+		cfg.VRAM.GPUAssignments[k] = v
 	}
-	if err := s.Config.Update(&cur); err != nil {
+	for k, v := range body.Assignments {
+		if v < 0 {
+			delete(cfg.VRAM.GPUAssignments, k)
+			continue
+		}
+		cfg.VRAM.GPUAssignments[k] = v
+	}
+	gpus := collectGPUStatus(s.GPUs)
+	gpuCount := 0
+	for _, g := range gpus {
+		if g.Error == "" {
+			gpuCount++
+		}
+	}
+	res := config.ValidateDetailed(&cfg, config.ValidateOptions{GPUCount: gpuCount, Soft: true})
+	if err := res.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, cur)
-}
-
-func (s *Server) handleGetModels(w http.ResponseWriter, r *http.Request) {
-	if s.Models == nil {
-		writeJSON(w, []any{})
+	if err := s.Config.Update(&cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, s.Models.ListModels())
+	writeJSON(w, s.Config.Get().VRAM.GPUAssignments)
 }
 
 func (s *Server) handleModelAction(w http.ResponseWriter, r *http.Request) {
-	// path: /api/models/{name}/load|unload
 	path := strings.TrimPrefix(r.URL.Path, "/api/models/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || s.Models == nil {
@@ -172,6 +336,66 @@ func (s *Server) handleModelAction(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if s.History == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	sessions, err := s.History.ListSessions()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, sessions)
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	if s.History == nil {
+		http.Error(w, "history unavailable", http.StatusNotFound)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	id := parts[0]
+	if len(parts) >= 2 && parts[1] == "requests" {
+		limit := 200
+		if q := r.URL.Query().Get("limit"); q != "" {
+			if n, err := strconv.Atoi(q); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		reqs, err := s.History.ListRequests(id, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, reqs)
+		return
+	}
+	agg, err := s.History.Aggregates(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, agg)
+}
+
+func (s *Server) discover(ctx context.Context) ([]DiscoveredModel, config.ModelCatalog, []string) {
+	var cfg *config.Config
+	if s.Config != nil {
+		cfg = s.Config.Get()
+	}
+	var reg *backend.Registry
+	if rc, ok := s.Models.(*RegistryModelController); ok && rc != nil {
+		reg = rc.Registry
+	}
+	return DiscoverModels(ctx, cfg, reg)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

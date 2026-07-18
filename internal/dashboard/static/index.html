@@ -17,53 +17,202 @@
         <button class="tab active" data-tab="overview">Overview</button>
         <button class="tab" data-tab="vram">VRAM & Models</button>
         <button class="tab" data-tab="rules">Rules Engine</button>
-        <button class="tab" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="settings">Config</button>
       </nav>
       <div class="status" id="status">Status: OK</div>
     </header>
 
     <main>
       <section id="panel-overview" class="panel active">
+        <div class="session-bar">
+          <label class="session-pick" title="A session is one Glider process run. Live WebSocket events append to the current session; pick a past run to browse stored logs and aggregates.">
+            Session
+            <select id="session-select"></select>
+          </label>
+          <button type="button" id="session-refresh" class="linkish">Refresh</button>
+          <span id="session-meta" class="session-meta"></span>
+        </div>
         <div class="metrics">
           <div class="metric"><span class="label">REQUESTS</span><span class="value" id="m-requests">0</span></div>
           <div class="metric"><span class="label">LOCAL / CLOUD</span><span class="value" id="m-split">—</span></div>
-          <div class="metric"><span class="label">SAVED</span><span class="value" id="m-saved">$0.00</span></div>
-          <div class="metric"><span class="label">LATENCY</span><span class="value" id="m-latency">—</span></div>
+          <div class="metric"><span class="label">TOKENS</span><span class="value" id="m-tokens">0</span></div>
+          <div class="metric"><span class="label">AVG LATENCY</span><span class="value" id="m-latency">—</span></div>
         </div>
         <div class="log-wrap">
           <div class="log-head">
-            <span>TIME</span><span>ROUTE</span><span>TARGET</span><span>REASON</span><span>LATENCY</span><span>TOKENS</span>
+            <span>TIME</span><span>MODE</span><span>ACTION</span><span>HOST / MODEL</span><span>RULE</span><span>LATENCY</span><span>TOKENS</span>
           </div>
           <div id="request-log" class="log"></div>
         </div>
       </section>
 
       <section id="panel-vram" class="panel">
+        <p class="hint">Models from config plus live discovery (Ollama <code>/api/tags</code>, vLLM <code>/v1/models</code>). GPU memory from nvidia-smi when available. Assign a GPU index per model; Save writes <code>vram.gpu_assignments</code>.</p>
         <div id="gpu-gauges" class="gauges"></div>
+        <p id="vram-errors" class="cfg-error" hidden></p>
+        <div class="vram-actions">
+          <button type="button" id="vram-refresh">Refresh</button>
+          <button type="button" id="vram-save-gpus">Save GPU assignments</button>
+        </div>
         <table class="models" id="models-table">
           <thead>
-            <tr><th>MODEL</th><th>BACKEND</th><th>VRAM SIZE</th><th>STATE</th><th></th></tr>
+            <tr>
+              <th>MODEL</th><th>BACKEND</th><th>SOURCE</th><th>VRAM</th><th>STATE</th><th>GPU</th><th></th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>
       </section>
 
       <section id="panel-rules" class="panel">
-        <ol id="rules-list" class="rules"></ol>
-        <label class="editor-label" for="star-editor">Starlark</label>
-        <textarea id="star-editor" class="editor" spellcheck="false" placeholder="def evaluate(request):\n    return {&quot;matched&quot;: False}"></textarea>
+        <div class="rules-toolbar">
+          <p class="hint">Create and edit routing rules. Higher priority wins. Changes save into config and hot-reload the router.</p>
+          <button type="button" id="rule-add">Add rule</button>
+        </div>
+        <p id="rules-error" class="cfg-error" hidden></p>
+        <p id="rules-ok" class="cfg-ok" hidden>Rules saved.</p>
+        <div id="rules-editor" class="rules-editor"></div>
+        <div class="cfg-actions">
+          <button type="button" id="rules-save">Save rules</button>
+          <button type="button" id="rules-reload" class="linkish">Reload</button>
+        </div>
       </section>
 
       <section id="panel-settings" class="panel">
-        <form id="settings-form" class="settings">
-          <label>Max local context tokens
-            <input type="number" id="cfg-tokens" min="0" />
-          </label>
-          <label>Idle unload timeout
-            <input type="text" id="cfg-idle" />
-          </label>
-          <button type="submit">Save</button>
+        <div class="cfg-toolbar">
+          <p class="hint cfg-reload-note">Structured form is the primary editor. Save writes the config file and hot-reloads routing, aliases, context threshold, and log level. Restart Glider to apply listen ports, MITM, backends, or cloud provider registration.</p>
+          <button type="button" id="cfg-toggle-yaml" class="linkish" aria-expanded="false">Edit YAML (optional)</button>
+        </div>
+        <p id="cfg-error" class="cfg-error" hidden></p>
+        <p id="cfg-warn" class="cfg-warn" hidden></p>
+        <p id="cfg-ok" class="cfg-ok" hidden>Saved.</p>
+
+        <form id="settings-form" class="settings-full">
+          <fieldset class="cfg-section">
+            <legend title="Core process settings. Gateway proxy serves OpenAI-compatible /v1; dashboard is this UI.">Server</legend>
+            <div class="cfg-grid">
+              <label title="TCP port for the OpenAI-compatible gateway (/v1/chat/completions). Restart required after change.">Gateway proxy port<input type="number" id="cfg-proxy-port" min="1" /></label>
+              <label title="TCP port for this dashboard UI and its REST/WebSocket APIs. Restart required after change.">Dashboard port<input type="number" id="cfg-dash-port" min="1" /></label>
+              <label title="slog level for Glider process logs. Saved to config and applied immediately (no restart).">Log level
+                <select id="cfg-log-level">
+                  <option value="debug">debug</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Runtime limits for local inference and request handling.">Thresholds</legend>
+            <div class="cfg-grid">
+              <label title="Context size above which routing prefers cloud/origin (also used by context_size rules). Hot-reloaded.">Max local context tokens<input type="number" id="cfg-tokens" min="0" /></label>
+              <label title="Unload idle local models after this duration (e.g. 5m).">Idle unload timeout<input type="text" id="cfg-idle" placeholder="5m" /></label>
+              <label title="Per-request timeout for backend completions (e.g. 120s).">Request timeout<input type="text" id="cfg-req-timeout" placeholder="120s" /></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="HTTPS CONNECT interceptor for Cursor hosts. Dual-mode: MITM uses origin passthrough for cloud; gateway uses BYOK providers.">MITM</legend>
+            <div class="cfg-grid">
+              <label class="check" title="Enable the MITM proxy listener. Restart required."><input type="checkbox" id="cfg-mitm-enabled" /> Enabled</label>
+              <label title="MITM listen port (CONNECT). Restart required.">Listen port<input type="number" id="cfg-mitm-port" min="1" /></label>
+              <label class="check" title="When true, non-local routes pass through to Cursor origin instead of BYOK."><input type="checkbox" id="cfg-mitm-passthrough" /> Passthrough default</label>
+              <label title="Path to MITM CA certificate (expanded ~ supported).">CA cert path<input type="text" id="cfg-mitm-cacert" /></label>
+              <label title="Path to MITM CA private key.">CA key path<input type="text" id="cfg-mitm-cakey" /></label>
+              <label class="span2" title="Hostnames to intercept (one per line). Supports simple wildcards like *.api5.cursor.sh.">Hosts (one per line)<textarea id="cfg-mitm-hosts" class="cfg-list" rows="4" spellcheck="false"></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Local VRAM allocator policy. Per-model GPU indices are edited on the VRAM & Models page.">VRAM</legend>
+            <div class="cfg-grid">
+              <label title="static keeps warm models; dynamic evicts aggressively; hybrid balances both.">Strategy
+                <select id="cfg-vram-strategy">
+                  <option value="dynamic">dynamic</option>
+                  <option value="hybrid">hybrid</option>
+                  <option value="static">static</option>
+                </select>
+              </label>
+              <label title="Reserved free VRAM (MB) the allocator will not fill.">Headroom (MB)<input type="number" id="cfg-vram-headroom" min="0" /></label>
+              <label title="Soft cap on concurrently loaded local models.">Max loaded models<input type="number" id="cfg-vram-max" min="1" /></label>
+              <label class="span2" title="Map of model name → GPU index. Prefer editing on VRAM & Models; JSON here is advanced.">GPU assignments (JSON object)<textarea id="cfg-vram-gpus" class="cfg-mono" rows="3" spellcheck="false" placeholder='{"codellama:7b": 0}'></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Dashboard process settings.">Dashboard</legend>
+            <div class="cfg-grid">
+              <label class="check" title="Serve this UI. Restart required to toggle."><input type="checkbox" id="cfg-dash-enabled" /> Enabled</label>
+              <label class="check" title="Reserved for future dashboard auth."><input type="checkbox" id="cfg-dash-auth" /> Auth</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Optional prompt transforms applied before local/cloud completion.">Transform</legend>
+            <div class="cfg-grid">
+              <label class="check" title="Master switch for transforms."><input type="checkbox" id="cfg-xform-enabled" /> Enabled</label>
+              <label class="check" title="Trim oversized context toward max local tokens."><input type="checkbox" id="cfg-xform-trim" /> Trim context</label>
+              <label class="span2" title="Text prepended to the user/system prompt when transforms are enabled.">Augment prepend<textarea id="cfg-xform-prepend" class="cfg-mono" rows="2"></textarea></label>
+              <label class="span2" title="Text appended to the prompt when transforms are enabled.">Augment append<textarea id="cfg-xform-append" class="cfg-mono" rows="2"></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Map client model IDs (e.g. Cursor) onto local registry names before routing. Hot-reloaded.">Model aliases</legend>
+            <label class="block" title="JSON object: client model → local model name.">JSON map (client model → local registry name)
+              <textarea id="cfg-aliases" class="cfg-mono" rows="5" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Prefer the Rules Engine tab for structured editing. JSON array is available here for bulk edits.">Routing rules</legend>
+            <label class="block" title="JSON array of rules. Prefer Rules Engine UI; this field stays in sync after saves.">JSON array (or use Rules Engine tab)
+              <textarea id="cfg-routing" class="cfg-mono" rows="10" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Local models registered with Glider. Names should match backend tags when possible.">Local models</legend>
+            <label class="block" title="JSON array of model objects (name, backend, vram_estimate_mb, …).">JSON array
+              <textarea id="cfg-models" class="cfg-mono" rows="10" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Local inference backends. Restart required to re-register clients.">Local backends</legend>
+            <label class="block" title="JSON array: ollama / vllm entries with url and health_check_interval.">JSON array (ollama / vllm)
+              <textarea id="cfg-backends" class="cfg-mono" rows="6" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="BYOK cloud providers for gateway mode. MITM cloud routes use origin passthrough instead.">Cloud / BYOK</legend>
+            <div class="cfg-grid">
+              <label title="Optional USD budget cap for cloud spend tracking.">Budget cap (USD)<input type="number" id="cfg-budget" step="0.01" min="0" /></label>
+              <label title="Rate limit: requests per minute across cloud providers.">Requests / min<input type="number" id="cfg-rpm" min="0" /></label>
+              <label title="Rate limit: tokens per minute across cloud providers.">Tokens / min<input type="number" id="cfg-tpm" min="0" /></label>
+              <label class="span2" title="JSON providers array. Use api_key_env names — never paste secrets into config.">Providers (JSON array — use <code>api_key_env</code>, never paste secrets)
+                <textarea id="cfg-providers" class="cfg-mono" rows="6" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="cfg-actions">
+            <button type="submit">Save config</button>
+            <button type="button" id="cfg-reload" class="linkish">Reload from server</button>
+          </div>
         </form>
+
+        <div id="yaml-editor-wrap" class="yaml-wrap" hidden>
+          <label class="editor-label" for="cfg-yaml">Complete glider.yaml (optional advanced path)</label>
+          <textarea id="cfg-yaml" class="editor yaml-editor" spellcheck="false"></textarea>
+          <div class="cfg-actions">
+            <button type="button" id="cfg-yaml-save">Save YAML</button>
+            <button type="button" id="cfg-yaml-reload" class="linkish">Reload from server</button>
+          </div>
+        </div>
       </section>
     </main>
   </div>

@@ -155,6 +155,37 @@ func (b *Backend) UnloadModel(ctx context.Context, model string) error {
 	return b.postJSON(ctx, "/api/generate", body)
 }
 
+// ListTags returns model names available on the Ollama host (/api/tags).
+func (b *Backend) ListTags(ctx context.Context) ([]string, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("ollama tags: status %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(parsed.Models))
+	for _, m := range parsed.Models {
+		if m.Name != "" {
+			out = append(out, m.Name)
+		}
+	}
+	return out, nil
+}
+
 func (b *Backend) ListLoaded(ctx context.Context) ([]backend.LoadedModel, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/api/ps", nil)
 	if err != nil {

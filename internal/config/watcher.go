@@ -111,7 +111,19 @@ func (p *Provider) reload() {
 	}
 }
 
-// SwapForTest atomically replaces config (tests only).
+// Swap atomically replaces the active config and notifies Watch subscribers
+// (same path as a successful file hot-reload).
+func (p *Provider) Swap(cfg *Config) {
+	p.value.Store(cfg)
+	p.mu.Lock()
+	subs := append([]ChangeFunc{}, p.subscribers...)
+	p.mu.Unlock()
+	for _, cb := range subs {
+		cb(cfg)
+	}
+}
+
+// SwapForTest atomically replaces config without notifying subscribers.
 func (p *Provider) SwapForTest(cfg *Config) {
 	p.value.Store(cfg)
 }

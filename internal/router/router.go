@@ -33,6 +33,9 @@ func NewEngine(rules []Rule) *Engine {
 func NewEngineFromConfig(routing config.RoutingConfig, executor *StarlarkExecutor) (*Engine, error) {
 	rules := make([]Rule, 0, len(routing.Rules))
 	for _, cfg := range routing.Rules {
+		if !cfg.IsEnabled() {
+			continue
+		}
 		rule, err := NewRuleFromConfig(cfg, executor)
 		if err != nil {
 			return nil, err

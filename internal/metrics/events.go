@@ -15,11 +15,19 @@ type Event struct {
 }
 
 type RequestEventData struct {
-	ID        string  `json:"id"`
-	Route     string  `json:"route"`
-	Model     string  `json:"model"`
-	Tokens    int     `json:"tokens"`
-	LatencyMs float64 `json:"latency_ms"`
+	ID            string  `json:"id"`
+	SessionID     string  `json:"session_id,omitempty"`
+	ClientSession string  `json:"client_session,omitempty"`
+	Mode          string  `json:"mode,omitempty"`           // gateway | mitm
+	Action        string  `json:"action,omitempty"`         // local | origin_passthrough | blind_tunnel | skip | error
+	Route         string  `json:"route"`                    // local | cloud
+	Model         string  `json:"model"`
+	OriginalModel string  `json:"original_model,omitempty"`
+	Host          string  `json:"host,omitempty"`
+	Path          string  `json:"path,omitempty"`
+	Rule          string  `json:"rule,omitempty"`
+	Tokens        int     `json:"tokens"`
+	LatencyMs     float64 `json:"latency_ms"`
 }
 
 type VRAMEventData struct {

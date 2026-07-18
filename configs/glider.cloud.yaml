@@ -1,0 +1,114 @@
+# Gateway-only profile: default route is cloud (OpenAI/Anthropic with your keys).
+# Use when you are NOT using MITM and want non-local traffic to go to BYOK providers.
+#
+#   glider.exe --config configs/glider.cloud.yaml
+#
+# For Cursor Agent + subscription models, prefer configs/glider.yaml with MITM enabled.
+# Same rule priority: explicit overrides → scripts → thresholds → default cloud.
+
+server:
+  proxy_port: 8080
+  dashboard_port: 8081
+  log_level: "info"
+
+thresholds:
+  max_local_context_tokens: 8000
+  idle_unload_timeout: "5m"
+  request_timeout: "120s"
+
+vram:
+  strategy: "hybrid"
+  headroom_mb: 512
+  max_loaded_models: 3
+
+models:
+  - name: "codellama:7b"
+    backend: "ollama"
+    vram_estimate_mb: 4200
+    max_context: 16384
+    capabilities: ["code"]
+    keep_warm: true
+
+model_aliases:
+  "gpt-4o": "codellama:7b"
+  "gpt-4o-mini": "codellama:7b"
+
+routing:
+  rules:
+    - name: "Explicit Local"
+      priority: 100
+      trigger:
+        type: "explicit"
+        commands: ["/local", "/fast"]
+      action:
+        target: "local"
+        model: "codellama:7b"
+
+    - name: "Explicit Cloud"
+      priority: 99
+      trigger:
+        type: "explicit"
+        commands: ["/cloud", "/heavy"]
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+    - name: "Script Refactor Local"
+      priority: 50
+      trigger:
+        type: "script"
+        file: "scripts/examples/detect_refactor.star"
+      action:
+        target: "local"
+        model: "codellama:7b"
+
+    - name: "Context Overflow"
+      priority: 10
+      trigger:
+        type: "context_size"
+        operator: ">"
+        value: 8000
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+    - name: "Default Cloud"
+      priority: 0
+      trigger:
+        type: "always"
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+cloud:
+  providers:
+    - name: "openai"
+      api_key_env: "OPENAI_API_KEY"
+      base_url: "https://api.openai.com/v1"
+    - name: "anthropic"
+      api_key_env: "ANTHROPIC_API_KEY"
+      base_url: "https://api.anthropic.com/v1"
+  rate_limit:
+    requests_per_minute: 30
+    tokens_per_minute: 100000
+  budget_cap_usd: 50.00
+
+backends:
+  - name: "ollama"
+    type: "local"
+    url: "http://localhost:11434"
+    health_check_interval: "30s"
+
+mitm:
+  enabled: false
+  port: 8082
+
+dashboard:
+  enabled: true
+  auth: false
+
+transform:
+  enabled: false

@@ -1,101 +1,141 @@
 server:
-  proxy_port: 8080
-  dashboard_port: 8081
-  log_level: "info"
-
+    proxy_port: 8080
+    dashboard_port: 8081
+    log_level: debug
 thresholds:
-  max_local_context_tokens: 8000
-  idle_unload_timeout: "5m"
-  request_timeout: "120s"
-
+    max_local_context_tokens: 8000
+    idle_unload_timeout: 5m
+    request_timeout: 120s
 vram:
-  strategy: "hybrid"
-  headroom_mb: 512
-  max_loaded_models: 3
-  gpu_assignments:
-    "codellama:7b": 0
-
+    strategy: hybrid
+    headroom_mb: 512
+    max_loaded_models: 3
+    gpu_assignments:
+        codellama:7b: 0
 models:
-  - name: "codellama:7b"
-    backend: "ollama"
-    vram_estimate_mb: 4200
-    max_context: 16384
-    capabilities: ["code", "refactor", "debug"]
-    keep_warm: true
-
-  - name: "llama3:8b-instruct"
-    backend: "ollama"
-    vram_estimate_mb: 5000
-    max_context: 8192
-    capabilities: ["general", "docs", "explain"]
-    keep_warm: false
-
+    - name: codellama:7b
+      backend: ollama
+      vram_estimate_mb: 4200
+      max_context: 16384
+      capabilities:
+        - code
+        - refactor
+        - debug
+      keep_warm: true
+    - name: llama3:8b-instruct
+      backend: ollama
+      vram_estimate_mb: 5000
+      max_context: 8192
+      capabilities:
+        - general
+        - docs
+        - explain
+      keep_warm: false
+model_aliases:
+    claude-3.5-sonnet: codellama:7b
+    gpt-4o: codellama:7b
+    gpt-4o-mini: llama3:8b-instruct
 routing:
-  rules:
-    - name: "Explicit Local"
-      priority: 100
-      trigger:
-        type: "explicit"
-        commands: ["/local", "/fast"]
-      action:
-        target: "local"
-        model: "codellama:7b"
-
-    - name: "Explicit Cloud"
-      priority: 99
-      trigger:
-        type: "explicit"
-        commands: ["/cloud", "/heavy"]
-      action:
-        target: "cloud"
-        backend: "openai"
-        model: "gpt-4o"
-
-    - name: "Context Overflow"
-      priority: 10
-      trigger:
-        type: "context_size"
-        operator: ">"
-        value: 8000
-      action:
-        target: "cloud"
-        backend: "openai"
-        model: "gpt-4o"
-
-    - name: "Default Local"
-      priority: 0
-      trigger:
-        type: "always"
-      action:
-        target: "local"
-        model: "codellama:7b"
-
+    rules:
+        - name: Explicit Local
+          priority: 100
+          enabled: true
+          trigger:
+            type: explicit
+            commands:
+                - /local
+                - /fast
+          action:
+            target: local
+            model: codellama:7b
+        - name: Explicit Cloud
+          priority: 99
+          enabled: true
+          trigger:
+            type: explicit
+            commands:
+                - /cloud
+                - /heavy
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        - name: Script Refactor Local
+          priority: 50
+          enabled: true
+          trigger:
+            type: script
+            file: scripts/examples/detect_refactor.star
+          action:
+            target: local
+            model: codellama:7b
+        - name: Context Overflow
+          priority: 10
+          enabled: true
+          trigger:
+            type: context_size
+            operator: '>'
+            value: 8000
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        - name: Small Context Local
+          priority: 5
+          enabled: true
+          trigger:
+            type: context_size
+            operator: <=
+            value: 8000
+          action:
+            target: local
+            model: codellama:7b
+        - name: Default Origin
+          priority: 0
+          enabled: true
+          trigger:
+            type: always
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
 cloud:
-  providers:
-    - name: "openai"
-      api_key_env: "OPENAI_API_KEY"
-      base_url: "https://api.openai.com/v1"
-    - name: "anthropic"
-      api_key_env: "ANTHROPIC_API_KEY"
-      base_url: "https://api.anthropic.com/v1"
-  rate_limit:
-    requests_per_minute: 30
-    tokens_per_minute: 100000
-  budget_cap_usd: 50.00
-
+    providers:
+        - name: openai
+          api_key_env: OPENAI_API_KEY
+          base_url: https://api.openai.com/v1
+        - name: anthropic
+          api_key_env: ANTHROPIC_API_KEY
+          base_url: https://api.anthropic.com/v1
+    rate_limit:
+        requests_per_minute: 30
+        tokens_per_minute: 100000
+    budget_cap_usd: 50
 backends:
-  - name: "ollama"
-    type: "local"
-    url: "http://localhost:11434"
-    health_check_interval: "30s"
-  - name: "vllm"
-    type: "local"
-    url: "http://localhost:8001"
-    health_check_interval: "30s"
-
+    - name: ollama
+      type: local
+      url: http://localhost:11434
+      health_check_interval: 30s
+    - name: vllm
+      type: local
+      url: http://localhost:8001
+      health_check_interval: 30s
 dashboard:
-  enabled: true
-  auth: false
-
+    enabled: true
+    auth: false
 transform:
-  enabled: false
+    enabled: false
+    trim_context: false
+    augment_prepend: ""
+    augment_append: ""
+mitm:
+    enabled: true
+    port: 8082
+    ca_cert: ~/.glider/mitm/ca.crt
+    ca_key: ~/.glider/mitm/ca.key
+    hosts:
+        - api2.cursor.sh
+        - api3.cursor.sh
+        - api4.cursor.sh
+        - '*.api5.cursor.sh'
+    passthrough_default: true

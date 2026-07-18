@@ -169,6 +169,37 @@ func (b *Backend) ListLoaded(ctx context.Context) ([]backend.LoadedModel, error)
 	return []backend.LoadedModel{}, nil
 }
 
+// ListModels returns model IDs advertised by the vLLM OpenAI-compatible /v1/models endpoint.
+func (b *Backend) ListModels(ctx context.Context) ([]string, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("vllm models: status %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID != "" {
+			out = append(out, m.ID)
+		}
+	}
+	return out, nil
+}
+
 func (b *Backend) Ping(ctx context.Context) error {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/health", nil)
 	if err != nil {

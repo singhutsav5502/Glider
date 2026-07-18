@@ -65,14 +65,15 @@ func applyDefaults(cfg *Config) {
 	if cfg.VRAM.GPUAssignments == nil {
 		cfg.VRAM.GPUAssignments = map[string]int{}
 	}
+	if cfg.ModelAliases == nil {
+		cfg.ModelAliases = map[string]string{}
+	}
+	if cfg.MITM.Port == 0 {
+		cfg.MITM.Port = 8082
+	}
+	if len(cfg.MITM.Hosts) == 0 {
+		cfg.MITM.Hosts = []string{"api2.cursor.sh", "api3.cursor.sh", "api4.cursor.sh", "*.api5.cursor.sh"}
+	}
 }
 
-func Validate(cfg *Config) error {
-	if cfg.Server.ProxyPort == 0 {
-		return fmt.Errorf("validation error: missing required field server.proxy_port")
-	}
-	if cfg.Thresholds.MaxLocalContextTokens < 0 {
-		return fmt.Errorf("validation error: thresholds.max_local_context_tokens must be >= 0")
-	}
-	return nil
-}
+// Validate is defined in validate.go (structural checks used by ParseConfig).

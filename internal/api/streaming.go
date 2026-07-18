@@ -9,6 +9,16 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 )
 
+// WriteChatSSE streams OpenAI chat.completion.chunk SSE events.
+func WriteChatSSE(w http.ResponseWriter, requestID, model string, chunks <-chan backend.CompletionChunk) error {
+	return writeSSE(w, requestID, model, chunks)
+}
+
+// WriteChatJSON writes a non-streaming chat.completion response.
+func WriteChatJSON(w http.ResponseWriter, requestID, model string, chunks <-chan backend.CompletionChunk) error {
+	return writeNonStream(w, requestID, model, chunks)
+}
+
 func writeSSE(w http.ResponseWriter, requestID, model string, chunks <-chan backend.CompletionChunk) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {

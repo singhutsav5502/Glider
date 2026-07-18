@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/glider-ai/glider/internal/backend"
@@ -45,14 +46,22 @@ func (h *Handlers) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error")
 		return
 	}
-	var req backend.CompletionRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid JSON: "+err.Error(), "invalid_request_error")
+	body, err := readBody(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid body: "+err.Error(), "invalid_request_error")
 		return
 	}
-	if len(req.Messages) == 0 {
-		writeAPIError(w, http.StatusBadRequest, "missing required field: messages", "invalid_request_error")
+
+	var req *backend.CompletionRequest
+	var responsesMode bool
+	if LooksLikeResponses(body) {
+		req, err = ResponsesToCompletion(body)
+		responsesMode = true
+	} else {
+		req, err = ParseCompletionRequest(body)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 		return
 	}
 	req.Metadata.RequestID = RequestIDFromContext(r.Context())
@@ -65,16 +74,65 @@ func (h *Handlers) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "no completer configured", "server_error")
 		return
 	}
-	chunks, err := h.Completer.Complete(r, &req)
+	chunks, err := h.Completer.Complete(r, req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error(), "server_error")
+		return
+	}
+	if responsesMode {
+		if req.Stream {
+			_ = WriteResponsesSSE(w, req.Metadata.RequestID, req.Model, chunks)
+			return
+		}
+		_ = WriteResponsesJSON(w, req.Metadata.RequestID, req.Model, chunks)
+		return
+	}
+	if req.Stream {
+		_ = WriteChatSSE(w, req.Metadata.RequestID, req.Model, chunks)
+		return
+	}
+	_ = WriteChatJSON(w, req.Metadata.RequestID, req.Model, chunks)
+}
+
+// Responses handles POST /v1/responses (OpenAI Responses API).
+func (h *Handlers) Responses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error")
+		return
+	}
+	body, err := readBody(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid body: "+err.Error(), "invalid_request_error")
+		return
+	}
+	req, err := ResponsesToCompletion(body)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	req.Metadata.RequestID = RequestIDFromContext(r.Context())
+	if req.Metadata.Priority == 0 {
+		req.Metadata.Priority = backend.PriorityHigh
+	}
+	if h.Completer == nil {
+		writeAPIError(w, http.StatusInternalServerError, "no completer configured", "server_error")
+		return
+	}
+	chunks, err := h.Completer.Complete(r, req)
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, err.Error(), "server_error")
 		return
 	}
 	if req.Stream {
-		_ = writeSSE(w, req.Metadata.RequestID, req.Model, chunks)
+		_ = WriteResponsesSSE(w, req.Metadata.RequestID, req.Model, chunks)
 		return
 	}
-	_ = writeNonStream(w, req.Metadata.RequestID, req.Model, chunks)
+	_ = WriteResponsesJSON(w, req.Metadata.RequestID, req.Model, chunks)
+}
+
+func readBody(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	return io.ReadAll(r.Body)
 }
 
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {

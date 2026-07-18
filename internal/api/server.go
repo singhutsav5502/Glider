@@ -22,6 +22,7 @@ func NewServer(addr string, h *Handlers) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", s.handlers.ChatCompletions)
+	mux.HandleFunc("/v1/responses", s.handlers.Responses)
 	mux.HandleFunc("/v1/models", s.handlers.ListModels)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

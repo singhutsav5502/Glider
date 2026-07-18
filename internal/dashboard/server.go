@@ -17,11 +17,13 @@ import (
 var staticFS embed.FS
 
 type Server struct {
-	addr   string
-	http   *http.Server
-	Bus    *metrics.Bus
-	Config ConfigStore
-	Models ModelController
+	addr     string
+	http     *http.Server
+	Bus      *metrics.Bus
+	Config   ConfigStore
+	Models   ModelController
+	History  *metrics.HistoryStore
+	GPUs     GPUInfoProvider
 	upgrader websocket.Upgrader
 }
 
@@ -44,10 +46,32 @@ func (s *Server) Handler() http.Handler {
 		case http.MethodGet:
 			s.handleGetConfig(w, r)
 		case http.MethodPut:
-			s.handlePutConfigRaw(w, r)
+			s.handlePutConfig(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+	mux.HandleFunc("/api/validate", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodPost:
+			s.handleValidate(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/vram", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleGetVRAM(w, r)
+	})
+	mux.HandleFunc("/api/gpu-assignments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handlePatchGPUAssignments(w, r)
 	})
 	mux.HandleFunc("/api/models", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -62,6 +86,20 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		s.handleModelAction(w, r)
+	})
+	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleListSessions(w, r)
+	})
+	mux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleSession(w, r)
 	})
 	mux.HandleFunc("/ws", s.handleWS)
 

@@ -21,7 +21,9 @@ type Collector struct {
 	cloudCostPerReqUSD float64
 	actualCostUSD      float64
 
-	bus *Bus
+	bus        *Bus
+	history    *HistoryStore
+	sessionID  string
 }
 
 func NewCollector(bus *Bus) *Collector {
@@ -33,6 +35,28 @@ func NewCollector(bus *Bus) *Collector {
 	}
 }
 
+// SetHistory attaches durable session-grouped storage. SessionID is stamped on live events.
+func (c *Collector) SetHistory(h *HistoryStore) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.history = h
+	if h != nil {
+		c.sessionID = h.SessionID()
+	}
+}
+
+func (c *Collector) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionID
+}
+
+func (c *Collector) History() *HistoryStore {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.history
+}
+
 func (c *Collector) SetCloudCostPerRequest(usd float64) {
 	c.mu.Lock()
 	c.cloudCostPerReqUSD = usd
@@ -40,17 +64,33 @@ func (c *Collector) SetCloudCostPerRequest(usd float64) {
 }
 
 type RequestRecord struct {
-	ID        string
-	Route     string // local | cloud
-	Model     string
-	Tokens    int
-	Latency   time.Duration
-	ActualUSD float64
+	ID            string
+	ClientSession string // optional client/correlation id from request metadata
+	Mode          string // gateway | mitm
+	Action        string // local | origin_passthrough | blind_tunnel | skip | error
+	Route         string // local | cloud
+	Model         string
+	OriginalModel string
+	Host          string
+	Path          string
+	Rule          string
+	Tokens        int
+	Latency       time.Duration
+	ActualUSD     float64
 }
 
 func (c *Collector) Record(rec RequestRecord) {
+	if rec.Action == "" {
+		rec.Action = rec.Route
+	}
 	c.mu.Lock()
 	c.routeCounts[rec.Route]++
+	if rec.Action != "" {
+		c.routeCounts["action:"+rec.Action]++
+	}
+	if rec.Mode != "" {
+		c.routeCounts["mode:"+rec.Mode]++
+	}
 	c.tokenTotal += rec.Tokens
 	c.tokenN++
 	if c.tokenMin < 0 || rec.Tokens < c.tokenMin {
@@ -60,21 +100,49 @@ func (c *Collector) Record(rec RequestRecord) {
 		c.tokenMax = rec.Tokens
 	}
 	c.latencies = append(c.latencies, rec.Latency)
-	if rec.Route == "local" {
+	if rec.Route == "local" || rec.Action == "local" {
 		c.localReqs++
 	}
 	c.actualCostUSD += rec.ActualUSD
+	sessionID := c.sessionID
+	history := c.history
 	c.mu.Unlock()
+
+	latencyMs := float64(rec.Latency.Microseconds()) / 1000.0
+	if history != nil {
+		_ = history.Record(StoredRequest{
+			ClientSession: rec.ClientSession,
+			ID:            rec.ID,
+			Mode:          rec.Mode,
+			Action:        rec.Action,
+			Route:         rec.Route,
+			Model:         rec.Model,
+			OriginalModel: rec.OriginalModel,
+			Host:          rec.Host,
+			Path:          rec.Path,
+			Rule:          rec.Rule,
+			Tokens:        rec.Tokens,
+			LatencyMs:     latencyMs,
+		})
+	}
 
 	if c.bus != nil {
 		c.bus.Publish(Event{
 			Type: EventRequest,
 			Data: RequestEventData{
-				ID:        rec.ID,
-				Route:     rec.Route,
-				Model:     rec.Model,
-				Tokens:    rec.Tokens,
-				LatencyMs: float64(rec.Latency.Microseconds()) / 1000.0,
+				ID:            rec.ID,
+				SessionID:     sessionID,
+				ClientSession: rec.ClientSession,
+				Mode:          rec.Mode,
+				Action:        rec.Action,
+				Route:         rec.Route,
+				Model:         rec.Model,
+				OriginalModel: rec.OriginalModel,
+				Host:          rec.Host,
+				Path:          rec.Path,
+				Rule:          rec.Rule,
+				Tokens:        rec.Tokens,
+				LatencyMs:     latencyMs,
 			},
 		})
 	}
