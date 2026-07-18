@@ -37,9 +37,11 @@
    - `LOCAL / CLOUD: 82% / 18%`
    - `SAVED: $14.20`
    - `LATENCY: 1.8ms` (Proxy overhead)
-2. **Real-Time Request Stream:** A spacious, terminal-inspired log taking up the rest of the vertical space. 
-   - `TIME` | `ROUTE` | `TARGET` | `REASON` | `LATENCY` | `TOKENS`
-   - Maps to the *Metrics Collector* and *WebSocket push* features.
+2. **Session picker:** One Glider process run = one session; live WS tails current; historical sessions under `~/.glider/history`.
+3. **Real-Time Request Stream:** A spacious, terminal-inspired log taking up the rest of the vertical space.
+   - Columns (shipped): `TIME | MODE | ACTION | HOST / MODEL | RULE | LATENCY | TOKENS`
+   - Event fields include Mode, Action, Host, Path, Rule, OriginalModel (see `RequestEventData`).
+   - Maps to the *Metrics Collector*, session history store, and *WebSocket push* features.
 
 ---
 
@@ -52,9 +54,10 @@
    - Ultra-thin (2px-4px) horizontal lines per physical GPU.
    - Black for `Used`, light gray for `Free`, marked `Headroom`.
 2. **Model Management Panel:** 
-   - Tabular list of active (WARM) and available (COLD) models.
-   - Columns: `MODEL`, `BACKEND` (Ollama/vLLM), `VRAM SIZE`, `IDLE TIME`
-   - Actions: `[ load ]` | `[ unload ]` | `[ restart ]`
+   - Tabular list from config + live discovery (Ollama `/api/tags`, vLLM `/v1/models`) with nvidia-smi gauges when available.
+   - Columns (shipped): `MODEL`, `BACKEND`, `SOURCE`, `VRAM`, `STATE`, `GPU`
+   - Actions: load / unload; assign GPU index → persists `vram.gpu_assignments`
+   - Soft catalog validation warnings when models/assignments don’t match discovery
    - Maps to the *VRAM Allocator*, *Scale-to-Zero timeout*, and *Model Registry*.
 
 ---
@@ -64,29 +67,23 @@
 
 ![Rules Engine Screen](C:/Users/Utsav/.gemini/antigravity/brain/dd367367-3e5e-404e-8f1b-f72391f4cc0e/glider_rules_engine_mockup_1784320325810.png)
 
-1. **Priority List:** A drag-and-drop ordered list of active routing rules.
-   - e.g., `1. Explicit Local`, `2. Refactor Detector`, `3. Context > 8k`.
+1. **Priority List:** Ordered list of routing rules (higher priority wins). Shipped UI supports create/edit/enable for explicit, script, context_size, always (and related types) persisted via `PUT /api/config`.
 2. **Starlark Script Editor:** 
-   - A minimalist, monospace text area for writing and testing custom `.star` routing scripts directly in the browser.
-   - Includes a "Test Rule" button that accepts a mock prompt and outputs the routing decision.
+   - Mockup intent: in-browser `.star` editing with “Test Rule”.
+   - Shipped: rules reference `file:` scripts; script body editing remains file-based; Rules Engine edits trigger/action/priority/enabled.
    - Maps to the *Starlark script executor* and *Rule priority engine*.
 
 ---
 
 ### Screen 4: Settings (Configuration)
-*Purpose: Tweak limits, thresholds, and transformations without restarting.*
+*Purpose: Tweak limits, thresholds, and transformations; hot-reload what the process supports.*
 
 ![Settings Screen](C:/Users/Utsav/.gemini/antigravity/brain/dd367367-3e5e-404e-8f1b-f72391f4cc0e/glider_settings_mockup_1784320354550.png)
 
-1. **Thresholds & Limits:** Form fields for:
-   - Max Local Context Tokens (e.g., `8000`)
-   - Idle Unload Timeout (e.g., `5m`)
-   - Cloud Budget Cap (e.g., `$50.00`)
-2. **Request Transformation Toggles:**
-   - Checkbox: `[x] Enable Context Trimming`
-   - Textarea: `Prompt Augmentation (Prepend/Append)`
-3. **YAML View:** An advanced `glider.yaml` raw editor for power users.
-   - Maps to the *Config Hot-Reload (fsnotify)* feature.
+1. **Structured form (primary):** Section cards + tooltips for server, thresholds, VRAM, models, aliases, routing, MITM, cloud, backends, transform. `GET|PUT /api/config`.
+2. **Hot-reload vs restart:** Routing / aliases / thresholds / log level hot-reload; ports / MITM / backends need restart.
+3. **YAML View (optional/collapsed):** Advanced raw `glider.yaml` editor for power users.
+   - Maps to the *Config Hot-Reload (fsnotify)* + Dashboard Swap path.
 
 ---
 

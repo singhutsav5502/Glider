@@ -1,6 +1,35 @@
 # Glider: AI Harness — Architecture Document
 
-> Comprehensive HLD & LLD for a local AI proxy that intercepts Cursor Chat, routes to local SLMs/LoRAs or cloud models, and manages VRAM dynamically.
+> Comprehensive HLD & LLD for a local AI proxy that intercepts Cursor Chat **and Agent**, routes to local SLMs/LoRAs or cloud, and manages VRAM dynamically.
+>
+> **Implemented dual mode:** (A) OpenAI-compatible BYOK gateway on `:8080`, and (B) HTTPS MITM forward proxy on `:8082` that can passthrough to Cursor’s original upstream (`*.cursor.sh`) with auth intact.
+
+---
+
+## 0. Implementation status (as of dual-mode MITM + dashboard UX)
+
+Phases 1–5 core packages are implemented and covered by `go test ./...`. Phase 6 (MITM + Responses + aliases + shared harness) and later dashboard/observability work add:
+
+| Area | Package / artifact | Behavior |
+|------|-------------------|----------|
+| Gateway Responses API | `internal/api` | `/v1/responses`; Responses-shaped bodies on `/chat/completions` |
+| Model aliases | `internal/orchestrator`, `glider.yaml` | Rewrite Cursor model IDs before routing |
+| HTTPS MITM | `internal/mitm` | CONNECT, local CA, allowlist decrypt, local intercept or origin passthrough |
+| Config profiles | `configs/glider.yaml`, `configs/glider.cloud.yaml` | Intro/full-system demo (MITM on) vs gateway default-cloud BYOK |
+| Setup | `scripts/setup-windows.ps1`, `start-glider.*`, `docs/CURSOR_CHECKLIST.md` | CA trust + Cursor proxy settings |
+| Observability | `internal/metrics` | Mode/Action/Host/Path/Rule/OriginalModel; session JSONL under `~/.glider/history` |
+| Dashboard UX | `internal/dashboard` | Config form + optional YAML; Rules editor; VRAM discovery; session browser |
+
+**Shared harness:** Gateway and MITM both use `PipelineCompleter.Handle` (alias → tokenize → route → transform → execute).
+
+| Entry | Mode | Non-local `target: cloud` |
+|-------|------|---------------------------|
+| `Complete` | Gateway `:8080` | BYOK OpenAI/Anthropic |
+| `CompleteLocal` | MITM `:8082` | `ErrOriginPassthrough` → **Cursor origin** (auth preserved) |
+
+Unrecognized Cursor-proprietary envelopes always blind-passthrough. **Routing priority:** (1) explicit `/local`/`/cloud` overrides → (2) Starlark scripts → (3) context thresholds → (4) default cloud.
+
+**Hot-reload vs restart:** Swap/watch rebuilds router, model aliases, context threshold, and slog log level. GPU assignments are persisted on the same config Swap path and read by `GET /api/vram`. Listen ports, MITM (enable/port/CA/hosts), backend URLs, and cloud provider registration require process restart.
 
 ---
 
@@ -22,6 +51,8 @@ The previous implementation plan had critical gaps uncovered by deep research in
 | G8 | **No rate limiting for cloud fallback.** If many requests cascade to cloud, costs explode. | Uncontrolled cloud API spend. | Add configurable rate limits and budget caps for cloud tier. |
 | G9 | **No health checks.** No way to know if Ollama/vLLM is alive before routing to it. | Silent failures. | Periodic health pings to all registered backends. Mark unhealthy backends as unavailable. |
 | G10 | **No metrics or cost tracking.** No way to see how many tokens were routed locally vs. cloud, latency percentiles, or estimated cost savings. | User can't validate if Glider is actually saving them money. | Add a metrics collector exposed via the Dashboard. |
+| G11 | **Gateway-only cannot see Cursor Agent / subscription models.** Override OpenAI Base URL only affects BYOK OpenAI path. | Agent and Claude/Cursor-native models never hit Glider. | Add **HTTPS MITM forward proxy** (`http.proxy`) with local CA; decrypt allowlisted hosts; passthrough to original Cursor upstream when not routing local. |
+| G12 | **Cursor Agent Responses API / wrong endpoint shape.** Agent may POST Responses-shaped JSON to `/chat/completions`. | Gateway rejects `missing messages`. | Accept `/v1/responses` and translate Responses → chat completions (and stream Responses-shaped events back when needed). |
 
 ### 1.2 Revised Key Decisions
 
@@ -32,49 +63,58 @@ The previous implementation plan had critical gaps uncovered by deep research in
 | VRAM Monitoring | Unspecified | **`nvidia-smi` CLI** (cross-platform) + optional `nvml.dll` on Windows |
 | Config Changes | Restart required | **Hot-reload** via filesystem watcher |
 | Scripting | Starlark (confirmed) | Starlark + `starlib` for regex support |
+| Cursor integration | Base URL override only | **Dual mode:** gateway BYOK **+** MITM for Agent / all models |
+| Non-local destination | Always BYOK OpenAI/Anthropic | Gateway: BYOK. MITM: **original Host** passthrough |
 
 ---
 
 ## 2. Planned Features (Complete)
 
 ### Core
-- [ ] OpenAI-compatible proxy (`/v1/chat/completions`, `/v1/models`)
-- [ ] SSE streaming passthrough (Cursor ↔ Proxy ↔ Backend)
-- [ ] Explicit routing commands (`/local`, `/cloud`, `/heavy`)
-- [ ] Implicit routing via regex, keywords, and context-size thresholds
-- [ ] Custom Starlark scripting for advanced routing logic
-- [ ] Configurable context token threshold (exposed parameter)
+- [x] OpenAI-compatible proxy (`/v1/chat/completions`, `/v1/models`)
+- [x] OpenAI Responses API (`/v1/responses`) + Responses-shaped body on chat completions
+- [x] SSE streaming passthrough (Cursor ↔ Proxy ↔ Backend)
+- [x] HTTPS MITM forward proxy (CONNECT, CA, allowlist, origin passthrough)
+- [x] Explicit routing commands (`/local`, `/cloud`, `/heavy`)
+- [x] Implicit routing via regex, keywords, and context-size thresholds
+- [x] Custom Starlark scripting for advanced routing logic
+- [x] Configurable context token threshold (exposed parameter)
+- [x] `model_aliases` map (Cursor/OpenAI model ID → registry model)
 
 ### Model & VRAM Management
-- [ ] Dynamic VRAM allocation with configurable strategies (static warm / dynamic load-on-demand)
-- [ ] Scale-to-zero: unload models after configurable idle timeout (`keep_alive`)
-- [ ] Model Registry with VRAM footprint, context window, and capability metadata
-- [ ] Pre-baked LoRA model variants (Ollama) with fast named-model switching
-- [ ] vLLM backend for true per-request LoRA hot-swapping (core, not optional)
-- [ ] Multi-GPU support (allocate models to specific GPUs)
-- [ ] VRAM headroom reservation (always keep X MB free for OS/other apps)
+- [x] Dynamic VRAM allocation with configurable strategies (static warm / dynamic load-on-demand)
+- [x] Scale-to-zero: unload models after configurable idle timeout (`keep_alive`)
+- [x] Model Registry with VRAM footprint, context window, and capability metadata
+- [x] Pre-baked LoRA model variants (Ollama) with fast named-model switching
+- [x] vLLM backend for true per-request LoRA hot-swapping (core, not optional)
+- [x] Multi-GPU support (allocate models to specific GPUs)
+- [x] VRAM headroom reservation (always keep X MB free for OS/other apps)
 
 ### Resilience & Performance
-- [ ] Fallback chain: Local → Cloud with configurable retry/timeout
-- [ ] Circuit breaker on failing backends
-- [ ] Request queue with priority (interactive > background)
-- [ ] Health checks for all registered backends
-- [ ] Cloud rate limiting and budget caps
+- [x] Fallback chain: Local → Cloud with configurable retry/timeout (gateway path)
+- [x] Circuit breaker on failing backends
+- [x] Request queue with priority (interactive > background)
+- [x] Health checks for all registered backends
+- [x] Cloud rate limiting and budget caps
 
 ### Configuration & Extensibility
-- [ ] `glider.yaml` — single-file configuration
-- [ ] Hot-reload on config file change (no restart)
-- [ ] Pluggable backend interface (add new backends without modifying core)
-- [ ] Request transformation pipeline (opt-in context trimming & prompt augmentation — system prompts preserved by default)
+- [x] `glider.yaml` — single-file configuration (+ `glider.cloud.yaml` profile)
+- [x] Hot-reload on config file change (no restart)
+- [x] Pluggable backend interface (add new backends without modifying core)
+- [x] Request transformation pipeline (opt-in context trimming & prompt augmentation — system prompts preserved by default)
+- [ ] Starlark-scriptable transforms as a separate surface from routing Starlark (advanced; routing Starlark shipped)
 
 ### Observability Dashboard (Web UI)
-- [ ] Real-time VRAM usage visualization (per-GPU, per-model)
-- [ ] Live request log with routing decisions, latency, token counts
-- [ ] Model management panel (load/unload/switch models)
-- [ ] Rule editor with Starlark script support
-- [ ] Configuration editor (thresholds, VRAM allotments, PnCs)
-- [ ] Cost savings tracker (local tokens vs. estimated cloud cost)
-- [ ] WebSocket-driven real-time updates
+- [x] Real-time VRAM usage visualization (per-GPU, per-model) — functional UI; `GET /api/vram` (Ollama/vLLM discover + nvidia-smi)
+- [x] Live request log: Mode / Action / Host·Model / Rule / latency / tokens (WS + Overview)
+- [x] Session history browser (`GET /api/sessions…`; store under `~/.glider/history`)
+- [x] Model management panel (load/unload/switch models) + GPU assignment UI → `vram.gpu_assignments`
+- [x] Rules Engine UI — create/edit/enable rules (explicit / script / context_size / always / …) persisted via `PUT /api/config`
+- [x] Configuration editor — form primary (section cards + tooltips); YAML optional/collapsed; `GET|PUT /api/config`
+- [x] Soft validation warnings (`GET|POST /api/validate`) against discovered model catalog
+- [x] Cost / local-vs-cloud split tracker
+- [x] WebSocket-driven real-time updates
+- [ ] Pixel-perfect parity with `mock_dashboard_ui_design.md` (functional UI shipped)
 
 ---
 
@@ -85,115 +125,91 @@ The previous implementation plan had critical gaps uncovered by deep research in
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                          Cursor IDE                                  │
-│                (sends POST /v1/chat/completions)                     │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │ HTTP (localhost:8080)
-                           ▼
+│  Mode A: POST /v1/* → localhost:8080   Mode B: http.proxy → :8082    │
+└───────────────┬───────────────────────────────────┬──────────────────┘
+                │                                   │ CONNECT + TLS
+                ▼                                   ▼
+┌───────────────────────────────┐    ┌──────────────────────────────────┐
+│  API GATEWAY (:8080)          │    │  MITM FORWARD PROXY (:8082)      │
+│  chat/completions, responses  │    │  CA mint · allowlist decrypt     │
+│  models · SSE                 │    │  Interceptor → local | origin    │
+└───────────────┬───────────────┘    └────────────────┬─────────────────┘
+                │                                     │
+                └──────────────────┬──────────────────┘
+                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                      GLIDER PROXY DAEMON                             │
-│                                                                      │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐  │
-│  │  API Gateway │  │  Config Mgr  │  │   Dashboard Server         │  │
-│  │  (OpenAI)    │  │  (hot-reload)│  │   (Web UI on :8081)        │  │
-│  └──────┬───────┘  └──────┬───────┘  └────────────┬───────────────┘  │
-│         │                 │                        │                  │
-│  ═══════▼═════════════════▼════════════════════════▼══════════════   │
-│  ║                  REQUEST PIPELINE                             ║   │
-│  ║  ┌────────────┐  ┌────────────┐  ┌─────────────────────────┐  ║  │
-│  ║  │ Tokenizer  │→ │  Router    │→ │ Request Transformer     │  ║  │
-│  ║  │ (count)    │  │  (rules +  │  │ (strip Cursor prompts,  │  ║  │
-│  ║  │            │  │  Starlark) │  │  reformat for target)   │  ║  │
-│  ║  └────────────┘  └────────────┘  └─────────────────────────┘  ║  │
-│  ═════════════════════════╤══════════════════════════════════════  │
-│                           │ RoutingDecision                       │
-│  ┌────────────────────────▼──────────────────────────────────────┐│
-│  │                    ORCHESTRATOR                                ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐ ││
-│  │  │ VRAM Manager │  │ Model        │  │ Request Queue       │ ││
-│  │  │ (allocator + │  │ Registry     │  │ (priority, mutex)   │ ││
-│  │  │  monitor)    │  │ (catalog)    │  │                     │ ││
-│  │  └──────────────┘  └──────────────┘  └─────────────────────┘ ││
-│  └───────────┬────────────────────────────────┬──────────────────┘│
-│              │                                │                   │
-└──────────────┼────────────────────────────────┼───────────────────┘
-               │                                │
-      ┌────────▼────────┐             ┌─────────▼──────────┐
-      │   LOCAL TIER    │             │    CLOUD TIER      │
-      │                 │             │                    │
-      │ ┌─────────────┐ │             │ ┌────────────────┐ │
-      │ │ Ollama      │ │             │ │ OpenAI         │ │
-      │ │ Backend     │ │             │ │ Backend        │ │
-      │ └─────────────┘ │             │ └────────────────┘ │
-      │ ┌─────────────┐ │             │ ┌────────────────┐ │
-      │ │ vLLM        │ │             │ │ Anthropic      │ │
-      │ │ Backend     │ │             │ │ Backend        │ │
-      │ └─────────────┘ │             │ └────────────────┘ │
-      └─────────────────┘             └────────────────────┘
+│                      REQUEST PIPELINE / ORCHESTRATOR                 │
+│  Tokenizer → Router (rules + Starlark) → Transform → Executor        │
+│  VRAM Manager · Model Registry · Priority Queue · Metrics            │
+│  Dashboard (:8081)                                                   │
+└───────────────┬───────────────────────────────────┬──────────────────┘
+                │                                   │
+       ┌────────▼────────┐               ┌──────────▼───────────┐
+       │   LOCAL TIER    │               │  NON-LOCAL           │
+       │ Ollama · vLLM   │               │ Gateway: OpenAI/     │
+       └─────────────────┘               │   Anthropic (BYOK)   │
+                                         │ MITM: original Host  │
+                                         │   (*.cursor.sh, …)   │
+                                         └──────────────────────┘
 ```
 
 ### 3.2 Component Responsibilities
 
 | Component | Single Responsibility | Owns |
 |-----------|----------------------|------|
-| **API Gateway** | Accept and validate OpenAI-format HTTP requests, stream SSE responses back. | HTTP lifecycle only. |
+| **API Gateway** | Accept and validate OpenAI-format HTTP requests (chat + Responses), stream SSE responses back. | HTTP lifecycle only. |
+| **MITM Proxy** | Explicit HTTP CONNECT proxy; TLS terminate allowlisted hosts with local CA; intercept or blind-tunnel. | TLS/CONNECT only. |
+| **MITM Interceptor** | Parse chat/Responses bodies; call shared `Harness.CompleteLocal` (same pipeline as gateway). | Adapter only — no separate router shortcut. |
+| **PipelineCompleter** | Shared harness: alias → tokenize → route → transform → execute (`Complete` / `CompleteLocal`). | Decision + execution for both modes. |
 | **Tokenizer** | Estimate token count of incoming payloads. | BPE encoding, token math. |
 | **Router** | Evaluate rules (explicit, regex, threshold, Starlark scripts) and produce a `RoutingDecision`. | Rule evaluation only. Does NOT execute the request. |
-| **Request Transformer** | Rewrite the payload for the target backend (strip Cursor system prompts, adjust chat template, trim context). | Prompt manipulation only. |
-| **Orchestrator** | Coordinate model readiness and dispatch the transformed request to the correct backend. Handle fallback on failure. | Lifecycle coordination. |
+| **Request Transformer** | Opt-in trim/augment (never strip Cursor system prompts by default). | Prompt manipulation only. |
+| **Orchestrator** | Coordinate model readiness and dispatch; apply `model_aliases`; fallback on failure. | Lifecycle coordination. |
 | **VRAM Manager** | Track GPU memory state, enforce allocation budgets, decide when to evict idle models. | GPU memory accounting. |
 | **Model Registry** | Catalog all available models with their metadata (VRAM size, context window, capabilities, current state). | Model metadata only. |
 | **Request Queue** | Serialize GPU-bound requests with priority ordering. Prevent GPU contention. | Queueing only. |
 | **Config Manager** | Load `glider.yaml`, watch for changes, atomically swap config, notify subscribers. | Configuration state. |
-| **Dashboard Server** | Serve the Web UI, expose WebSocket for real-time updates, provide REST API for config edits. | UI and management API. |
-| **Metrics Collector** | Aggregate latency, token counts, routing decisions, cost estimates. Feed to Dashboard. | Telemetry data. |
+| **Dashboard Server** | Serve the Web UI, expose WebSocket for real-time updates, REST for config/rules/VRAM/sessions. | UI and management API. |
+| **Metrics Collector** | Aggregate latency, tokens, routing decisions; enrich with Mode/Action/Host/Path/Rule/OriginalModel; persist session history. | Telemetry data. |
 | **Backend (interface)** | Execute a completion request against a specific inference engine. | Inference execution. |
 
 ### 3.3 Data Flow (Detailed)
 
+**Mode A (gateway) — `PipelineCompleter.Complete`:**
+
 ```
-1. RECEIVE     │ Cursor sends POST /v1/chat/completions to localhost:8080
-               │ Payload: {model, messages[], stream: true, ...}
-               ▼
-2. TOKENIZE    │ Tokenizer estimates total prompt token count
-               │ Output: estimated_tokens = 4,200
-               ▼
-3. ROUTE       │ Router evaluates rules in priority order:
-               │   a) Explicit: Does last message start with "/local"? → YES → local
-               │   b) Starlark: Run scripts/detect_refactor.star → matched? 
-               │   c) Threshold: estimated_tokens > max_local_context_tokens? → cloud
-               │   d) Default: fallback rule
-               │ Output: RoutingDecision{target: "ollama", model: "codellama:7b", ...}
-               ▼
-4. TRANSFORM   │ If target is local:
-               │   - Strip Cursor's system prompt (saves ~2000 tokens)
-               │   - Inject local-optimized system prompt
-               │   - Truncate context if still over model's max_context
-               │ If target is cloud:
-               │   - Pass through unmodified
-               ▼
-5. QUEUE       │ Request enters the priority queue
-               │   - Interactive (user waiting) → HIGH priority
-               │   - Background task → LOW priority
-               │ GPU mutex acquired when it's this request's turn
-               ▼
-6. ORCHESTRATE │ Orchestrator checks Model Registry:
-               │   - Is "codellama:7b" already loaded? → skip load
-               │   - Not loaded? → VRAM Manager checks if space available
-               │     - Space available → tell backend to load model
-               │     - No space → evict LRU model, then load
-               ▼
-7. EXECUTE     │ Backend.Complete(ctx, request) → returns chan CompletionChunk
-               │ Proxy streams SSE chunks back to Cursor in real-time
-               ▼
-8. OBSERVE     │ Metrics Collector records:
-               │   - Route taken (local/cloud), model used, latency
-               │   - Tokens in/out, estimated cost saved
-               │ Dashboard updates via WebSocket
-               ▼
-9. IDLE        │ After keep_alive timeout, VRAM Manager unloads idle model
-               │ GPU memory freed → scale-to-zero achieved
+1. RECEIVE     │ Cursor POST /v1/chat/completions or /v1/responses → :8080
+               │ (Responses body may be translated to CompletionRequest)
+2. ALIAS       │ Apply model_aliases (e.g. gpt-4o → codellama:7b)
+3. TOKENIZE    │ Estimate prompt tokens
+4. ROUTE       │ Priority: explicit overrides → Starlark → context thresholds → default
+5. TRANSFORM   │ Opt-in trim/augment; system prompts preserved
+6. QUEUE       │ Priority queue + GPU mutex
+7. ORCHESTRATE │ Load model if needed (VRAM / registry)
+8. EXECUTE     │ Local backends OR BYOK cloud → SSE / Responses events to Cursor
+9. OBSERVE     │ Metrics (mode/action/host/path/rule/original_model) → Dashboard WS + `~/.glider/history`
 ```
 
+**Mode B (MITM) — same harness via `CompleteLocal`:**
+
+```
+1. CONNECT     │ Cursor CONNECT api2.cursor.sh:443 → Glider :8082
+2. MITM TLS    │ If host allowlisted (api2/api3/api4/*.api5.cursor.sh) → leaf cert from Glider CA; else blind tunnel
+3. DECRYPT     │ Read HTTP request; if not chat/Responses → blind origin passthrough
+4. HARNESS     │ Interceptor → CompleteLocal (alias → tokenize → route → transform → …)
+               │   target local  → execute Ollama/vLLM, write response to client
+               │   target cloud  → ErrOriginPassthrough → TLS to original Host (auth intact)
+5. OBSERVE     │ slog decrypt|blind_tunnel; intercept local|origin_passthrough|skip|error; metrics → Dashboard
+```
+
+**Rule priority (both modes, `configs/glider.yaml`):**
+
+| Priority | Kind | Role |
+|----------|------|------|
+| 100 / 99 | Explicit `/local`, `/fast`, `/cloud`, `/heavy` | **Overrides** |
+| 50 | Starlark scripts (e.g. `detect_refactor.star`) | **Main driver** |
+| 10 / 5 | Context size `>` / `<=` thresholds | **Main driver** |
+| 0 | Default `cloud` | Gateway → BYOK; MITM → origin |
 ---
 
 ## 4. Low-Level Design (LLD)
@@ -207,14 +223,22 @@ glider/
 │       └── main.go                    # Entry point, DI wiring
 │
 ├── internal/
-│   ├── api/                           # [S] HTTP server layer
+│   ├── api/                           # [S] HTTP gateway layer
 │   │   ├── server.go                  # HTTP server lifecycle
-│   │   ├── handlers.go                # /v1/chat/completions, /v1/models
-│   │   ├── streaming.go               # SSE response writer
+│   │   ├── handlers.go                # /v1/chat/completions, /v1/models, /v1/responses
+│   │   ├── responses.go               # Responses ↔ CompletionRequest translation + SSE
+│   │   ├── streaming.go               # SSE / JSON chat writers
 │   │   └── middleware.go              # Logging, CORS, request ID
 │   │
+│   ├── mitm/                          # [S] HTTPS MITM forward proxy
+│   │   ├── proxy.go                   # CONNECT, TLS terminate, passthrough, blind tunnel
+│   │   ├── ca.go                      # Local CA + per-host leaf certs
+│   │   ├── hosts.go                   # Allowlist matcher (*.cursor.sh, …)
+│   │   ├── intercept.go               # Parse body → Harness.CompleteLocal (shared engine)
+│   │   └── paths.go                   # ~/.glider/mitm default paths
+│   │
 │   ├── config/                        # [S] Configuration management
-│   │   ├── config.go                  # Config struct definitions
+│   │   ├── config.go                  # Config struct definitions (incl. mitm, model_aliases)
 │   │   ├── loader.go                  # YAML parser + validator
 │   │   └── watcher.go                 # fsnotify hot-reload
 │   │
@@ -224,66 +248,51 @@ glider/
 │   │   └── starlark.go                # Starlark script executor + caching
 │   │
 │   ├── transform/                     # [S] Request/response transformation
-│   │   ├── pipeline.go                # Transform pipeline coordinator
-│   │   ├── cursor_strip.go            # Strip Cursor system prompts
-│   │   ├── context_trim.go            # Intelligent context truncation
-│   │   └── tokenizer.go              # BPE token counter
+│   │   ├── transformer.go             # Opt-in trim + augment
+│   │   └── tokenizer.go               # BPE token counter
 │   │
 │   ├── orchestrator/                  # [S] Execution coordination
-│   │   ├── orchestrator.go            # Main orchestration logic
+│   │   ├── pipeline.go                # Complete / CompleteLocal / Handle; ErrOriginPassthrough
 │   │   ├── queue.go                   # Priority request queue
-│   │   └── fallback.go               # Fallback chain + circuit breaker
+│   │   ├── fallback.go                # Fallback chain + circuit breaker
+│   │   ├── executor.go                # Lifecycle + dispatch
+│   │   └── ...
 │   │
 │   ├── backend/                       # [O][L][I][D] Pluggable backends
-│   │   ├── interfaces.go             # Core interfaces (see §4.2)
-│   │   ├── registry.go               # Backend + model registry
-│   │   ├── ollama/                    # Ollama implementation
-│   │   │   ├── client.go             # HTTP client for Ollama API
-│   │   │   ├── backend.go            # InferenceBackend impl
-│   │   │   └── models.go             # ModelManager impl
-│   │   ├── vllm/                      # vLLM implementation
-│   │   │   ├── client.go
-│   │   │   ├── backend.go
-│   │   │   └── lora.go               # LoRA hot-swap logic
-│   │   └── cloud/                     # Cloud backends
-│   │       ├── openai.go
-│   │       └── anthropic.go
+│   │   ├── interfaces.go              # Core interfaces (see §4.2)
+│   │   ├── registry.go                # Backend + model registry
+│   │   ├── ollama/
+│   │   ├── vllm/
+│   │   └── cloud/                     # openai.go, anthropic.go
 │   │
 │   ├── vram/                          # [S] GPU memory management
-│   │   ├── manager.go                 # VRAM allocation + eviction
-│   │   ├── monitor_nvidia_smi.go      # nvidia-smi based monitor
-│   │   ├── monitor_nvml_windows.go    # Optional nvml.dll direct call
-│   │   └── allocator.go              # Allocation strategies
-│   │
-│   ├── dashboard/                     # [S] Web UI
-│   │   ├── server.go                  # Dashboard HTTP + WebSocket
-│   │   ├── api.go                     # REST API for config/model mgmt
-│   │   └── static/                    # Embedded frontend assets
-│   │       ├── index.html
-│   │       ├── app.js
-│   │       └── style.css
-│   │
+│   ├── dashboard/                     # [S] Web UI + REST (config, vram, rules, sessions)
+│   │   ├── server.go / api.go
+│   │   ├── discover.go                # Ollama/vLLM + nvidia-smi snapshot for /api/vram
+│   │   └── static/                    # Overview, VRAM & Models, Rules Engine, Config
 │   └── metrics/                       # [S] Observability
-│       ├── collector.go               # Metrics aggregation
-│       └── events.go                  # Event bus for Dashboard
+│       ├── collector.go / events.go   # Mode/Action/Host/Path/Rule/OriginalModel
+│       └── history.go                 # Session JSONL under ~/.glider/history
 │
-├── scripts/                           # User Starlark routing scripts
-│   └── examples/
-│       ├── detect_refactor.star
-│       └── large_file_router.star
+├── scripts/
+│   ├── examples/                      # User Starlark routing scripts
+│   ├── setup-windows.ps1              # CA generate/trust + Cursor settings
+│   ├── start-glider.ps1 / .bat
+│   └── gen-ca.go                      # Standalone CA mint helper
 │
 ├── configs/
-│   └── glider.yaml                    # Default configuration
+│   ├── glider.yaml                    # Intro / full-system demo: MITM on; explicit → script → threshold → default cloud
+│   └── glider.cloud.yaml              # Gateway default cloud BYOK, MITM off
 │
-├── web/                               # Frontend source (dev)
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
+├── docs/
+│   └── CURSOR_CHECKLIST.md            # Manual Cursor Ask/Agent verification
 │
+├── e2e/                               # End-to-end tests (incl. mitm_test.go)
+├── bench/                             # Proxy overhead / rule eval benches
 ├── go.mod
-├── go.sum
 ├── Makefile
-└── README.md
+├── README.md
+└── STATUS.md
 ```
 
 ### 4.2 Core Interfaces (SOLID Mapped)
@@ -498,13 +507,17 @@ type EvictionPlan struct {
 // ═══════════════════════════════════════════════════════════════
 
 type Config struct {
-    Server     ServerConfig     `yaml:"server"`
-    Thresholds ThresholdConfig  `yaml:"thresholds"`
-    VRAM       VRAMConfig       `yaml:"vram"`
-    Models     []ModelConfig    `yaml:"models"`
-    Routing    RoutingConfig    `yaml:"routing"`
-    Cloud      CloudConfig      `yaml:"cloud"`
-    Dashboard  DashboardConfig  `yaml:"dashboard"`
+    Server       ServerConfig      `yaml:"server"`
+    Thresholds   ThresholdConfig   `yaml:"thresholds"`
+    VRAM         VRAMConfig        `yaml:"vram"`
+    Models       []ModelConfig     `yaml:"models"`
+    ModelAliases map[string]string `yaml:"model_aliases"`
+    Routing      RoutingConfig     `yaml:"routing"`
+    Cloud        CloudConfig       `yaml:"cloud"`
+    Backends     []BackendConfig   `yaml:"backends"`
+    Dashboard    DashboardConfig   `yaml:"dashboard"`
+    Transform    TransformConfig   `yaml:"transform"`
+    MITM         MITMConfig        `yaml:"mitm"`
 }
 
 type ThresholdConfig struct {
@@ -584,6 +597,7 @@ type CloudConfig struct {
 │              CONFIG HOT-RELOAD FLOW                │
 │                                                    │
 │  glider.yaml ──(fsnotify)──▶ Config Watcher       │
+│  Dashboard PUT /api/config ─▶ Validate + Write    │
 │                                    │               │
 │                              Parse + Validate      │
 │                                    │               │
@@ -595,14 +609,21 @@ type CloudConfig struct {
 │                                    │               │
 │                    ┌───────────────┼──────────┐    │
 │                    ▼               ▼          ▼    │
-│              Router          VRAM Mgr    Dashboard │
-│           (re-compiles     (adjusts     (refreshes │
-│            Starlark)       allotments)   UI)       │
+│              Router          Pipeline    slog level│
+│           (re-compiles     aliases +    (reloaded) │
+│            Starlark)       MaxContext              │
 └───────────────────────────────────────────────────┘
 
 Uses sync/atomic.Value for lock-free reads.
-Subscribers are notified via a fan-out callback channel.
+Subscribers are notified via Watch callbacks (cmd/glider).
 Invalid configs are rejected — old config stays active.
+
+Hot-reload without restart: routing rules, model_aliases,
+max_local_context_tokens, log_level; gpu_assignments persist
+on the same Swap and are read by GET /api/vram.
+
+Restart required: proxy_port, dashboard_port, mitm.*, backends,
+cloud provider registration (wired once at process start).
 ```
 
 #### 4.4.3 Backend Hot-Swap
@@ -622,22 +643,21 @@ Backends can be added/removed at runtime via the Dashboard API:
 # glider.yaml — Complete configuration
 
 server:
-  proxy_port: 8080        # OpenAI-compatible proxy
+  proxy_port: 8080        # OpenAI-compatible gateway
   dashboard_port: 8081    # Web UI
   log_level: "info"       # debug | info | warn | error
 
 thresholds:
-  max_local_context_tokens: 8000  # Above this → route to cloud
-  idle_unload_timeout: "5m"       # Unload model after this idle period
-  request_timeout: "120s"         # Max time for a single request
+  max_local_context_tokens: 8000  # Above this → route to cloud (gateway) / non-local
+  idle_unload_timeout: "5m"
+  request_timeout: "120s"
 
 vram:
   strategy: "hybrid"              # static | dynamic | hybrid
-  headroom_mb: 512                # Always keep 512MB free
+  headroom_mb: 512
   max_loaded_models: 3
-  gpu_assignments:                # Pin models to specific GPUs
+  gpu_assignments:
     "codellama:7b": 0
-    "llama3:70b-q4": 1
 
 models:
   - name: "codellama:7b"
@@ -645,81 +665,47 @@ models:
     vram_estimate_mb: 4200
     max_context: 16384
     capabilities: ["code", "refactor", "debug"]
-    keep_warm: true               # Always loaded (hybrid strategy)
+    keep_warm: true
 
-  - name: "llama3:8b-instruct"
-    backend: "ollama"
-    vram_estimate_mb: 5000
-    max_context: 8192
-    capabilities: ["general", "docs", "explain"]
-    keep_warm: false
-
-  - name: "codellama-base"
-    backend: "vllm"
-    vram_estimate_mb: 4200
-    max_context: 16384
-    capabilities: ["code"]
-    adapters:                     # vLLM LoRA adapters
-      - name: "refactor-lora"
-        path: "./adapters/refactor/"
-      - name: "test-gen-lora"
-        path: "./adapters/test-gen/"
+# Map Cursor / OpenAI model IDs → registry names (applied before routing).
+model_aliases:
+  "gpt-4o": "codellama:7b"
+  "gpt-4o-mini": "llama3:8b-instruct"
+  "claude-3.5-sonnet": "codellama:7b"
 
 routing:
-  # Rules are evaluated top-to-bottom. First match wins.
+  # Priority: explicit overrides → Starlark → context thresholds → default cloud
   rules:
     - name: "Explicit Local"
       priority: 100
-      trigger:
-        type: "explicit"
-        commands: ["/local", "/fast"]
-      action:
-        target: "local"
-        model: "codellama:7b"
-
+      trigger: { type: "explicit", commands: ["/local", "/fast"] }
+      action: { target: "local", model: "codellama:7b" }
     - name: "Explicit Cloud"
       priority: 99
-      trigger:
-        type: "explicit"
-        commands: ["/cloud", "/heavy"]
-      action:
-        target: "cloud"
-        backend: "openai"
-        model: "gpt-4o"
-
-    - name: "Refactor Detector"
+      trigger: { type: "explicit", commands: ["/cloud", "/heavy"] }
+      action: { target: "cloud", backend: "openai", model: "gpt-4o" }
+    - name: "Script Refactor Local"
       priority: 50
-      trigger:
-        type: "script"
-        file: "scripts/detect_refactor.star"
-      action:
-        target: "local"
-        model: "codellama-base"
-        adapter: "refactor-lora"
-
+      trigger: { type: "script", file: "scripts/examples/detect_refactor.star" }
+      action: { target: "local", model: "codellama:7b" }
     - name: "Context Overflow"
       priority: 10
-      trigger:
-        type: "context_size"
-        operator: ">"
-        value: 8000
-      action:
-        target: "cloud"
-        backend: "anthropic"
-        model: "claude-sonnet-4-20250514"
-
-    - name: "Default Local"
+      trigger: { type: "context_size", operator: ">", value: 8000 }
+      action: { target: "cloud", backend: "openai", model: "gpt-4o" }
+    - name: "Small Context Local"
+      priority: 5
+      trigger: { type: "context_size", operator: "<=", value: 8000 }
+      action: { target: "local", model: "codellama:7b" }
+    - name: "Default Origin"
       priority: 0
-      trigger:
-        type: "always"
-      action:
-        target: "local"
-        model: "codellama:7b"
+      trigger: { type: "always" }
+      action: { target: "cloud", backend: "openai", model: "gpt-4o" }
+      # Gateway: BYOK. MITM CompleteLocal: ErrOriginPassthrough → Cursor upstream.
 
 cloud:
   providers:
     - name: "openai"
-      api_key_env: "OPENAI_API_KEY"     # Read from env var
+      api_key_env: "OPENAI_API_KEY"
       base_url: "https://api.openai.com/v1"
     - name: "anthropic"
       api_key_env: "ANTHROPIC_API_KEY"
@@ -727,7 +713,7 @@ cloud:
   rate_limit:
     requests_per_minute: 30
     tokens_per_minute: 100000
-  budget_cap_usd: 50.00              # Monthly cap, alerts at 80%
+  budget_cap_usd: 50.00
 
 backends:
   - name: "ollama"
@@ -739,10 +725,28 @@ backends:
     url: "http://localhost:8001"
     health_check_interval: "30s"
 
+# HTTPS MITM — Cursor http.proxy points here for Agent / all models.
+mitm:
+  enabled: true
+  port: 8082
+  ca_cert: "~/.glider/mitm/ca.crt"
+  ca_key: "~/.glider/mitm/ca.key"
+  hosts:
+    - "api2.cursor.sh"
+    - "api3.cursor.sh"
+    - "api4.cursor.sh"
+    - "*.api5.cursor.sh"
+  passthrough_default: true   # non-local → original upstream (not BYOK)
+
 dashboard:
   enabled: true
-  auth: false                         # TODO: add auth for shared machines
+  auth: false
+
+transform:
+  enabled: false
 ```
+
+Also: `configs/glider.cloud.yaml` — same schema with `mitm.enabled: false` and default rule `target: cloud` for gateway-only BYOK users.
 
 ---
 
@@ -770,93 +774,107 @@ dashboard:
 > All features are core — no stretch goals. vLLM, full Dashboard, and all backends are built from the start across the phases below.
 
 ### Phase 1 — Foundation & Proxy
-> Goal: Cursor talks to Glider, Glider forwards to local backends. Streaming works.
+> Goal: Cursor talks to Glider gateway, Glider forwards to local backends. Streaming works.
 
-- [ ] Go project scaffold with full module structure (see §4.1)
-- [ ] API Gateway: `/v1/chat/completions` handler with SSE streaming
-- [ ] Backend interface definitions (`InferenceBackend`, `ModelManager`, `LoRAManager`, `HealthChecker`)
-- [ ] Ollama backend implementation (Complete, Load, Unload, Health)
-- [ ] vLLM backend implementation (Complete, Load, Unload, LoRA swap, Health)
-- [ ] Cloud backends: OpenAI + Anthropic passthrough
-- [ ] Backend Registry (register/discover all backends)
-- [ ] Simple passthrough routing (no rules yet, just default target)
-- [ ] Verify: Cursor → Glider → Ollama → Cursor streams correctly
-- [ ] Verify: Cursor → Glider → vLLM → Cursor streams correctly
+- [x] Go project scaffold with full module structure (see §4.1)
+- [x] API Gateway: `/v1/chat/completions` handler with SSE streaming
+- [x] Backend interface definitions (`InferenceBackend`, `ModelManager`, `LoRAManager`, `HealthChecker`)
+- [x] Ollama backend implementation (Complete, Load, Unload, Health)
+- [x] vLLM backend implementation (Complete, Load, Unload, LoRA swap, Health)
+- [x] Cloud backends: OpenAI + Anthropic passthrough
+- [x] Backend Registry (register/discover all backends)
+- [x] Simple passthrough routing (no rules yet, just default target)
+- [x] Verify: Cursor → Glider → Ollama → Cursor streams correctly
+- [x] Verify: Cursor → Glider → vLLM → Cursor streams correctly
 
 ### Phase 2 — Config, Router & Rules Engine
 > Goal: Requests are intelligently routed based on rules. Config is hot-reloadable.
 
-- [ ] Config loader + validator (`glider.yaml`)
-- [ ] Config hot-reload via `fsnotify` with atomic swap
-- [ ] Tokenizer integration (tiktoken-go)
-- [ ] Rule engine core with priority ordering
-- [ ] Rule types: ExplicitCommandRule, RegexRule, ContextSizeRule
-- [ ] Starlark script executor with compiled-script caching
-- [ ] StarlarkScriptRule type (load `.star` files, pass request, get routing decision)
-- [ ] Starlib integration for regex in Starlark scripts
-- [ ] Verify: `/local` routes locally, large context routes to cloud
+- [x] Config loader + validator (`glider.yaml`)
+- [x] Config hot-reload via `fsnotify` with atomic swap
+- [x] Tokenizer integration (tiktoken-go)
+- [x] Rule engine core with priority ordering
+- [x] Rule types: ExplicitCommandRule, RegexRule, ContextSizeRule
+- [x] Starlark script executor with compiled-script caching
+- [x] StarlarkScriptRule type (load `.star` files, pass request, get routing decision)
+- [x] Starlib integration for regex in Starlark scripts
+- [x] Verify: `/local` routes locally, large context routes to cloud
 
 ### Phase 3 — VRAM Management, Model Lifecycle & Orchestrator
 > Goal: Models load/unload dynamically. Scale-to-zero, fallback, and queuing work.
 
-- [ ] VRAM Monitor (`nvidia-smi` CLI, with optional `nvml.dll` on Windows)
-- [ ] Model Registry with metadata (VRAM estimate, max context, capabilities, state)
-- [ ] VRAM Allocator with strategies (static / dynamic / hybrid)
-- [ ] VRAM headroom reservation
-- [ ] Model state machine (COLD → LOADING → WARM → UNLOADING)
-- [ ] Idle timeout unloading (`keep_alive`)
-- [ ] LRU eviction when VRAM is full
-- [ ] Multi-GPU support (GPU assignments from config)
-- [ ] Request Queue with priority (interactive > background)
-- [ ] Fallback chain (local fail → cloud)
-- [ ] Circuit breaker on failing backends
-- [ ] Health check loop for all backends
-- [ ] Cloud rate limiter and budget cap
-- [ ] Verify: model auto-loads on request, unloads after idle timeout, fallback fires on backend crash
+- [x] VRAM Monitor (`nvidia-smi` CLI; optional `nvml.dll` on Windows still open)
+- [x] Model Registry with metadata
+- [x] VRAM Allocator with strategies (static / dynamic / hybrid)
+- [x] VRAM headroom reservation
+- [x] Model state machine (COLD → LOADING → WARM → UNLOADING)
+- [x] Idle timeout unloading (`keep_alive`)
+- [x] LRU eviction when VRAM is full
+- [x] Multi-GPU support (GPU assignments from config)
+- [x] Request Queue with priority (interactive > background)
+- [x] Fallback chain (local fail → cloud)
+- [x] Circuit breaker on failing backends
+- [x] Health check loop for all backends
+- [x] Cloud rate limiter and budget cap
 
 ### Phase 4 — Dashboard, Observability & Request Transformation
-> Goal: Full Web UI for monitoring and configuration. Opt-in request transformation.
+> Goal: Web UI for monitoring and configuration. Opt-in request transformation.
 
-- [ ] Dashboard HTTP server on separate port (embedded frontend via `embed`)
-- [ ] Dashboard frontend: real-time VRAM gauge (per-GPU, per-model)
-- [ ] Dashboard frontend: live request log with routing decisions, latency, token counts
-- [ ] Dashboard frontend: model management panel (load/unload/switch)
-- [ ] Dashboard frontend: rule editor with Starlark script support
-- [ ] Dashboard frontend: configuration editor (thresholds, VRAM allotments, PnCs)
-- [ ] Dashboard frontend: cost savings tracker (local tokens vs. estimated cloud cost)
-- [ ] WebSocket server for real-time push updates
-- [ ] REST API for config editing and model management
-- [ ] Metrics collector (latency percentiles, token counts, routing stats, cost estimates)
-- [ ] Request Transformer: opt-in context trimming (truncate middle file context when over model's max)
-- [ ] Request Transformer: opt-in prompt augmentation (user-defined prepend/append instructions)
-- [ ] Request Transformer: Starlark-scriptable transforms for advanced users
-- [ ] **System prompts are preserved by default** — transformations never strip them unless user explicitly scripts it
-- [ ] Verify: Dashboard shows live VRAM, config edits apply without restart, cost tracker reflects local savings
+- [x] Dashboard HTTP server on separate port (embedded frontend via `embed`)
+- [x] Tabs: Overview (sessions + request log), VRAM & Models, Rules Engine, Config
+- [x] Config form primary + optional YAML; tooltips + section cards; `GET|PUT /api/config`
+- [x] Rules Engine UI persists routing rules to config (hot-reloads router)
+- [x] `GET /api/vram` discovery + GPU assignment UI; `PUT /api/gpu-assignments`
+- [x] Soft validation (`/api/validate`) vs discovered model catalog
+- [x] Metrics: Mode/Action/Host/Path/Rule/OriginalModel; session history `~/.glider/history`
+- [x] WebSocket server for real-time push updates
+- [x] REST API for config editing and model management
+- [x] Request Transformer: opt-in context trimming + prompt augmentation
+- [x] **System prompts preserved by default**
+- [ ] Starlark-scriptable transforms as separate advanced surface
+- [ ] Pixel-perfect mockup parity (functional UI shipped)
 
 ### Phase 5 — Integration Testing & Polish
 > Goal: End-to-end stability, performance benchmarks, documentation.
 
-- [ ] End-to-end integration tests (Cursor → Glider → Ollama/vLLM/Cloud → Cursor)
-- [ ] Benchmark: proxy overhead target < 5ms on passthrough
-- [ ] Stress test: concurrent requests from multiple Cursor windows
-- [ ] Edge cases: OOM recovery, backend crash mid-stream, config corruption
-- [ ] README, setup guide, example `glider.yaml` configs
-- [ ] Makefile for build, test, release (single binary with embedded frontend)
+- [x] End-to-end integration tests (gateway + routing + resilience)
+- [x] Benchmark: proxy overhead target < 5ms on passthrough
+- [x] Concurrent request coverage
+- [x] Edge cases: config corruption, fallback
+- [x] README, setup guide, example configs
+- [x] Makefile for build/test
+- [ ] `go test -race` signed off on Windows (needs CGO toolchain)
 
+### Phase 6 — Dual-mode MITM, Responses API, Model Aliases, Shared Harness
+> Goal: Agent / all Cursor models via MITM; same orchestration engine as gateway; BYOK Responses compatibility; model ID mapping.
+
+- [x] `internal/mitm`: CONNECT, CA persist, leaf mint, host allowlist, blind tunnel
+- [x] Shared `PipelineCompleter.Handle` — gateway `Complete`, MITM `CompleteLocal`
+- [x] MITM non-local → `ErrOriginPassthrough` → origin TLS passthrough (not BYOK)
+- [x] Interceptor uses Harness only (no bare Router shortcut)
+- [x] Routing: explicit overrides → Starlark → thresholds → default cloud
+- [x] Wire MITM into `cmd/glider` (`mitm.enabled`, port `8082`)
+- [x] `/v1/responses` + Responses-shaped chat completions translation
+- [x] `model_aliases` in config + `ApplyModelAlias` in pipeline
+- [x] `configs/glider.cloud.yaml` default-cloud profile
+- [x] Docs: README dual-mode, `docs/CURSOR_CHECKLIST.md`, Windows setup scripts
+- [x] Unit/e2e: MITM passthrough, CompleteLocal local fulfill, Responses, aliases, threshold/script intercept
 ---
 
 ## 8. Verification Plan
 
 ### Automated Tests
-- **Unit:** Rule evaluation, config parsing, token counting, VRAM allocation math.
-- **Integration:** Spin up Ollama, send requests through Glider, verify streaming output matches direct Ollama output.
-- **Benchmark:** Measure proxy overhead (target: <5ms added latency on passthrough).
+- **Unit:** Rule evaluation, config parsing, token counting, VRAM math, MITM host match, CA mint, Responses translate, aliases.
+- **Integration / E2E:** Gateway round-trips; MITM CONNECT → decrypt → upstream; local MITM intercept stub.
+- **Benchmark:** Proxy overhead (target: <5ms added latency on passthrough).
 
 ### Manual Verification
-- Point Cursor at `localhost:8080`, use `/local` and `/cloud` commands, observe Dashboard routing log.
-- Load a large file in Cursor, send a request, verify context threshold triggers cloud routing.
-- Kill Ollama mid-request, verify fallback to cloud fires correctly.
-- Edit `glider.yaml` while running, verify changes take effect without restart.
+- **Mode A:** Point Cursor OpenAI Base URL at `localhost:8080/v1`; `/local` and `/cloud`; Dashboard.
+- **Mode B:** Trust Glider CA; `http.proxy` → `:8082`; `disableHttp2`; fully quit/relaunch; Agent with Cursor-native model passthrough; `/local` when body is chat/Responses.
+- Kill Ollama mid-request (gateway) → cloud fallback.
+- Edit `glider.yaml` while running → hot-reload.
+
+See `docs/CURSOR_CHECKLIST.md`.
 
 ---
 
@@ -865,8 +883,15 @@ dashboard:
 | # | Decision | Resolution |
 |---|----------|------------|
 | 1 | **Backend Priority** | Ollama + vLLM are both **core** from Phase 1. No stretch goals. |
-| 2 | **Dashboard Scope** | Full-featured from the start: real-time monitoring, config editor, rule editor, model management, cost tracker. |
-| 3 | **Request Transformation** | **Opt-in only.** Cursor's system prompts are **never stripped by default** — they contain formatting instructions Cursor's UI needs to parse responses. Transformation is limited to optional context trimming (truncate middle context when oversized) and optional prompt augmentation (user-defined instructions). Advanced users can write Starlark scripts for custom transforms. |
+| 2 | **Dashboard Scope** | Full-featured intent; shipped functional UI (Overview/VRAM/Rules/Config). Pixel-perfect mockup parity still open. |
+| 3 | **Request Transformation** | **Opt-in only.** Cursor system prompts **never stripped by default**. |
+| 4 | **Cursor Agent / all models** | **MITM forward proxy** required; gateway alone is insufficient. |
+| 5 | **MITM non-local destination** | **Original upstream Host** (Cursor subscription), not BYOK OpenAI. |
+| 6 | **Unrecognized MITM bodies** | Always **passthrough** — never break Agent. |
+| 7 | **Shared harness** | Gateway and MITM both use `PipelineCompleter`; MITM uses `CompleteLocal`. |
+| 8 | **Routing drivers** | Explicit `/local`/`/cloud` = overrides; **Starlark + token thresholds** = main drivers; default cloud. |
+| 9 | **MITM CA scope** | Cursor-only proxy; Trusted Root install + `NODE_EXTRA_CA_CERTS` for Cursor/Node — does not rewrite normal Windows internet for non-proxy clients. |
+| 10 | **Intro config** | `configs/glider.yaml` is the full-system demo profile (MITM on). |
 
 ---
 

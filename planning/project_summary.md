@@ -1,67 +1,76 @@
 # Glider — Project Summary
 
-> A local AI harness that sits above Cursor, intercepts requests, and intelligently routes them between local models and cloud APIs — saving cost, optimizing VRAM, and maintaining real-time performance.
+> A local AI harness that sits above Cursor in **dual mode**: an OpenAI-compatible BYOK gateway and an HTTPS MITM forward proxy. It routes simple work to local models and otherwise either uses your OpenAI/Anthropic keys **or** passthroughs to Cursor’s original upstream (`*.cursor.sh`) with auth intact.
 
 ---
 
 ## The Problem
 
-Cursor Chat sends every request to expensive cloud APIs (OpenAI, Anthropic), burning credits even for simple tasks like adding docstrings, renaming variables, or small refactors. Meanwhile, local GPUs sit idle. There's no middleware that can:
+Cursor Chat and Agent send requests to expensive cloud APIs (Cursor subscription cloud and/or OpenAI/Anthropic), burning credits even for simple tasks like adding docstrings, renaming variables, or small refactors. Meanwhile, local GPUs sit idle. There's no middleware that can:
 
-- Intercept these requests before they hit the cloud
+- Intercept these requests before they hit the cloud (including **Agent / all Cursor models**, not only BYOK OpenAI)
 - Route simple tasks to fast local models
+- Fall back to the **original Cursor destination** (or BYOK cloud) when local is not appropriate
 - Dynamically manage GPU memory without manual intervention
-- Fall back to cloud only when truly necessary
 
 **Glider solves this.**
 
 ---
 
-## Core Concept
+## Core Concept — Dual Mode
 
 ```
-┌────────────┐          ┌────────────────┐          ┌──────────────┐
-│   Cursor   │  ──────▶ │    GLIDER      │  ──────▶ │ Local GPU    │
-│   Chat     │  HTTP    │  (Proxy +      │  routes  │ (Ollama/vLLM)│
-│            │ ◀─────── │   Orchestrator)│ ◀─────── │              │
-└────────────┘  SSE     │                │          └──────────────┘
-                        │  Falls back ──────────▶  ┌──────────────┐
-                        │  only when needed        │ Cloud APIs   │
-                        └────────────────┘         │ (OpenAI etc) │
-                                                   └──────────────┘
+┌────────────┐   Mode A: Override OpenAI Base URL    ┌────────────────┐
+│   Cursor   │ ─────────────────────────────────────▶│  Gateway :8080 │──▶ Local (Ollama/vLLM)
+│  Chat/Ask  │   /v1/chat/completions|/v1/responses  │  (BYOK)        │──▶ Your OpenAI/Anthropic
+└────────────┘                                       └────────────────┘
+
+┌────────────┐   Mode B: http.proxy + trust Glider CA ┌────────────────┐
+│   Cursor   │ ─────────────────────────────────────▶│  MITM :8082    │──▶ Local (if body known)
+│ Agent/all  │   CONNECT → decrypt allowlisted hosts │  (forward)     │──▶ Original Cursor upstream
+│  models    │                                       └────────────────┘    (api2.cursor.sh, …)
+└────────────┘
 ```
 
-**How it works:** Cursor is configured to send API requests to `localhost:8080` instead of `api.openai.com`. Cursor thinks it's talking to OpenAI. Glider intercepts, evaluates rules, and routes locally or to cloud. Cursor never knows the difference.
+| Mode | How Cursor connects | “Cloud” / non-local means |
+|------|---------------------|---------------------------|
+| **A — Gateway** | Override OpenAI Base URL → `http://localhost:8080/v1` | Configured OpenAI/Anthropic with **your** API keys |
+| **B — MITM** | `http.proxy` → `http://127.0.0.1:8082` + trust Glider CA | **Original Host** Cursor intended (subscription traffic preserved) |
+
+**Mode A** is ideal for Chat / Ask / Cmd+K with OpenAI-compatible models.  
+**Mode B** is required for Agent and built-in Cursor models that never hit a custom OpenAI Base URL.
+
+Dashboard: `http://localhost:8081`.
 
 ---
 
 ## Key Design Decisions Made
 
-These were resolved through iterative discussion and research:
-
 | # | Decision | Resolution | Rationale |
 |---|----------|------------|-----------|
-| 1 | **Where does Glider sit?** | Above Cursor, as a transparent proxy | Avoids Cursor credit costs. No Cursor modifications needed. |
-| 2 | **Proxy language** | **Go** (Golang) | Single binary, excellent memory management, high concurrency for SSE streaming, easily open-sourceable. |
-| 3 | **Scripting for rules** | **Starlark** (Python dialect embedded in Go) | Sub-millisecond execution, fully sandboxed (no filesystem/network access), Python-like syntax. |
-| 4 | **Inference backends** | **Ollama + vLLM** (both core) | Ollama: simple model variant switching. vLLM: true per-request LoRA hot-swapping. |
-| 5 | **LoRA strategy** | Dual approach | Ollama can't hot-swap LoRAs (must pre-bake into model variants). vLLM can (sub-ms on cache hit). Both supported. |
-| 6 | **Routing logic** | Explicit (direct precedence) + Implicit (regex, thresholds, Starlark scripts) | Explicit commands like `/local` always win. Implicit rules fill the gaps. |
-| 7 | **VRAM management** | Load on demand, unload after idle timeout (scale-to-zero) | Models consume VRAM only when actively serving. Configurable `keep_alive` timeout. |
-| 8 | **Context token threshold** | Exposed as configurable parameter | User sets the cutoff (e.g., >8000 tokens → cloud). |
-| 9 | **Cursor system prompts** | **Never stripped by default** | Cursor's UI depends on its system prompt formatting to parse responses. Stripping breaks the UI. |
-| 10 | **Request transformation** | Opt-in only: context trimming + prompt augmentation | Trims middle context when oversized. Augments with user-defined instructions. Both optional. |
-| 11 | **Dashboard** | Full-featured from day one | Real-time VRAM gauge, config editor, rule editor, model management, cost tracker. Not a stretch goal. |
-| 12 | **Development methodology** | **TDD (Test-Driven Development)** | 91 tests + 4 benchmarks defined upfront. Tests written before code. Phase is done when all tests pass. |
+| 1 | **Where does Glider sit?** | Dual: OpenAI-compatible **gateway** + HTTPS **MITM** forward proxy | Gateway alone cannot see Cursor Agent / subscription models. MITM intercepts `*.cursor.sh` while preserving origin passthrough. |
+| 2 | **Proxy language** | **Go** (Golang) | Single binary, high concurrency for SSE, open-sourceable. |
+| 3 | **Scripting for rules** | **Starlark** | Sub-ms, sandboxed, Python-like. |
+| 4 | **Inference backends** | **Ollama + vLLM** (both core) | Variants vs true LoRA hot-swap. |
+| 5 | **LoRA strategy** | Dual approach | Ollama pre-baked variants; vLLM per-request adapters. |
+| 6 | **Routing logic** | **One shared harness** for both modes | Explicit `/local`/`/cloud` = overrides. **Main drivers** = Starlark scripts + context token thresholds. Unrecognized MITM bodies **passthrough**. |
+| 7 | **VRAM management** | Load on demand, unload after idle timeout | Scale-to-zero. |
+| 8 | **Context token threshold** | Configurable primary driver | e.g. `>8000` → cloud/origin; `<=8000` → local (unless overridden). |
+| 9 | **Cursor system prompts** | **Never stripped by default** | UI depends on them. |
+| 10 | **Request transformation** | Opt-in trim + augment | Optional only. |
+| 11 | **Dashboard** | Core from day one | Live VRAM, routing, config. |
+| 12 | **Development methodology** | **TDD** | Tests define done; `go test ./...` green. |
+| 13 | **Agent / Responses API** | Accept `/v1/responses` + translate Responses-shaped bodies on `/chat/completions` | Cursor Agent BYOK quirk. |
+| 14 | **Model ID mapping** | `model_aliases` in `glider.yaml` | Map Cursor/OpenAI model IDs → local registry names before routing. |
+| 15 | **MITM CA** | Local CA under `~/.glider/mitm/` | User trusts CA; leaf certs minted per host. |
+| 16 | **MITM vs gateway engine** | Same `PipelineCompleter` | Gateway: `Complete`. MITM: `CompleteLocal` → non-local returns `ErrOriginPassthrough` → Cursor upstream. |
 
 ---
 
 ## V2 Future Goals (Swarm & Loop Engineering)
 
-Glider's architecture is designed to evolve into a multi-agent ecosystem. Future V2 enhancements include:
-
-- **Swarm Delegation:** A "heavy" local model acts as a planner, delegating sub-tasks to a swarm of fast, specialized local "worker" models before synthesizing the final response.
-- **Loop Engineering:** Implementing local reflection and iterative testing. Glider will be able to test generated code in a local loop, refining it multiple times before returning the final, polished response to Cursor.
+- **Swarm Delegation:** Planner local model → worker swarm → aggregate SSE to Cursor.
+- **Loop Engineering:** Local lint/test reflection before Cursor sees the final stream.
 
 ---
 
@@ -69,144 +78,143 @@ Glider's architecture is designed to evolve into a multi-agent ecosystem. Future
 
 | Component | Technology | Why |
 |-----------|-----------|-----|
-| Proxy/Orchestrator | **Go** | Single binary, low memory, high concurrency |
-| Rule Scripting | **Starlark** (`go.starlark.net`) | Sandboxed Python-like scripts, sub-ms |
-| Regex in Scripts | **Starlib** (`qri-io/starlib`) | Starlark standard library extension |
-| Local Inference (simple) | **Ollama** | Easy model management, `keep_alive`, `num_gpu` |
-| Local Inference (LoRA) | **vLLM** | Per-request LoRA hot-swap, PagedAttention |
-| Config Format | **YAML** (`gopkg.in/yaml.v3`) | Human-readable, supports complex nesting |
-| Config Hot-Reload | **fsnotify** | Filesystem watcher, atomic config swap |
-| Token Counting | **tiktoken-go** | BPE tokenizer matching OpenAI's counting |
-| VRAM Monitoring | **nvidia-smi** CLI | Cross-platform (Windows + Linux) |
-| Dashboard Real-time | **gorilla/websocket** | WebSocket push for live updates |
-| Frontend Embedding | **Go `embed`** | Bundle HTML/JS/CSS into single binary |
-| Logging | **`log/slog`** (stdlib) | Structured logging, zero dependencies |
+| Gateway + Orchestrator | **Go** | Single binary, SSE concurrency |
+| HTTPS MITM | **Go `crypto/tls` + CONNECT** | Forward proxy decrypt for allowlisted hosts |
+| Rule Scripting | **Starlark** (`go.starlark.net`) | Sandboxed, sub-ms |
+| Regex in Scripts | **Starlib** | Starlark stdlib extension |
+| Local Inference | **Ollama** + **vLLM** | Variants + LoRA |
+| Config | **YAML** + **fsnotify** | Hot-reload |
+| Token Counting | **tiktoken-go** | OpenAI-compatible counts |
+| VRAM Monitoring | **nvidia-smi** | Windows + Linux |
+| Dashboard | **gorilla/websocket** + **embed** | Live UI in one binary |
+| Logging | **`log/slog`** | Stdlib |
 
 ---
 
-## All Planned Features
+## Features (Current)
 
-### Proxy & Routing
-- OpenAI-compatible proxy (`/v1/chat/completions`, `/v1/models`)
-- SSE streaming passthrough with < 5ms overhead
-- Explicit routing commands (`/local`, `/cloud`, `/heavy`)
-- Implicit routing via regex, keywords, context-size thresholds
-- Custom Starlark scripting for advanced routing logic
-- Configurable context token threshold
-- Request transformation (opt-in context trimming & augmentation)
+### Dual-mode proxy & routing
+- OpenAI-compatible gateway: `/v1/chat/completions`, `/v1/models`, `/v1/responses`
+- Responses-shaped body accepted on `/v1/chat/completions` (Agent quirk)
+- HTTPS MITM forward proxy (`mitm.port`, default `8082`): CONNECT, CA, allowlist, decrypt
+- **Shared harness:** both modes run alias → tokenize → route → transform → execute via `PipelineCompleter`
+  - Gateway: `Complete` (cloud → BYOK OpenAI/Anthropic)
+  - MITM: `CompleteLocal` (cloud/non-local → `ErrOriginPassthrough` → original Cursor Host)
+- Blind tunnel for non-allowlisted CONNECT hosts
+- Routing priority: **explicit overrides** → **Starlark scripts** → **context thresholds** → default cloud
+- Explicit `/local`, `/cloud`, `/heavy`, `/fast`; regex / context / Starlark rules
+- `model_aliases` map
+- Opt-in request transform (trim / augment); system prompts preserved
 
-### Model & VRAM Management
-- Dynamic VRAM allocation (static / dynamic / hybrid strategies)
-- Scale-to-zero: unload after configurable idle timeout
-- Model Registry with VRAM footprint, context window, capability metadata
-- Pre-baked LoRA variants (Ollama) + true LoRA hot-swap (vLLM)
-- Multi-GPU support with per-model GPU assignments
-- VRAM headroom reservation
-- LRU eviction when VRAM is full
+### Model & VRAM
+- Dynamic / static / hybrid allocation, scale-to-zero, registry, LoRA (vLLM), multi-GPU, headroom, LRU
+- `GET /api/vram` discovers Ollama tags / vLLM models + nvidia-smi gauges; GPU pins via UI → `vram.gpu_assignments`
+- Soft catalog validation warnings (`GET|POST /api/validate`) when assignments/models don’t match discovered backends
 
-### Resilience & Performance
-- Fallback chain: Local → Cloud
-- Circuit breaker on failing backends
-- Priority request queue (interactive > background)
-- Health checks for all backends
-- Cloud rate limiting and budget caps
+### Resilience
+- Local → cloud fallback (gateway), circuit breaker, priority queue, health checks, cloud rate/budget
 
-### Configuration
-- Single `glider.yaml` file
-- Hot-reload on file change (no restart)
-- Pluggable backend interface (SOLID: add backends without modifying core)
+### Config & ops
+- `configs/glider.yaml` — **intro / full-system demo** (MITM on; scripts + thresholds drive; default cloud → MITM origin / gateway BYOK)
+- `configs/glider.cloud.yaml` (gateway default cloud BYOK, MITM off)
+- Hot-reload: routing rules, aliases, context thresholds, log level (GPU assignments persist via same Swap path)
+- Restart required: listen ports, MITM enable/port/CA/hosts, backend URLs, cloud provider registration
+- Windows setup: `scripts/setup-windows.ps1` (CA → Trusted Root + `NODE_EXTRA_CA_CERTS`). Cursor-only proxy — CA in Trusted Root does not change normal Windows internet for apps that ignore the system store / don’t use Glider’s proxy
 
-### Dashboard (Web UI)
-- Real-time VRAM gauge (per-GPU, per-model)
-- Live request log with routing decisions, latency, token counts
-- Model management panel (load/unload/switch)
-- Rule editor with Starlark script support
-- Configuration editor (thresholds, VRAM allotments)
-- Cost savings tracker (local tokens vs. estimated cloud cost)
-- WebSocket-driven real-time push updates
+### Observability
+- Request metrics: Mode / Action / Host / Path / Rule / OriginalModel (+ tokens, latency)
+- slog: MITM CONNECT `decrypt` vs `blind_tunnel`; intercept local / origin_passthrough / skip / error
+- Dashboard Overview request log columns: TIME, MODE, ACTION, HOST / MODEL, RULE, LATENCY, TOKENS
+- Session history under `~/.glider/history` (one session = one Glider process run); live WS still tails the current session
+
+### Dashboard
+- Tabs: Overview (sessions + live log), VRAM & Models, Rules Engine, Config
+- Config: structured form primary (section cards + tooltips); Edit YAML optional/collapsed; `GET|PUT /api/config`
+- Rules Engine: create/edit/enable routing rules (explicit / script / context_size / always / etc.) → persisted to config
+- Cost / local-vs-cloud split metrics (functional UI; not pixel-perfect vs mockups)
 
 ---
 
 ## Architecture (Simplified)
 
 ```
-CURSOR ──▶ API Gateway ──▶ Tokenizer ──▶ Router ──▶ Execution Layer ──▶ Backend
-               │                         (rules)      (Executor)           │
-               │                            │              │           ┌────┴────┐
-               │                        Starlark      VRAM Mgr       Local   Cloud
-               │                        Scripts       Model Reg      (Ollama  (OpenAI
-               │                                      Queue           vLLM)   Anthropic)
-               │
-          Dashboard ◀── WebSocket ◀── Metrics Collector
-          (Web UI)
+                    ┌──────────────────────────────────────────┐
+                    │  SHARED HARNESS (PipelineCompleter)       │
+                    │  alias → tokenize → route → transform     │
+                    │           → execute                       │
+                    └────────────▲─────────────▲────────────────┘
+                                 │             │
+Mode A: Gateway :8080 ──Complete─┘             │
+        → Local | BYOK Cloud                   │
+                                               │
+Mode B: MITM :8082 ──decrypt──CompleteLocal────┘
+        → Local | ErrOriginPassthrough → Cursor origin
+
+Dashboard :8081 ◀── Metrics (+ history store)
 ```
 
-*The Router evaluates rules to produce a `RoutingDecision` with a specific `Strategy` (Single, Fan-Out, Pipeline). This decision is passed to the Execution Layer (implementing the `Executor` interface), which handles the orchestration before hitting the backends.*
+**Routing priority (both modes):**
+1. Explicit `/local`, `/fast`, `/cloud`, `/heavy` (overrides)
+2. Starlark scripts (main driver)
+3. Context token thresholds (main driver)
+4. Default `cloud` (gateway → BYOK; MITM → origin)
 
-**SOLID principles enforced throughout:**
-- **S**: Each component has exactly one job
-- **O**: New backends/rules added via interfaces, not by modifying core
-- **L**: Any `InferenceBackend` implementation is interchangeable
-- **I**: `LoRAManager` is separate from `InferenceBackend` — Ollama doesn't implement it
-- **D**: Core depends on abstractions, never on concrete Ollama/vLLM types
+**MITM decrypt allowlist (default intro profile):** `api2.cursor.sh`, `api3.cursor.sh`, `api4.cursor.sh`, `*.api5.cursor.sh`. All other CONNECT hosts are blind-tunneled.
+
+**SOLID** as before: narrow interfaces, pluggable backends, core depends on abstractions.
 
 ---
 
 ## Phased Build Plan
 
-| Phase | Focus | Key Deliverable |
+| Phase | Focus | Status |
 |---|---|---|
-| **1** | Foundation & Proxy | Cursor ↔ Glider ↔ Ollama/vLLM/Cloud streaming works end-to-end |
-| **2** | Config, Router & Rules | Requests route based on rules. Config hot-reloads. Starlark scripts execute. |
-| **3** | VRAM, Model Lifecycle & Orchestrator | Models load/unload dynamically. Scale-to-zero. Fallback chain. Priority queue. |
-| **4** | Dashboard & Observability | Full Web UI: live VRAM, config editor, rule editor, cost tracker. Opt-in transforms. |
-| **5** | Integration Testing & Polish | E2E tests, benchmarks (< 5ms overhead), stress tests, documentation. |
+| **1** | Foundation & Gateway | Implemented |
+| **2** | Config, Router & Rules | Implemented |
+| **3** | VRAM, Lifecycle & Orchestrator | Implemented |
+| **4** | Dashboard & Transforms | Implemented (UI minimal vs mockups) |
+| **5** | E2E, benches, docs | Implemented (`go test -race` optional on Windows) |
+| **6** | Dual-mode MITM + Responses + aliases + **shared harness** | Implemented |
 
 ---
 
 ## TDD Approach
 
-| Metric | Target |
+| Metric | Target / Current |
 |---|---|
-| Total tests defined | **91 tests + 4 benchmarks** |
+| Core phases | Phases 1–5 tests green via `go test ./...` |
+| Phase 6 | MITM + Responses + aliases; `CompleteLocal` / `ErrOriginPassthrough`; threshold/script-driven routing |
 | Coverage target | ≥ 80% line coverage per package |
-| Race detection | `go test -race` must pass with zero warnings |
-| Phase completion | ALL tests for a phase must be GREEN before moving on |
-
-**Workflow per feature:**
-```
-Write test (RED) → Implement code (GREEN) → Refactor → Next test
-```
+| Race detection | `go test -race` where CGO available |
 
 ---
 
-## Final Expected Output
+## Final Expected Output (How to use)
 
-When Glider is complete, the user will have:
-
-### A Single Binary
+### Binary
 ```bash
-glider.exe    # ~15-20MB, everything bundled
+glider.exe --config configs/glider.yaml
 ```
 
-### That Does This
-1. **Start it:** `./glider --config glider.yaml`
-2. **Point Cursor at it:** Set Cursor's API URL to `http://localhost:8080/v1`
-3. **Use Cursor normally:** Chat, Cmd+K — everything works as before
-4. **But now:**
-   - Simple tasks (docstrings, refactors, renames) → **handled by your local GPU for free**
-   - Complex tasks (architecture, large codebase analysis) → **forwarded to cloud only when needed**
-   - Models load into VRAM on-demand and unload when idle → **GPU free for gaming/other work**
-   - Open `localhost:8081` → **live dashboard showing VRAM, routing, cost savings**
-   - Edit `glider.yaml` → **changes take effect instantly, no restart**
-   - Write a `.star` script → **custom routing logic in Python-like syntax**
+### Mode A — BYOK gateway
+1. Override OpenAI Base URL → `http://localhost:8080/v1`
+2. Use Chat / Ask / Cmd+K with OpenAI-path models
+3. Optional overrides: `/local`, `/cloud` — otherwise scripts + token thresholds decide
+
+### Mode B — MITM (Agent + all Cursor models)
+1. Trust `~/.glider/mitm/ca.crt` (see `scripts/setup-windows.ps1`)
+2. Set `NODE_EXTRA_CA_CERTS` to that CA
+3. Cursor settings: `http.proxy` = `http://127.0.0.1:8082`, `proxySupport` = `override`, `disableHttp2` = `true`
+4. Fully quit and relaunch Cursor
+5. Use Agent normally — same harness as gateway; non-local → original Cursor upstream
 
 ### What Success Looks Like
-- **Cost:** 60-80% reduction in Cursor cloud API spend
-- **Latency:** < 5ms proxy overhead (user doesn't notice Glider exists)
-- **VRAM:** Models consume GPU memory only when serving, free it when idle
-- **Modularity:** Add a new inference backend by implementing one Go interface
-- **Reliability:** Backend crashes don't break Cursor — cloud fallback activates automatically
+- Agent subscription models work through MITM with origin passthrough
+- Thresholds/scripts route small work local without typing `/local`
+- Explicit `/local` / `/cloud` still override when needed
+- Gateway BYOK path remains independent but shares the same engine
+- < 5ms proxy overhead on passthrough
+- Dashboard at `:8081` shows routing
 
 ---
 
@@ -214,5 +222,8 @@ glider.exe    # ~15-20MB, everything bundled
 
 | Document | Purpose |
 |---|---|
-| [Implementation Plan](file:///C:/Users/Utsav/.gemini/antigravity/brain/dd367367-3e5e-404e-8f1b-f72391f4cc0e/implementation_plan.md) | Full HLD/LLD with interfaces, config schema, state machines, dependency map |
-| [TDD Test Plan](file:///C:/Users/Utsav/.gemini/antigravity/brain/dd367367-3e5e-404e-8f1b-f72391f4cc0e/tdd_test_plan.md) | 91 tests with Given/When/Then, organized by phase, defining "done" |
+| [implementation_plan.md](implementation_plan.md) | HLD/LLD, package layout, config schema (incl. MITM) |
+| [tdd_test_plan.md](tdd_test_plan.md) | Phase tests + Phase 6 MITM/Responses/aliases |
+| [../README.md](../README.md) | User setup for dual mode |
+| [../docs/CURSOR_CHECKLIST.md](../docs/CURSOR_CHECKLIST.md) | Manual Cursor verification |
+| [../STATUS.md](../STATUS.md) | Build status snapshot |

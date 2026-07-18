@@ -2,6 +2,8 @@
 
 > Every phase is defined by the tests that must pass before it is complete.
 > Development follows **Red → Green → Refactor**: write the test first, watch it fail, implement until it passes, then clean up.
+>
+> **Status:** Phases 1–5 core tests are implemented in-repo. **Phase 6** (MITM, Responses, aliases, shared `PipelineCompleter` / `CompleteLocal`) is covered by `internal/mitm`, `internal/orchestrator/pipeline_test.go`, `internal/api/responses_test.go`, and `e2e/mitm_test.go`. Dashboard/observability extensions (`/api/vram`, `/api/sessions`, history store, config validate, GPU assignments) live under `internal/dashboard` and `internal/metrics` tests.
 
 ---
 
@@ -922,7 +924,7 @@
 
 ## Phase 4 — Dashboard, Observability & Request Transformation
 
-> **Phase is DONE when:** Web UI displays live VRAM, request logs, and cost tracking. Config and rules can be edited from the UI. Request transformations (context trimming, augmentation) work opt-in.
+> **Phase is DONE when:** Web UI displays live VRAM (discovery + GPU gauges), request logs (Mode/Action/Host/Rule/OriginalModel), session history, and cost tracking. Config (form + optional YAML) and Rules Engine can be edited from the UI. Request transformations (context trimming, augmentation) work opt-in.
 
 ---
 
@@ -982,6 +984,33 @@
 | **Then** | Model is unloaded. State transitions to COLD. |
 | **Success** | Model state = COLD. VRAM freed. |
 
+#### `T4.1.7` — GET /api/vram discovers backends + GPU gauges
+| | |
+|---|---|
+| **Type** | Integration |
+| **Given** | Config with Ollama/vLLM URLs; optional nvidia-smi |
+| **When** | `GET /api/vram` |
+| **Then** | Snapshot includes models (config + discovered), `gpu_assignments`, and GPU memory when available |
+| **Success** | JSON schema matches `VRAMSnapshot`; soft failures surface as errors/warnings not 500 |
+
+#### `T4.1.8` — PUT /api/gpu-assignments persists map
+| | |
+|---|---|
+| **Type** | Integration |
+| **Given** | Running dashboard with FileConfigStore |
+| **When** | `PUT /api/gpu-assignments` with `{ "codellama:7b": 0 }` |
+| **Then** | Config `vram.gpu_assignments` updated; Provider Swap notified |
+| **Success** | Subsequent `GET /api/vram` reflects assignment |
+
+#### `T4.1.9` — Session history list + requests
+| | |
+|---|---|
+| **Type** | Integration |
+| **Given** | History store with session `run-…` and recorded requests |
+| **When** | `GET /api/sessions` then `GET /api/sessions/{id}/requests` |
+| **Then** | Sessions listed; requests include mode/action/rule fields |
+| **Success** | Aggregates and request rows match stored JSONL |
+
 ---
 
 ### 4.2 WebSocket & Real-Time Updates (`internal/dashboard/`)
@@ -992,7 +1021,7 @@
 | **Type** | Integration |
 | **Given** | WebSocket client connected to `ws://localhost:8081/ws`. |
 | **When** | A completion request is processed by Glider. |
-| **Then** | WebSocket receives a JSON event: `{type: "request", data: {id, route, model, tokens, latency_ms}}`. |
+| **Then** | WebSocket receives a JSON event: `{type: "request", data: {id, mode, action, host, path, rule, original_model, route, model, tokens, latency_ms}}` (fields populated per gateway/MITM path). |
 | **Success** | Event received within 1 second of request completion. |
 
 #### `T4.2.2` — WebSocket emits VRAM state updates
@@ -1249,19 +1278,227 @@
 | **When** | `go test -race ./...` |
 | **Then** | Zero data races detected. |
 | **Success** | Exit code 0. No race warnings. |
+| **Note** | On Windows without CGO, race detector may be unavailable — track as optional sign-off. |
 
 ---
+
+## Phase 6 — Dual-mode MITM, Responses API, Model Aliases & Shared Harness
+
+> **Phase is DONE when:** MITM CONNECT decrypts allowlisted hosts; **both modes use `PipelineCompleter`** (MITM via `CompleteLocal`); non-local MITM returns `ErrOriginPassthrough` → origin; gateway accepts Responses API; model aliases rewrite IDs; routing priority is explicit → script → threshold → default — with all tests below passing.
+
+---
+
+### 6.1 MITM CA & Host Allowlist (`internal/mitm/`)
+
+#### `T6.1.1` — Generate and persist CA
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Empty CA paths under a temp dir |
+| **When** | `LoadOrCreateAuthority(cert, key)` |
+| **Then** | CA PEM written; reload returns the same cert |
+| **Success** | Files exist; PEM non-empty; thumbprint stable across reload |
+
+#### `T6.1.2` — Mint leaf cert for host
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Authority |
+| **When** | `CertificateForHost("api2.cursor.sh")` |
+| **Then** | Leaf CN/SAN matches host; signed by CA |
+| **Success** | Second call returns cached cert |
+
+#### `T6.1.3` — Host allowlist matching
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Patterns `*.cursor.sh`, `api.openai.com` |
+| **When** | Match various hosts (with/without port) |
+| **Then** | `api2.cursor.sh` and apex `cursor.sh` match; unrelated hosts do not |
+| **Success** | Table-driven cases all pass |
+
+---
+
+### 6.2 MITM Proxy Behavior (`internal/mitm/`, `e2e/`)
+
+#### `T6.2.1` — CONNECT + decrypt + origin passthrough
+| | |
+|---|---|
+| **Type** | Integration / E2E |
+| **Given** | Fake upstream TLS server; MITM with matching allowlist host; client trusts Glider CA |
+| **When** | HTTPS GET through `http.proxy` |
+| **Then** | Response body/headers from upstream |
+| **Success** | Round-trip succeeds; upstream was hit |
+
+#### `T6.2.2` — Blind tunnel for non-allowlisted host
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | MITM with allowlist that does not match CONNECT target |
+| **When** | CONNECT then raw bytes |
+| **Then** | `200 Connection Established` and bytes tunnel without decrypt |
+| **Success** | Echo/upstream receives payload |
+
+#### `T6.2.3` — Local intercept short-circuit
+| | |
+|---|---|
+| **Type** | Unit / E2E |
+| **Given** | `LocalHandler` that always handles |
+| **When** | POST `/v1/chat/completions` through MITM |
+| **Then** | Local response returned; upstream not required |
+| **Success** | Body matches stub |
+
+#### `T6.2.4` — Interceptor: cloud target → passthrough signal
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Harness `CompleteLocal` returns `ErrOriginPassthrough` (cloud / non-local decision) |
+| **When** | `Interceptor.TryHandle` |
+| **Then** | `handled=false` (origin passthrough); body restored for upstream |
+| **Success** | Harness called once; no local response written |
+
+#### `T6.2.5` — Interceptor: `/local` → fulfill via shared harness
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Explicit `/local` rule; message contains `/local` |
+| **When** | `Interceptor.TryHandle` |
+| **Then** | `handled=true`; `CompleteLocal` invoked; chat JSON/SSE written |
+| **Success** | Harness call count = 1 |
+
+#### `T6.2.6` — Interceptor: context threshold drives local without `/local`
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Rules: context `<=8000` → local; no explicit command; small prompt |
+| **When** | `Interceptor.TryHandle` via `PipelineCompleter.CompleteLocal` |
+| **Then** | Local fulfillment (not `ErrOriginPassthrough`) |
+| **Success** | Threshold rule matched; chunks returned |
+
+#### `T6.2.7` — Interceptor: context overflow → origin passthrough
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Rules: context `>8000` → cloud; large estimated tokens |
+| **When** | `CompleteLocal` / Interceptor |
+| **Then** | `ErrOriginPassthrough` / `handled=false` |
+| **Success** | No local execute
+
+---
+
+### 6.3 Responses API (`internal/api/`)
+
+#### `T6.3.1` — Detect Responses-shaped body
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | JSON with `input` and no `messages` |
+| **When** | `LooksLikeResponses` |
+| **Then** | Returns true; chat completions body returns false |
+| **Success** | Both cases correct |
+
+#### `T6.3.2` — Translate string `input` + instructions
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Responses JSON with `input: "hello"` and `instructions` |
+| **When** | `ResponsesToCompletion` |
+| **Then** | Messages include system + user; model/stream preserved |
+| **Success** | No error; roles/content correct |
+
+#### `T6.3.3` — `POST /v1/responses` returns Responses object
+| | |
+|---|---|
+| **Type** | Unit (httptest) |
+| **Given** | Stub Completer |
+| **When** | `POST /v1/responses` |
+| **Then** | HTTP 200; `object: response` |
+| **Success** | JSON schema matches |
+
+#### `T6.3.4` — Chat completions accepts Responses body
+| | |
+|---|---|
+| **Type** | Unit (httptest) |
+| **Given** | Responses-shaped POST to `/v1/chat/completions` |
+| **When** | Handler runs |
+| **Then** | Not 400 `missing messages`; Responses-shaped output |
+| **Success** | Status 200 |
+
+---
+
+### 6.4 Model Aliases (`internal/orchestrator/`)
+
+#### `T6.4.1` — Alias rewrites model and preserves OriginalModel
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | `model_aliases: { "gpt-4o": "codellama:7b" }`; request model `gpt-4o` |
+| **When** | `ApplyModelAlias` |
+| **Then** | `req.Model == codellama:7b`; `OriginalModel == gpt-4o` |
+| **Success** | Both fields set |
+
+#### `T6.4.2` — Unknown model unchanged
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Alias map without key `claude-3` |
+| **When** | `ApplyModelAlias` |
+| **Then** | Model string unchanged |
+| **Success** | No mutation |
+
+---
+
+### 6.5 Shared Harness (`internal/orchestrator/pipeline.go`)
+
+#### `T6.5.1` — `Complete` executes cloud via BYOK path
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Router decides `target: cloud`; mock cloud executor |
+| **When** | `PipelineCompleter.Complete` |
+| **Then** | Chunks from cloud backend; no `ErrOriginPassthrough` |
+| **Success** | Gateway semantics preserved |
+
+#### `T6.5.2` — `CompleteLocal` maps cloud → `ErrOriginPassthrough`
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Same router decision `target: cloud` |
+| **When** | `PipelineCompleter.CompleteLocal` |
+| **Then** | Returns `errors.Is(err, ErrOriginPassthrough)`; executor not run |
+| **Success** | MITM origin sentinel |
+
+#### `T6.5.3` — `CompleteLocal` fulfills local through full pipeline
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Router decides `target: local` |
+| **When** | `CompleteLocal` |
+| **Then** | Chunks returned from local executor after alias/tokenize/route/transform |
+| **Success** | Shared path with gateway local |
+
+#### `T6.5.4` — Explicit override beats threshold
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Large context would match overflow→cloud; message has `/local` |
+| **When** | Route via engine used by pipeline |
+| **Then** | Decision target = local |
+| **Success** | Explicit priority > threshold
+
+---
+
 
 ## Test Tooling & Infrastructure
 
 | Tool | Purpose |
 |---|---|
 | `testing` (stdlib) | Unit test framework |
-| `net/http/httptest` | Mock HTTP servers for backend simulation |
-| `go test -race` | Data race detection |
+| `net/http/httptest` | Mock HTTP servers for backend / gateway simulation |
+| `crypto/tls` test servers | MITM upstream + client trust pool |
+| `go test -race` | Data race detection (where CGO available) |
 | `go test -bench` | Performance benchmarks |
 | `go test -cover` | Coverage reporting (target ≥80%) |
-| `testify/assert` | Assertion helpers (optional, for readability) |
 | `gorilla/websocket` | WebSocket client for dashboard tests |
 
 ---
@@ -1273,6 +1510,9 @@
 | Phase 1 | 24 tests | 24/24 | ≥80% on `api/`, `backend/` |
 | Phase 2 | 22 tests | 22/22 | ≥80% on `config/`, `router/`, `transform/tokenizer` |
 | Phase 3 | 20 tests | 20/20 | ≥80% on `vram/`, `orchestrator/`, `backend/registry` |
-| Phase 4 | 17 tests | 17/17 | ≥80% on `dashboard/`, `metrics/`, `transform/` |
-| Phase 5 | 8 tests + 4 benchmarks | 8/8 + benchmarks meet targets | ≥80% overall |
-| **Total** | **91 tests + 4 benchmarks** | **All green** | **≥80% overall** |
+| Phase 4 | 20 tests (incl. vram/sessions/gpu APIs) | 20/20 | ≥80% on `dashboard/`, `metrics/`, `transform/` |
+| Phase 5 | 8 tests + 4 benchmarks | 8/8 + benches meet targets | ≥80% overall |
+| Phase 6 | 18 tests (MITM + Responses + aliases + shared harness) | 18/18 | ≥80% on `mitm/`, `orchestrator` pipeline; Responses/alias in `api/` |
+| **Total** | **112 tests + 4 benchmarks** | **All green** | **≥80% overall** |
+
+**Manual:** `docs/CURSOR_CHECKLIST.md` (Mode A gateway + Mode B MITM Ask/Agent).
