@@ -1,0 +1,17 @@
+kind: swarm_template
+id: code-review-swarm
+name: Multi-agent code review
+enabled: true
+prefer_local: true
+max_workers: 4
+roles:
+  - plan
+  - security
+  - tests
+  - docs
+prompt: |
+  Review the following change for a Go MITM/gateway harness (Glider). Cover design risks,
+  security (MITM CA, secrets), test gaps, and docs impact. Keep each role under 150 words.
+  Change summary: added per-instance agent logs, CritiqueMerge, parallel actor stages,
+  Cytoscape undo/history, and showcase hoop samples.
+description: Fan-out code review with plan/security/tests/docs roles; CritiqueMerge on fan-in.

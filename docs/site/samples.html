@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sample hoops · Glider Docs</title>
+  <title>Sample hoops and swarms · Glider Docs</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
 </head>
@@ -28,59 +28,70 @@
       <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
-      <a class="active" href="samples.html">Sample hoops</a>
+      <a class="active" href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Runnable</div>
-      <h1>Sample hoops</h1>
-      <p>YAML under <code>samples/hoops/</code>. All default to <strong>route: local</strong> for Ollama smoke tests.</p>
+      <h1>Sample hoops and swarms</h1>
+      <p>YAML under <code>samples/hoops/</code> and <code>samples/swarms/</code>. Defaults use <strong>route: local</strong> for Ollama.</p>
 
       <h2>Prerequisites</h2>
       <pre>ollama serve
-.\glider.exe --config configs\glider.local.yaml
-# Dashboard up on :8081</pre>
+.\glider.exe --config configs\glider.yaml
+# Dashboard :8081 — orchestration.fan_out + swarm enabled</pre>
 
-      <h2>Run one</h2>
-      <pre>go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start
-# watch: GET http://127.0.0.1:8081/api/loops
-# or Dashboard → Hoops &amp; Swarm</pre>
-
-      <h2>Catalog</h2>
+      <h2>Showcase hoops</h2>
       <table>
-        <tr><th>File</th><th>What it does</th><th>Iterations</th></tr>
+        <tr><th>File</th><th>Features exercised</th></tr>
         <tr>
-          <td><code>hello-critic.yaml</code></td>
-          <td>Smoke: planner/actor/critic say hello; critic scores completeness</td>
-          <td>2</td>
+          <td><code>incident-triage.yaml</code></td>
+          <td>On-call runbook; parallel actor fan-out; critic gate; learning; feedback edge; max_latency</td>
         </tr>
         <tr>
-          <td><code>explain-snippet.yaml</code></td>
-          <td>Explain a short Go function in plain language</td>
-          <td>2</td>
+          <td><code>research-synthesize.yaml</code></td>
+          <td>Research → synthesize → critique; contains stop; feedback to planner</td>
         </tr>
         <tr>
-          <td><code>rename-suggest.yaml</code></td>
-          <td>Suggest clearer names for a poorly named helper</td>
-          <td>2</td>
-        </tr>
-        <tr>
-          <td><code>review-lite.yaml</code></td>
-          <td>Light code review of a tiny diff (maker/checker)</td>
-          <td>3</td>
-        </tr>
-        <tr>
-          <td><code>summarize-notes.yaml</code></td>
-          <td>Summarize bullet notes into 3 takeaways</td>
-          <td>2</td>
+          <td><code>release-changelog.yaml</code></td>
+          <td>Release checklist + changelog; human gate; high critic threshold</td>
         </tr>
       </table>
 
-      <h2>Install all into ~/.glider/hoops</h2>
-      <pre>go run ./scripts/loadhoop -dir samples/hoops
-# creates via API + mirrors YAML; add -start -id hello-critic to run one</pre>
+      <h2>Smoke hoops</h2>
+      <table>
+        <tr><th>File</th><th>What it does</th></tr>
+        <tr><td><code>hello-critic.yaml</code></td><td>Minimal planner/actor/critic smoke</td></tr>
+        <tr><td><code>explain-snippet.yaml</code></td><td>Explain a short Go function</td></tr>
+        <tr><td><code>rename-suggest.yaml</code></td><td>Rename suggestions</td></tr>
+        <tr><td><code>review-lite.yaml</code></td><td>Light code review</td></tr>
+        <tr><td><code>summarize-notes.yaml</code></td><td>Summarize bullets</td></tr>
+      </table>
 
-      <h2>PowerShell helper</h2>
-      <pre>powershell -File scripts\run-sample-hoop.ps1 -Name hello-critic</pre>
+      <h2>Swarm templates</h2>
+      <table>
+        <tr><th>File</th><th>Roles</th></tr>
+        <tr><td><code>samples/swarms/code-review-swarm.yaml</code></td><td>plan / security / tests / docs</td></tr>
+        <tr><td><code>samples/swarms/support-triage-swarm.yaml</code></td><td>plan / exec / research</td></tr>
+      </table>
+
+      <h2>Run a hoop</h2>
+      <pre>go run ./scripts/loadhoop -file samples/hoops/incident-triage.yaml -start
+# Dashboard → Hoops: click the card to bind the per-instance agent log
+# Graph editor → Agent log panel streams that hoop id only</pre>
+
+      <h2>Per-instance agent logs</h2>
+      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream. API:</p>
+      <pre>GET /api/agent-logs?scope=hoop&amp;id=incident-triage
+GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
+      <p>WebSocket <code>/ws</code> events with <code>type: agent_log</code> include <code>scope</code> and <code>instance_id</code>.</p>
+
+      <h2>Fan-out Starlark sample</h2>
+      <pre>scripts/examples/fan_out_sample.star
+# Match prompts containing "fanout" / "multi-agent review" → strategy fan_out</pre>
+
+      <h2>Install all hoops</h2>
+      <pre>go run ./scripts/loadhoop -dir samples/hoops
+powershell -File scripts\run-sample-hoop.ps1 -Name incident-triage</pre>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

@@ -1,0 +1,16 @@
+kind: swarm_template
+id: support-triage-swarm
+name: Customer support ticket triage
+enabled: true
+prefer_local: true
+max_workers: 3
+roles:
+  - plan
+  - exec
+  - research
+prompt: |
+  Customer ticket: "Our Cursor Agent sometimes answers from Ollama when we typed /cloud.
+  Dashboard shows sticky cloud but follow-on summary looks local. Please triage."
+  Roles: plan (hypothesis tree), exec (repro steps + config checks), research (related
+  sticky/summary chrome causes). Produce actionable triage notes.
+description: Support triage swarm for Path B sticky/routing confusion tickets.

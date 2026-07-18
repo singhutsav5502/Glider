@@ -19,11 +19,11 @@
 | **Local tools (Path A)** | **~90%** | Tools fields + stream tool_calls SSE; no Glider-side runners |
 | **Context management** | **~55%** | `contextgraph` MVP; `contextkit` Episode stubs not wired to every fulfill |
 | **Hot-swap modules** | **~65%** | Registry + fan_out Apply; router/aliases/threshold/log/GPU hot; backends/MITM restart |
-| **Multi-agent / swarms** | **~40%** | `internal/swarm` FanOut+Merge+Loop+HotSwap; FanOutExecutor; no planner / default rules |
-| **Loop engineering** | **~55%** | Hoops = planner/actor/critic cycles + eval score + hoop learning; Automations optional — see [loop_engineering.md](./loop_engineering.md) |
+| **Multi-agent / swarms** | **~65%** | FanOut+Merge+CritiqueMerge+Loop bind; sample Starlark + templates; not Slate weave |
+| **Loop engineering** | **~75%** | Hoops + parallel actors + progress + graph_edges + latency stop — see [loop_swarm_gap_plan.md](./loop_swarm_gap_plan.md) |
 | **Slate-like thread weaving** | **~0%** | Aspirational |
 
-**Bottom line:** Routing + Path A tools + Path B text/sticky are usable. Swarms are **foundation stubs**, not Slate parity.
+**Bottom line:** Routing + Path A tools + Path B text/sticky are usable. Swarms are **productized foundation** (fan-out + critique merge + loop parallel actors), not Slate thread-weaving parity.
 
 ---
 

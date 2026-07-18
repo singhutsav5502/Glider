@@ -55,6 +55,63 @@ func MergeResults(results []Result) contextkit.Episode {
 	}
 }
 
+// CritiqueMerge ranks successful workers, drops empty failures from the weave,
+// and annotates fail count — a lightweight critic pass after fan-in (not an LLM).
+func CritiqueMerge(results []Result) contextkit.Episode {
+	type scored struct {
+		r     Result
+		score int
+	}
+	var okList []scored
+	failN := 0
+	var failNotes []string
+	for _, r := range results {
+		if r.Err != nil {
+			failN++
+			label := r.WorkerID
+			if label == "" {
+				label = string(r.Role)
+			}
+			failNotes = append(failNotes, fmt.Sprintf("%s:%s", label, truncate(r.Err.Error(), 48)))
+			continue
+		}
+		sum := strings.TrimSpace(r.Episode.Summary)
+		if sum == "" {
+			sum = strings.TrimSpace(strings.Join(r.Episode.Artifacts, " "))
+		}
+		sc := len(sum) + r.Episode.Tokens*2
+		if sc <= 0 {
+			sc = 1
+		}
+		okList = append(okList, scored{r: r, score: sc})
+	}
+	// Prefer longer / higher-token summaries (weak quality proxy without an LLM critic).
+	for i := 0; i < len(okList); i++ {
+		for j := i + 1; j < len(okList); j++ {
+			if okList[j].score > okList[i].score {
+				okList[i], okList[j] = okList[j], okList[i]
+			}
+		}
+	}
+	ranked := make([]Result, len(okList))
+	for i, s := range okList {
+		ranked[i] = s.r
+	}
+	ep := MergeResults(ranked)
+	ep.Reason = "critique_merge"
+	ep.ID = fmt.Sprintf("critique-%d-%d", len(ranked), failN)
+	prefix := fmt.Sprintf("critique ok=%d fail=%d", len(ranked), failN)
+	if len(failNotes) > 0 {
+		prefix += " drops=[" + strings.Join(failNotes, "; ") + "]"
+	}
+	if ep.Summary != "" {
+		ep.Summary = prefix + " | " + ep.Summary
+	} else {
+		ep.Summary = prefix
+	}
+	return ep
+}
+
 // OrchestratorSummary is a compact string for dashboards / gateway finish text.
 func OrchestratorSummary(merged contextkit.Episode, results []Result) string {
 	ok, fail := 0, 0

@@ -32,12 +32,16 @@ func (c *HoopLearningConfig) Defaults() {
 // HoopState is persisted bias derived from iteration outcomes.
 type HoopState struct {
 	// LocalBias in [-MaxBias, +MaxBias]: positive → prefer local on auto route.
-	LocalBias float64   `json:"local_bias"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
-	Note      string    `json:"note,omitempty"`
+	LocalBias float64 `json:"local_bias"`
+	// StagePrefs maps stage kind → preference score (higher = keep enabled / prefer).
+	StagePrefs map[string]float64 `json:"stage_prefs,omitempty"`
+	// PreferredStages is the top kinds by StagePrefs (for dashboard chips).
+	PreferredStages []string  `json:"preferred_stages,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	Note            string    `json:"note,omitempty"`
 }
 
-// ApplyHoopLearning updates LocalBias from recent outcomes when enabled.
+// ApplyHoopLearning updates LocalBias and stage preferences from recent outcomes when enabled.
 // Success on local raises bias; failure on local lowers it; cloud success
 // slightly lowers local bias. Config-gated — no-op when disabled.
 func ApplyHoopLearning(st *LoopState, cfg HoopLearningConfig) {
@@ -82,12 +86,62 @@ func ApplyHoopLearning(st *LoopState, cfg HoopLearningConfig) {
 		}
 	}
 
+	prefs := map[string]float64{}
+	for _, o := range outcomes {
+		for _, s := range o.Stages {
+			kind := strings.ToLower(strings.TrimSpace(s.Kind))
+			if kind == "" {
+				continue
+			}
+			if s.Success {
+				prefs[kind] += cfg.LocalBiasStep
+			} else {
+				prefs[kind] -= cfg.LocalBiasStep * 0.5
+			}
+		}
+	}
+	top := rankStagePrefs(prefs, 3)
+
 	bias := clamp(delta, -cfg.MaxBias, cfg.MaxBias)
 	st.Hoop = HoopState{
-		LocalBias: bias,
-		UpdatedAt: time.Now().UTC(),
-		Note:      "hoop learning: outcome + eval_score → local bias for auto route / stage preference",
+		LocalBias:       bias,
+		StagePrefs:      prefs,
+		PreferredStages: top,
+		UpdatedAt:       time.Now().UTC(),
+		Note:            "hoop learning: outcome + eval_score → local bias; stage ok/fail → stage_prefs",
 	}
+}
+
+func rankStagePrefs(prefs map[string]float64, n int) []string {
+	if len(prefs) == 0 || n <= 0 {
+		return nil
+	}
+	type kv struct {
+		k string
+		v float64
+	}
+	var list []kv
+	for k, v := range prefs {
+		if v <= 0 {
+			continue
+		}
+		list = append(list, kv{k, v})
+	}
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].v > list[i].v {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
+	if len(list) > n {
+		list = list[:n]
+	}
+	out := make([]string, len(list))
+	for i, x := range list {
+		out[i] = x.k
+	}
+	return out
 }
 
 // EffectiveRoute returns the route for the next tick after hoop bias (when auto).

@@ -1,4 +1,4 @@
-# Glider intro profile -- dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
+﻿# Glider intro profile -- dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
 #
 # Routing priority (highest first):
 #   1. Explicit /local /fast /cloud /heavy on current user turn
@@ -160,6 +160,18 @@ routing:
           action:
             target: local
             model: codellama:7b
+        # Opt-in multi-worker fan-out: include /swarm or [fanout] in the prompt.
+        # Needs orchestration.fan_out.enabled (see bottom of this file).
+        - name: Sample FanOut Dual View
+          priority: 55
+          enabled: true
+          trigger:
+            type: script
+            file: scripts/examples/fanout_dual_view.star
+          action:
+            target: local
+            strategy: fan_out
+            model: codellama:7b
         # Token ceiling -- safety net after task_classifier (not primary simplicity signal).
         - name: Context Overflow
           priority: 10
@@ -298,6 +310,15 @@ context:
 #       window: 20
 
 orchestration:
+  fan_out:
+    enabled: true
+    max_workers: 2
+  swarm:
+    enabled: true
+  concurrency:
+    worker_queue_size: 16
+    result_chan_size: 32
+    max_inflight: 4
   loops:
     enabled: true
     default_route: local

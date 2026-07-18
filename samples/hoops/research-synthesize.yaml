@@ -1,0 +1,52 @@
+kind: hoop
+id: research-synthesize
+name: Research synthesize critique pipeline
+goal: |
+  Research topic: "How Glider should explain dual-mode (gateway BYOK vs MITM) to a new
+  engineer in one page." Produce a structured brief, then a polished explanation, then
+  critique completeness and accuracy. Prefer local models.
+route: local
+learning: true
+max_iterations: 3
+autonomy: L1
+fail_policy: continue
+eval:
+  goal: Final brief covers Path A, Path B, when to use each, and one pitfall; SCORE >= 0.7
+  min_score: 0.7
+  on_success_n: 1
+stop_conditions:
+  on_success_n: 1
+  contains: ["Path A", "Path B"]
+stages:
+  - id: memory_load
+    kind: memory
+    name: Prior notes
+  - id: router
+    kind: router
+    name: Route
+  - id: researcher
+    kind: planner
+    name: Research outline
+    prompt: |
+      You are a research planner. Outline 5 bullets an engineer must understand about
+      Glider dual-mode routing (gateway vs MITM). Flag unknowns as questions.
+  - id: synthesizer
+    kind: actor
+    name: Synthesize brief
+    prompt: |
+      You are the writer. Using the PLAN, write a one-page explanation with headings:
+      Overview, Mode A Gateway, Mode B MITM, Choosing a mode, Common pitfalls.
+  - id: critic
+    kind: critic
+    name: Accuracy critic
+    eval_min: 0.7
+  - id: memory_persist
+    kind: memory
+    name: Save brief
+graph_edges:
+  - { id: e1, source: memory_load, target: router, kind: flow }
+  - { id: e2, source: router, target: researcher, kind: flow }
+  - { id: e3, source: researcher, target: synthesizer, kind: flow }
+  - { id: e4, source: synthesizer, target: critic, kind: flow }
+  - { id: e5, source: critic, target: memory_persist, kind: flow }
+  - { id: fb1, source: critic, target: researcher, kind: feedback }

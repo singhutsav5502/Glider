@@ -15,6 +15,7 @@
 | [smart_routing_and_local_tools.md](smart_routing_and_local_tools.md) | Classifier + Path A tools + complexity score + local context |
 | [context_management.md](context_management.md) | `contextgraph` hybrid MVP + Episode/export/prune + local→Ollama flow |
 | [loop_engineering.md](loop_engineering.md) | **Canonical** Loop Engineering (Osmani / cobusgreyling) — hoops, stages, eval |
+| [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) | **Living** expected-features checklist + overnight P0/P1 gap work |
 | [swarm_orchestration.md](swarm_orchestration.md) | Swarm/FanOut honesty + hot-swap (+ canvas companion) |
 | [cursor_prior_art.md](cursor_prior_art.md) | **Archival** external prior art (Glider Path B text is novel) |
 | [cursor_agent_rpc_debug_findings.md](cursor_agent_rpc_debug_findings.md) | **Archival** live capture / wire notes (shrunk) |
@@ -42,7 +43,7 @@
 | Task classifier + role hints + `tool_followup` (Path A allowlist; Path B would_*) | `task_class.go`, `tool_followup.go` |
 | Dashboard: Config / VRAM / Rules / Overview LOCAL·CLOUD·CANNED % + CLASS chips | `internal/dashboard`, `internal/metrics` |
 | Orchestrator 1:1 (queue, fallback, breaker, rate/budget, VRAM) | `internal/orchestrator`, `internal/vram` |
-| Swarm stubs: `FanOut` / Merge / Loop / HotSwap registry (flag-off) | `internal/swarm`, `FanOutExecutor` |
+| Swarm FanOut + critique merge + sample `/swarm` rule | `internal/swarm`, `FanOutExecutor`, `fanout_dual_view.star` |
 | E2E + benches; `go test ./...` green | `e2e/`, `bench/` |
 
 ## Partial
@@ -51,9 +52,9 @@
 |------|---------|
 | Path B tool loops / child RunSSE | Origin only; `tool_followup_would_local` logged — **no codec** |
 | Episode / SessionState (`contextkit`) | Wired on fulfill / fan-out / loop; export + prune APIs |
-| FanOut productization | Flag-off; no default `StrategyFanOut` rules |
+| FanOut productization | Enabled in default config + sample Starlark `/swarm` rule; critique merge |
 | Hot-swap | Router/aliases/threshold/log/GPU hot; backends/MITM/ports need restart |
-| Loop engineering | Hoop cycles (planner/actor/critic + eval) MVP; Automations optional — [loop_engineering.md](loop_engineering.md) |
+| Loop engineering | Hoop cycles + parallel actors + live progress + graph_edges — [loop_engineering.md](loop_engineering.md), [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) |
 | Dashboard polish | Functional, not pixel-perfect vs mock |
 | Live GPU / Ollama | Depends on local services; nvidia-smi path yes, `nvml.dll` no |
 
@@ -68,15 +69,16 @@
 ### P1 — high leverage product
 
 1. **Overview episode chip** — API ready (`/api/context/episodes`); wire dashboard UI
-2. **Default or sample FanOut rule** behind `orchestration.fan_out` (gateway-only, 2 workers, text merge)
+2. ~~Default or sample FanOut rule~~ — **done** (`fanout_dual_view.star` + `orchestration.fan_out.enabled`)
 3. Classifier block editable in Rules UI (or documented YAML-only)
 4. Harden Path B empty `conversation_checkpoint` / codec from origin RESP peeks when UI flakes
+5. Loop/swarm polish remaining — see [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) P2
 
 ### P2 — later
 
 1. Path B child RunSSE / tool-frame fulfill (feature-flagged) — only after Path A tools proven in user’s workflow
 2. SessionState + turn budgets on dashboard
-3. Loop Engineering hoop polish (skills, worktrees, L3) — [loop_engineering.md](loop_engineering.md)
+3. SKILL.md load, worktrees, L3 denylist/budget — [loop_engineering.md](loop_engineering.md)
 4. Backend live hot-reload without restart; optional `nvml.dll`; `go test -race` where CGO available
 5. Slate-like planner / thread-weaving (aspirational)
 

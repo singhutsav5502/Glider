@@ -1,0 +1,9 @@
+kind: swarm_template
+id: dual-review
+name: Dual review
+description: Plan + exec workers with critique merge (prefer_local).
+prompt: Review this change for correctness and naming. Keep each worker under 6 lines.
+roles: [plan, exec]
+max_workers: 2
+prefer_local: true
+enabled: true

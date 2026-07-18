@@ -77,12 +77,25 @@ type LoopSpec struct {
 	HumanGate bool `json:"human_gate,omitempty" yaml:"human_gate,omitempty"`
 	// Stages composes Loop Engineering stages (planner/actor/critic/memory/router).
 	Stages []StageSpec `json:"stages,omitempty" yaml:"stages,omitempty"`
+	// GraphEdges persists Cytoscape flow/feedback edges from the graph editor.
+	GraphEdges []GraphEdge `json:"graph_edges,omitempty" yaml:"graph_edges,omitempty"`
 	// Eval is critic/goal feedback (maker ≠ checker).
 	Eval EvalSpec `json:"eval,omitempty" yaml:"eval,omitempty"`
 	// Learning enables hoop self-learning bias for this loop (overrides process default when true).
 	Learning  bool      `json:"learning,omitempty" yaml:"learning,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CycleProgress is mid-cycle live status for dashboard polling.
+type CycleProgress struct {
+	Phase      string    `json:"phase,omitempty"` // observe|route|plan|act|critique|learn|idle
+	StageKind  string    `json:"stage_kind,omitempty"`
+	StageID    string    `json:"stage_id,omitempty"`
+	StageIndex int       `json:"stage_index,omitempty"`
+	Iteration  int       `json:"iteration,omitempty"`
+	Note       string    `json:"note,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
 }
 
 // IterationOutcome is one engineering-cycle result (hoop-learning + eval feedback).
@@ -122,6 +135,7 @@ type LoopState struct {
 	ConsecutiveFail int                     `json:"consecutive_fail,omitempty"`
 	LastError     string                    `json:"last_error,omitempty"`
 	LastEvalScore float64                   `json:"last_eval_score,omitempty"`
+	Progress      CycleProgress             `json:"progress,omitempty"`
 	StartedAt     *time.Time                `json:"started_at,omitempty"`
 	StoppedAt     *time.Time                `json:"stopped_at,omitempty"`
 	UpdatedAt     time.Time                 `json:"updated_at"`
@@ -227,6 +241,24 @@ func (s *LoopSpec) Normalize() error {
 			if s.Stages[i].Kind == StageCritic && s.Stages[i].EvalMin <= 0 {
 				s.Stages[i].EvalMin = s.Eval.MinScore
 			}
+		}
+	}
+	for i := range s.GraphEdges {
+		e := &s.GraphEdges[i]
+		e.Source = strings.TrimSpace(e.Source)
+		e.Target = strings.TrimSpace(e.Target)
+		e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
+		if e.Kind == "" {
+			e.Kind = "flow"
+		}
+		if e.Kind != "flow" && e.Kind != "feedback" {
+			return fmt.Errorf("graph_edges[%d]: kind must be flow|feedback", i)
+		}
+		if e.Source == "" || e.Target == "" {
+			return fmt.Errorf("graph_edges[%d]: source and target required", i)
+		}
+		if e.ID == "" {
+			e.ID = fmt.Sprintf("%s->%s:%s", e.Source, e.Target, e.Kind)
 		}
 	}
 	now := time.Now().UTC()

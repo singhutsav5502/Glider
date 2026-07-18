@@ -668,6 +668,29 @@ button.open-graph-editor.linkish {
   margin: 0 0 8px;
   font-size: 1.05rem;
 }
+.agent-log-panel {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid var(--border);
+  min-height: 140px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.agent-log-panel .log-line { margin: 0 0 2px; }
+.agent-log-panel .log-line.error { color: #fca5a5; }
+.agent-log-panel .log-line.warn { color: #fcd34d; }
+.agent-log-panel .log-empty { color: #94a3b8; }
+.agent-log-hoops-wrap {
+  margin: 0 0 16px;
+}
+.graphs-agent-log {
+  margin-top: 16px;
+}
 .graph-toolbar {
   display: flex;
   flex-wrap: wrap;

@@ -3,6 +3,7 @@ package swarm_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,6 +86,23 @@ func TestMergeResultsCallable(t *testing.T) {
 	}
 	if ep.Summary == "" || ep.Model != "glider-swarm" {
 		t.Fatalf("ep=%+v", ep)
+	}
+}
+
+func TestCritiqueMergeDropsFailures(t *testing.T) {
+	ep := swarm.CritiqueMerge([]swarm.Result{
+		{WorkerID: "short", Episode: contextkit.Episode{Summary: "x", Tokens: 1}},
+		{WorkerID: "long", Episode: contextkit.Episode{Summary: "a much longer successful summary", Tokens: 20}},
+		{WorkerID: "bad", Err: errors.New("boom")},
+	})
+	if ep.Reason != "critique_merge" {
+		t.Fatalf("reason=%s", ep.Reason)
+	}
+	if !strings.Contains(ep.Summary, "ok=2") || !strings.Contains(ep.Summary, "fail=1") {
+		t.Fatalf("summary=%q", ep.Summary)
+	}
+	if !strings.Contains(ep.Summary, "longer") {
+		t.Fatalf("expected ranked content in %q", ep.Summary)
 	}
 }
 
@@ -231,5 +249,23 @@ func TestOptionsFromConfig(t *testing.T) {
 	})
 	if opts.MaxWorkers != 3 || opts.ResultChanSize != 64 || opts.MaxInflight != 2 {
 		t.Fatalf("opts=%+v", opts)
+	}
+}
+
+func TestCritiqueMergeRanksAndAnnotatesFails(t *testing.T) {
+	results := []swarm.Result{
+		{WorkerID: "a", Err: errors.New("boom"), Episode: contextkit.Episode{Summary: ""}},
+		{WorkerID: "b", Episode: contextkit.Episode{Summary: "short", Tokens: 1}},
+		{WorkerID: "c", Episode: contextkit.Episode{Summary: "much longer summary for ranking", Tokens: 40}},
+	}
+	ep := swarm.CritiqueMerge(results)
+	if ep.Reason != "critique_merge" {
+		t.Fatalf("reason=%q", ep.Reason)
+	}
+	if !strings.Contains(ep.Summary, "fail=1") || !strings.Contains(ep.Summary, "ok=2") {
+		t.Fatalf("summary=%q", ep.Summary)
+	}
+	if !strings.Contains(ep.Summary, "much longer") {
+		t.Fatalf("expected ranked content in %q", ep.Summary)
 	}
 }

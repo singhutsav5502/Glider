@@ -136,6 +136,12 @@
           </div>
         </div>
 
+        <div class="agent-log-hoops-wrap">
+          <div class="dnd-label">Agent log (selected hoop / last swarm run)</div>
+          <p class="hint" id="hoops-agent-log-hint" style="margin:4px 0 8px">Click a hoop card to bind the log stream to that hoop id. Swarm runs bind after Run swarm.</p>
+          <div id="hoops-agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
+        </div>
+
         <div class="hoops-layout">
           <fieldset class="cfg-section">
             <legend>Compose hoop</legend>
@@ -265,6 +271,8 @@
                 <span class="graph-hint">Link mode = draw/reconnect * Del removes * dbl-click edge = flow/feedback</span>
               </div>
               <div class="graph-toolbar" id="stage-graph-toolbar">
+                <button type="button" id="stage-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
+                <button type="button" id="stage-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
                 <button type="button" id="stage-link-mode" class="linkish" aria-pressed="false" title="Drag from a node onto another to draw or reconnect">Link mode</button>
                 <button type="button" id="stage-node-add-code" class="linkish" title="Add stage with id / name / prompt">+ Code stage</button>
                 <button type="button" id="stage-node-edit" class="linkish" disabled>Edit</button>
@@ -304,6 +312,8 @@
                 <span class="graph-hint">Link mode: orch &lt;-&gt; workers * click fan-out edge to unlink * only linked roles run</span>
               </div>
               <div class="graph-toolbar">
+                <button type="button" id="swarm-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
+                <button type="button" id="swarm-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
                 <button type="button" id="swarm-link-mode" class="linkish" aria-pressed="false" title="Drag between orchestrator and workers">Link mode</button>
                 <button type="button" id="swarm-thread-add" class="linkish">Add thread</button>
                 <button type="button" id="swarm-thread-remove" class="linkish" disabled>Remove selected</button>
@@ -312,6 +322,20 @@
               </div>
             </div>
             <div id="swarm-graph-host" class="cy-host graphs-canvas" aria-label="Swarm thread graph"></div>
+          </section>
+
+          <section class="graphs-agent-log" id="graphs-agent-log" aria-labelledby="agent-log-label">
+            <div class="graphs-section-bar">
+              <div class="dnd-label" id="agent-log-label">
+                Agent log
+                <span class="graph-hint" id="agent-log-scope-hint">Select a hoop card or run a swarm to stream that instance only</span>
+              </div>
+              <div class="graph-toolbar">
+                <button type="button" id="agent-log-clear-view" class="linkish" title="Clear local view (server ring kept)">Clear view</button>
+                <button type="button" id="agent-log-refresh" class="linkish">Refresh</button>
+              </div>
+            </div>
+            <div id="agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
           </section>
         </div>
 
@@ -346,6 +370,29 @@
             <div class="cfg-actions" style="margin-top:14px">
               <button type="button" id="stage-edit-save">Save</button>
               <button type="button" id="stage-edit-cancel" class="linkish">Cancel</button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="glider-prompt-dialog" class="stage-edit-dialog">
+          <form id="glider-prompt-form" class="stage-edit-form" method="dialog">
+            <h3 id="glider-prompt-title">Input</h3>
+            <p class="hint" id="glider-prompt-hint" style="margin:0 0 10px"></p>
+            <label class="span2">Value<input type="text" id="glider-prompt-input" autocomplete="off" /></label>
+            <div class="cfg-actions" style="margin-top:14px">
+              <button type="submit" id="glider-prompt-ok">OK</button>
+              <button type="button" id="glider-prompt-cancel" class="linkish" value="cancel">Cancel</button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="glider-confirm-dialog" class="stage-edit-dialog">
+          <form id="glider-confirm-form" class="stage-edit-form" method="dialog">
+            <h3 id="glider-confirm-title">Confirm</h3>
+            <p class="hint" id="glider-confirm-message" style="margin:0 0 10px"></p>
+            <div class="cfg-actions" style="margin-top:14px">
+              <button type="submit" id="glider-confirm-ok">OK</button>
+              <button type="button" id="glider-confirm-cancel" class="linkish">Cancel</button>
             </div>
           </form>
         </dialog>

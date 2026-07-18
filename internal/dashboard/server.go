@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/contextgraph"
@@ -46,6 +47,8 @@ type Server struct {
 	Swarm *swarm.Runner
 	// Templates is optional swarm template store (~/.glider/hoops).
 	Templates *swarm.TemplateStore
+	// AgentLogs is per-hoop / per-swarm-run activity rings (NOT a global mixed log).
+	AgentLogs *agentlog.Store
 	// HoopsDir is where hoop YAML mirrors are written.
 	HoopsDir string
 	// DocsDir optional static docs root (e.g. docs/site). Served at /docs/.
@@ -244,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/swarm/templates/", func(w http.ResponseWriter, r *http.Request) {
 		s.handleSwarmTemplate(w, r)
 	})
+	mux.HandleFunc("/api/agent-logs", s.handleAgentLogs)
 	mux.HandleFunc("/ws", s.handleWS)
 
 	if dir := strings.TrimSpace(s.DocsDir); dir != "" {

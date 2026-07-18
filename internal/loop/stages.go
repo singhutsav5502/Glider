@@ -42,6 +42,19 @@ type StageSpec struct {
 	Enabled *bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	// EvalMin is the critic pass threshold (0–1). Only used for StageCritic.
 	EvalMin float64 `json:"eval_min,omitempty" yaml:"eval_min,omitempty"`
+	// Parallel > 1 fans out this stage (typically actor) via swarm.FanOut (max 4).
+	Parallel int `json:"parallel,omitempty" yaml:"parallel,omitempty"`
+	// Roles tags parallel workers (plan|exec|research|worker). Empty → worker-0..N.
+	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
+}
+
+// GraphEdge is a canvas edge persisted with the hoop so topology survives reload.
+type GraphEdge struct {
+	ID     string `json:"id,omitempty" yaml:"id,omitempty"`
+	Source string `json:"source" yaml:"source"`
+	Target string `json:"target" yaml:"target"`
+	// Kind is flow (pipeline order) or feedback (critic→planner style).
+	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 }
 
 // ModuleSpec is an alias for StageSpec (compose UI / hot-swap wording).
@@ -95,6 +108,15 @@ func (m *StageSpec) Normalize() error {
 	}
 	if m.Kind == StageCritic && m.EvalMin <= 0 {
 		m.EvalMin = 0.7
+	}
+	if m.Parallel < 0 {
+		return fmt.Errorf("module %s: parallel must be >= 0", m.ID)
+	}
+	if m.Parallel > 4 {
+		m.Parallel = 4
+	}
+	for i := range m.Roles {
+		m.Roles[i] = strings.TrimSpace(strings.ToLower(m.Roles[i]))
 	}
 	if m.Prompt == "" {
 		switch m.Kind {

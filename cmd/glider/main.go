@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/api"
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/backend/cloud"
 	"github.com/glider-ai/glider/internal/backend/ollama"
@@ -410,10 +411,17 @@ func main() {
 			OutcomeRing: 64,
 		})
 		loopMgr.Episodes = episodeStore
+		agentLogs := agentlog.NewStore(256)
+		agentLogs.OnAppend(func(e agentlog.Entry) {
+			bus.Publish(metrics.Event{Type: metrics.EventAgentLog, Data: e})
+		})
+		loopMgr.Logs = agentLogs
+		swarmRunner.Logs = agentLogs
 		dash.Loops = loopMgr
 		dash.HotSwap = hotSwap
 		dash.Swarm = swarmRunner
 		dash.Templates = tplStore
+		dash.AgentLogs = agentLogs
 		dash.HoopsDir = hoopsDir
 		if st, err := os.Stat("docs/site"); err == nil && st.IsDir() {
 			dash.DocsDir = "docs/site"

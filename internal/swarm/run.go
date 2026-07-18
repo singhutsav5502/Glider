@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/google/uuid"
 )
@@ -62,6 +63,8 @@ type Runner struct {
 	Templates    *TemplateStore
 	SessionID    string
 	DefaultModel string
+	// Logs is optional per-swarm-run agent activity (keyed by turn/run id).
+	Logs *agentlog.Store
 }
 
 // ApplyOpts hot-swaps concurrency bounds.
@@ -149,6 +152,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 	}
 	opts.TurnID = turnID
 
+	// Fresh independent log timeline for this swarm run instance.
+	if r.Logs != nil {
+		r.Logs.Reset(agentlog.ScopeSwarm, turnID)
+		r.Logs.Info(agentlog.ScopeSwarm, turnID, "lifecycle", "swarm run started", map[string]string{
+			"workers": fmt.Sprintf("%d", n),
+			"prompt":  truncate(prompt, 80),
+		})
+	}
+
 	_ = preferLocal // WorkerFn / Completer wrapper applies /local when wired.
 
 	workers := make([]Worker, n)
@@ -170,7 +182,24 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			Role:  role,
 			Model: model,
 			Run: func(wctx context.Context) (contextkit.Episode, error) {
-				return r.WorkerFn(wctx, role, model, rolePrompt)
+				if r.Logs != nil {
+					r.Logs.Info(agentlog.ScopeSwarm, turnID, "worker", "worker start: "+string(role), map[string]string{
+						"role": string(role), "model": model,
+					})
+				}
+				ep, err := r.WorkerFn(wctx, role, model, rolePrompt)
+				if r.Logs != nil {
+					if err != nil {
+						r.Logs.Error(agentlog.ScopeSwarm, turnID, "worker", "worker fail: "+string(role)+" -- "+truncate(err.Error(), 100), map[string]string{
+							"role": string(role),
+						})
+					} else {
+						r.Logs.Info(agentlog.ScopeSwarm, turnID, "worker", "worker ok: "+string(role), map[string]string{
+							"role": string(role), "tokens": fmt.Sprintf("%d", ep.Tokens),
+						})
+					}
+				}
+				return ep, err
 			},
 		}
 	}
@@ -183,9 +212,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 
 	start := time.Now()
 	results, err := FanOut(ctx, workers, opts)
-	merged := MergeResults(results)
+	merged := CritiqueMerge(results)
 	merged.ID = turnID + "-merge"
 	summary := OrchestratorSummary(merged, results)
+	if r.Logs != nil {
+		r.Logs.Info(agentlog.ScopeSwarm, turnID, "lifecycle", "swarm merge: "+truncate(summary, 160), map[string]string{
+			"elapsed_ms": fmt.Sprintf("%d", time.Since(start).Milliseconds()),
+		})
+	}
 
 	sessionID := req.SessionID
 	if sessionID == "" {

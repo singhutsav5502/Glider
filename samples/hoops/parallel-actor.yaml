@@ -1,0 +1,45 @@
+kind: hoop
+id: parallel-actor
+name: Parallel actor demo
+goal: Propose two short alternative renames for a helper function, then pick the clearer one.
+route: local
+learning: true
+max_iterations: 2
+autonomy: L1
+fail_policy: continue
+enabled: true
+eval:
+  goal: At least one clear rename suggestion with a SCORE from the critic.
+  min_score: 0.6
+  on_success_n: 1
+stages:
+  - kind: router
+    id: router
+    name: router
+  - kind: planner
+    id: planner
+    name: planner
+    prompt: "List two candidate rename angles for a vague helper name. Do not pick yet."
+  - kind: actor
+    id: actor
+    name: actor
+    parallel: 2
+    roles: [exec, research]
+    prompt: "You are one of several workers. Propose one concrete rename with a one-line rationale."
+  - kind: critic
+    id: critic
+    name: critic
+    eval_min: 0.6
+graph_edges:
+  - source: router
+    target: planner
+    kind: flow
+  - source: planner
+    target: actor
+    kind: flow
+  - source: actor
+    target: critic
+    kind: flow
+  - source: critic
+    target: planner
+    kind: feedback

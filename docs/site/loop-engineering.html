@@ -67,8 +67,15 @@
         worker threads. Edit on the canvas: Link mode + drag to create or reconnect edges, Delete to remove,
         double-click an edge (or Edge type) to toggle flow vs feedback. Pipeline order for
         <code>POST/PUT /api/loops</code> is derived from flow edges into <code>#hoop-stages-json</code>;
-        swarm roles sync from linked threads. Hoops &quot;Open graph editor&quot; / Edit graph shares that
-        state with Create / Update / Start / Stop.
+        <code>graph_edges</code> are persisted on the hoop so topology reloads. Swarm roles sync from linked threads.
+        Hoops &quot;Open graph editor&quot; / Edit graph shares that state with Create / Update / Start / Stop.
+      </p>
+      <p>
+        <strong>Parallel actors:</strong> set <code>parallel: 2+</code> (and optional <code>roles</code>) on an actor
+        stage — the runtime fans out via <code>swarm.FanOut</code> and critique-merges workers before the critic.
+        Live mid-cycle <code>progress</code> (phase / stage) is polled on hoop cards and paints the graph.
+        Gateway sample: include <code>/swarm</code> or <code>[fanout]</code> in a prompt when
+        <code>orchestration.fan_out.enabled</code> is on (see <code>scripts/examples/fanout_dual_view.star</code>).
       </p>
       <p>
         Run swarm paints live ok/fail on worker nodes. Inspired by Slate's orchestrator/thread model
@@ -76,8 +83,9 @@
       </p>
 
       <h2>Sample hoops</h2>
-      <p>Ready-to-run YAML under <code>samples/hoops/</code> — see <a href="samples.html">Sample hoops</a>.</p>
-      <p>Canonical doc: <code>planning/loop_engineering.md</code></p>
+      <p>Ready-to-run YAML under <code>samples/hoops/</code> — including <code>parallel-actor.yaml</code> and
+        <code>swarm-dual-review.yaml</code> — see <a href="samples.html">Sample hoops</a>.</p>
+      <p>Gap plan: <code>planning/loop_swarm_gap_plan.md</code> · Canonical: <code>planning/loop_engineering.md</code></p>
 
       <h2>Architecture links</h2>
       <ul>

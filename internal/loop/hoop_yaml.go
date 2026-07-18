@@ -37,6 +37,7 @@ type HoopYAML struct {
 	FailPolicy    string         `yaml:"fail_policy,omitempty"`
 	Stop          StopConditions `yaml:"stop_conditions,omitempty"`
 	Stages        []StageSpec    `yaml:"stages,omitempty"`
+	GraphEdges    []GraphEdge    `yaml:"graph_edges,omitempty"`
 	Eval          EvalSpec       `yaml:"eval,omitempty"`
 	Enabled       bool           `yaml:"enabled"`
 }
@@ -59,6 +60,7 @@ func SpecFromHoopYAML(h HoopYAML) (LoopSpec, error) {
 		FailPolicy:    FailPolicy(h.FailPolicy),
 		Stop:          h.Stop,
 		Stages:        h.Stages,
+		GraphEdges:    h.GraphEdges,
 		Eval:          h.Eval,
 	}
 	if err := spec.Normalize(); err != nil {
@@ -116,6 +118,7 @@ func WriteHoopYAML(dir string, spec LoopSpec) error {
 		FailPolicy:    string(spec.FailPolicy),
 		Stop:          spec.Stop,
 		Stages:        spec.Stages,
+		GraphEdges:    spec.GraphEdges,
 		Eval:          spec.Eval,
 		Enabled:       true,
 	}

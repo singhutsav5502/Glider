@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
@@ -36,6 +37,8 @@ type Manager struct {
 	Graph    *contextgraph.Store
 	Cfg      RunnerConfig
 	Episodes *contextkit.Store // optional episode ring
+	// Logs is optional per-hoop agent activity (independent ring per hoop id).
+	Logs *agentlog.Store
 
 	runners map[string]*runnerHandle
 }
@@ -162,6 +165,14 @@ func (m *Manager) Start(parent context.Context, id string) (*LoopState, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
+	// Fresh independent log timeline for this hoop instance.
+	if m.Logs != nil {
+		m.Logs.Reset(agentlog.ScopeHoop, id)
+		m.Logs.Info(agentlog.ScopeHoop, id, "lifecycle", "hoop started", map[string]string{
+			"route": string(st.Spec.Route),
+			"goal":  truncate(st.Spec.Goal, 80),
+		})
+	}
 	m.emit(st, contextgraph.EventLoopStarted, map[string]string{
 		"loop_id": id,
 		"route":   string(st.Spec.Route),
@@ -255,7 +266,7 @@ func (m *Manager) runLoop(ctx context.Context, h *runnerHandle, id string) {
 			now := time.Now().UTC()
 			st.StoppedAt = &now
 			switch stopReason {
-			case "failed":
+			case "failed", "on_fail_n", "max_latency":
 				st.Status = StatusFailed
 			case "human_gate":
 				st.Status = StatusStopped
@@ -308,18 +319,16 @@ func (m *Manager) runLoop(ctx context.Context, h *runnerHandle, id string) {
 func (m *Manager) evaluateStop(st *LoopState, o IterationOutcome, text string) string {
 	sc := st.Spec.Stop
 	okN, failN := st.ConsecutiveOK, st.ConsecutiveFail
-	if o.Success {
-		okN++
-		failN = 0
-	} else {
-		failN++
-		okN = 0
-	}
+	// Counters already updated in AppendOutcome; MaxLatency flips Success before append.
 	if sc.OnSuccessN > 0 && okN >= sc.OnSuccessN {
 		return "on_success_n"
 	}
 	if sc.OnFailN > 0 && failN >= sc.OnFailN {
 		return "on_fail_n"
+	}
+	if sc.MaxLatencyMS > 0 && o.LatencyMS > int64(sc.MaxLatencyMS) && sc.OnFailN <= 0 {
+		// Hard stop when latency exceeded and no OnFailN window configured.
+		return "max_latency"
 	}
 	lower := strings.ToLower(text)
 	for _, c := range sc.Contains {

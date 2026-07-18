@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/google/uuid"
 )
 
@@ -84,7 +86,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	defaultRoute := EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))
 	lastRoute = defaultRoute
 
-	for _, mod := range modules {
+	for stageIdx, mod := range modules {
 		if ctx.Err() != nil {
 			cycleErr = ctx.Err()
 			break
@@ -93,6 +95,8 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		if !mod.IsEnabled() {
 			continue
 		}
+		m.setProgress(st, stagePhase(mod.Kind), mod, stageIdx, iter, "")
+
 		switch mod.Kind {
 		case StageMemory:
 			// Memory is graph/state I/O — no LLM. Load is implicit via checkpoint; persist later.
@@ -120,7 +124,19 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		prompt := m.stagePrompt(st, mod, goal, planText, actorText)
 		reqID := fmt.Sprintf("loop-%s-%d-%s", st.Spec.ID, iter, mod.ID)
 		t0 := time.Now()
-		text, tokens, used, err := m.completeOnce(ctx, st, route, reqID, turnID, prompt, mod.Model)
+
+		var text string
+		var tokens int
+		var used RoutePref
+		var err error
+
+		// Parallel actor (or any LLM stage with Parallel>1) → swarm fan-out + critique merge.
+		if mod.Parallel > 1 && (mod.Kind == StageActor || mod.Kind == StagePlanner) {
+			text, tokens, used, err = m.completeParallel(ctx, st, mod, route, reqID, turnID, prompt)
+		} else {
+			text, tokens, used, err = m.completeOnce(ctx, st, route, reqID, turnID, prompt, mod.Model)
+		}
+
 		sr := StageResult{
 			Kind:      mod.Kind,
 			ModuleID:  mod.ID,
@@ -133,8 +149,8 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			sr.Err = err.Error()
 			stages = append(stages, sr)
 			cycleErr = err
-			// Escalate only for actor/planner local failures.
-			if st.Spec.FailPolicy == FailEscalate && route == RouteLocal {
+			// Escalate only for actor/planner local failures (single-path; parallel already merged).
+			if mod.Parallel <= 1 && st.Spec.FailPolicy == FailEscalate && route == RouteLocal {
 				text2, tok2, used2, err2 := m.completeOnce(ctx, st, RouteCloud, reqID+"-esc", turnID, prompt, mod.Model)
 				if err2 == nil {
 					sr.Text = truncate(text2, 2000)
@@ -156,6 +172,19 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		}
 		totalTok += tokens
 		lastRoute = used
+		if m.Logs != nil {
+			kind := "stage_end"
+			msg := fmt.Sprintf("%s done route=%s %dms", mod.Kind, used, sr.LatencyMS)
+			if sr.Err != "" {
+				m.Logs.Error(agentlog.ScopeHoop, st.Spec.ID, kind, msg+" err="+truncate(sr.Err, 120), map[string]string{
+					"stage": string(mod.Kind), "route": string(used),
+				})
+			} else {
+				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, kind, msg, map[string]string{
+					"stage": string(mod.Kind), "route": string(used),
+				})
+			}
+		}
 
 		switch mod.Kind {
 		case StagePlanner:
@@ -173,8 +202,15 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 				min = 0.7
 			}
 			evalPass = evalScore >= min
+			if m.Logs != nil {
+				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "eval", fmt.Sprintf("SCORE: %.3f pass=%t", evalScore, evalPass), map[string]string{
+					"eval_score": fmt.Sprintf("%.3f", evalScore),
+					"eval_pass":  fmt.Sprintf("%t", evalPass),
+				})
+			}
 		}
 	}
+	m.setProgress(st, "learn", ModuleSpec{Kind: StageMemory, ID: "learn"}, len(modules), iter, "persisting")
 
 	epID := uuid.New().String()
 	summary := truncate(firstNonEmpty(criticText, actorText, planText), 512)
@@ -260,6 +296,16 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		At:            cr.At,
 		Err:           cr.Err,
 	}
+	// MaxLatencyMS treats slow cycles as failures for stop OnFailN counting.
+	if sc := st.Spec.Stop.MaxLatencyMS; sc > 0 && lat > int64(sc) {
+		outcome.Success = false
+		cr.Success = false
+		success = false
+		if outcome.Err == "" {
+			outcome.Err = fmt.Sprintf("max_latency_ms: %dms > %dms", lat, sc)
+			cr.Err = outcome.Err
+		}
+	}
 	for _, sr := range stages {
 		outcome.Stages = append(outcome.Stages, StageOutcome{
 			Kind:    string(sr.Kind),
@@ -280,6 +326,12 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	}
 	st.LastError = cr.Err
 	st.LastEvalScore = evalScore
+	st.Progress = CycleProgress{
+		Phase:     "idle",
+		Iteration: iter,
+		Note:      st.Checkpoint.EvalStatus,
+		UpdatedAt: time.Now().UTC(),
+	}
 
 	stopReason := m.evaluateStop(st, outcome, summary)
 	if stopReason == "" && hadCritic && evalPass && st.Spec.Stop.OnSuccessN <= 0 && st.Spec.MaxIterations <= 0 {
@@ -418,4 +470,114 @@ func (m *Manager) completeOnce(ctx context.Context, st *LoopState, route RoutePr
 		tokens = len(b.String()) / 4
 	}
 	return b.String(), tokens, used, nil
+}
+
+// completeParallel fans out N workers for one stage and critique-merges results.
+func (m *Manager) completeParallel(ctx context.Context, st *LoopState, mod ModuleSpec, route RoutePref, reqID, turnID, prompt string) (string, int, RoutePref, error) {
+	n := mod.Parallel
+	if n <= 1 {
+		return m.completeOnce(ctx, st, route, reqID, turnID, prompt, mod.Model)
+	}
+	if n > 4 {
+		n = 4
+	}
+	roles := mod.Roles
+	if len(roles) == 0 {
+		roles = []string{string(swarm.RoleExec), string(swarm.RolePlan), string(swarm.RoleResearch), string(swarm.RoleWorker)}
+	}
+	workers := make([]swarm.Worker, n)
+	for i := 0; i < n; i++ {
+		i := i
+		role := swarm.RoleWorker
+		if i < len(roles) && roles[i] != "" {
+			role = swarm.Role(roles[i])
+		}
+		rolePrompt := fmt.Sprintf("[%s worker %d/%d]\n%s", role, i+1, n, prompt)
+		workers[i] = swarm.Worker{
+			ID:    fmt.Sprintf("%s-%s-%d", mod.ID, role, i),
+			Role:  role,
+			Model: mod.Model,
+			Run: func(wctx context.Context) (contextkit.Episode, error) {
+				text, tokens, _, err := m.completeOnce(wctx, st, route, fmt.Sprintf("%s-w%d", reqID, i), turnID, rolePrompt, mod.Model)
+				return contextkit.Episode{
+					Summary: text,
+					Tokens:  tokens,
+					Model:   mod.Model,
+					Reason:  "loop_parallel",
+					Role:    string(role),
+				}, err
+			},
+		}
+	}
+	m.setProgress(st, stagePhase(mod.Kind), mod, 0, st.Iteration, fmt.Sprintf("fan_out n=%d", n))
+	results, err := swarm.FanOut(ctx, workers, swarm.Options{
+		MaxWorkers: n,
+		TurnID:     turnID,
+	})
+	merged := swarm.CritiqueMerge(results)
+	tokens := merged.Tokens
+	if tokens == 0 {
+		tokens = len(merged.Summary) / 4
+	}
+	ok := 0
+	for _, r := range results {
+		if r.Err == nil && strings.TrimSpace(r.Episode.Summary) != "" {
+			ok++
+		}
+	}
+	if ok == 0 {
+		if err != nil {
+			return merged.Summary, tokens, route, err
+		}
+		return merged.Summary, tokens, route, fmt.Errorf("parallel stage %s: all workers failed", mod.ID)
+	}
+	return merged.Summary, tokens, route, nil
+}
+
+func (m *Manager) setProgress(st *LoopState, phase string, mod ModuleSpec, idx, iter int, note string) {
+	if st == nil {
+		return
+	}
+	st.Progress = CycleProgress{
+		Phase:      phase,
+		StageKind:  string(mod.Kind),
+		StageID:    mod.ID,
+		StageIndex: idx,
+		Iteration:  iter,
+		Note:       note,
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if m.Logs != nil {
+		msg := phase + " " + string(mod.Kind)
+		if mod.ID != "" {
+			msg += " (" + mod.ID + ")"
+		}
+		if note != "" {
+			msg += " -- " + note
+		}
+		m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "stage_start", msg, map[string]string{
+			"phase":     phase,
+			"stage":     string(mod.Kind),
+			"stage_id":  mod.ID,
+			"iteration": fmt.Sprintf("%d", iter),
+		})
+	}
+	_ = m.Store.Save(st)
+}
+
+func stagePhase(k StageKind) string {
+	switch k {
+	case StageMemory:
+		return "observe"
+	case StageRouter:
+		return "route"
+	case StagePlanner:
+		return "plan"
+	case StageActor:
+		return "act"
+	case StageCritic:
+		return "critique"
+	default:
+		return string(k)
+	}
 }

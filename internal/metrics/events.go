@@ -7,6 +7,8 @@ type EventType string
 const (
 	EventRequest    EventType = "request"
 	EventVRAMUpdate EventType = "vram_update"
+	// EventAgentLog is a per-instance hoop/swarm activity line (filter by instance_id).
+	EventAgentLog EventType = "agent_log"
 )
 
 type Event struct {

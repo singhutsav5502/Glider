@@ -165,7 +165,7 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 		TurnID:         turnID,
 	})
 	// Partial success still merges; only hard-fail when parent cancelled with zero text.
-	merged := swarm.MergeResults(results)
+	merged := swarm.CritiqueMerge(results)
 	buf := swarm.ChanSize(cfg.ResultChanSize, swarm.DefaultResultChanSize)
 	out := make(chan backend.CompletionChunk, buf)
 	go func() {

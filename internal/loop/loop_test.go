@@ -3,10 +3,12 @@ package loop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -256,3 +258,161 @@ func TestDefaultDir(t *testing.T) {
 		t.Fatalf("dir=%s", d)
 	}
 }
+
+func TestGraphEdgesNormalize(t *testing.T) {
+	s := LoopSpec{
+		Goal: "g",
+		Stages: []StageSpec{{Kind: StageActor}},
+		GraphEdges: []GraphEdge{
+			{Source: "a", Target: "b"},
+			{Source: "b", Target: "a", Kind: "feedback"},
+		},
+	}
+	if err := s.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if s.GraphEdges[0].Kind != "flow" || s.GraphEdges[0].ID == "" {
+		t.Fatalf("%+v", s.GraphEdges[0])
+	}
+	if s.GraphEdges[1].Kind != "feedback" {
+		t.Fatalf("%+v", s.GraphEdges[1])
+	}
+}
+
+func TestMaxLatencyStop(t *testing.T) {
+	dir := t.TempDir()
+	mc := &mockCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+		time.Sleep(30 * time.Millisecond)
+		return streamText("ok"), nil
+	}}
+	mgr := NewManager(NewStore(dir), mc, nil, RunnerConfig{DefaultRoute: RouteLocal})
+	_, err := mgr.Create(LoopSpec{
+		ID: "lat1", Prompt: "x", Route: RouteLocal, FailPolicy: FailContinue, MaxIterations: 5,
+		Stages: []StageSpec{{Kind: StageActor, Prompt: "do"}},
+		Stop:   StopConditions{MaxLatencyMS: 5},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Start(context.Background(), "lat1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		cur, _ := mgr.Get("lat1")
+		if cur != nil && (cur.Status == StatusFailed || cur.Status == StatusCompleted || cur.Status == StatusStopped) {
+			if cur.Checkpoint.WakeReason != "max_latency" && cur.Status != StatusFailed {
+				t.Fatalf("want max_latency fail, got status=%s wake=%s", cur.Status, cur.Checkpoint.WakeReason)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout status=%v", cur)
+		default:
+			time.Sleep(15 * time.Millisecond)
+		}
+	}
+}
+
+func TestParallelActorFanOut(t *testing.T) {
+	dir := t.TempDir()
+	var calls atomic.Int32
+	mc := &mockCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+		n := calls.Add(1)
+		content := req.Messages[0].Content
+		if strings.Contains(content, "checker") || strings.Contains(content, "SCORE:") {
+			return streamText("SCORE: 0.9\nREASON: ok"), nil
+		}
+		return streamText(fmt.Sprintf("worker-out-%d DONE", n)), nil
+	}}
+	mgr := NewManager(NewStore(dir), mc, nil, RunnerConfig{DefaultRoute: RouteLocal})
+	_, err := mgr.Create(LoopSpec{
+		ID: "par1", Goal: "parallel", Prompt: "parallel", Route: RouteLocal,
+		FailPolicy: FailContinue, MaxIterations: 1, Autonomy: AutonomyL2,
+		Stages: []StageSpec{
+			{Kind: StageActor, ID: "actor", Prompt: "act", Parallel: 2, Roles: []string{"exec", "research"}},
+			{Kind: StageCritic, ID: "critic", EvalMin: 0.5},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Start(context.Background(), "par1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		cur, _ := mgr.Get("par1")
+		if cur != nil && cur.Status != StatusRunning && cur.Status != StatusIdle {
+			if calls.Load() < 3 { // 2 workers + critic
+				t.Fatalf("calls=%d want >= 3", calls.Load())
+			}
+			if len(cur.Outcomes) < 1 {
+				t.Fatal("no outcomes")
+			}
+			var sawActor bool
+			for _, s := range cur.Outcomes[0].Stages {
+				if s.Kind == "actor" && s.Success {
+					sawActor = true
+					if !strings.Contains(s.Summary, "critique") && !strings.Contains(s.Summary, "worker") && !strings.Contains(s.Summary, "DONE") {
+						t.Fatalf("actor summary=%q", s.Summary)
+					}
+				}
+			}
+			if !sawActor {
+				t.Fatalf("no actor stage in %+v", cur.Outcomes[0].Stages)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout status=%v calls=%d", cur, calls.Load())
+		default:
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+func TestHoopLearningStagePrefs(t *testing.T) {
+	st := &LoopState{
+		Outcomes: []IterationOutcome{
+			{
+				Success: true, Route: "local", EvalScore: 0.9,
+				Stages: []StageOutcome{
+					{Kind: "planner", Success: true},
+					{Kind: "actor", Success: true},
+					{Kind: "critic", Success: true},
+				},
+			},
+			{
+				Success: false, Route: "local", EvalScore: 0.2,
+				Stages: []StageOutcome{
+					{Kind: "planner", Success: true},
+					{Kind: "actor", Success: false},
+					{Kind: "critic", Success: true},
+				},
+			},
+		},
+	}
+	ApplyHoopLearning(st, HoopLearningConfig{Enabled: true, LocalBiasStep: 0.1, MaxBias: 0.5, Window: 20})
+	if st.Hoop.StagePrefs["planner"] <= 0 {
+		t.Fatalf("prefs=%v", st.Hoop.StagePrefs)
+	}
+	if len(st.Hoop.PreferredStages) == 0 {
+		t.Fatal("expected preferred stages")
+	}
+}
+
+func TestEvaluateStopUsesPersistedCounters(t *testing.T) {
+	mgr := &Manager{}
+	st := &LoopState{
+		Spec:          LoopSpec{Stop: StopConditions{OnSuccessN: 2}},
+		ConsecutiveOK: 2,
+	}
+	reason := mgr.evaluateStop(st, IterationOutcome{Success: true}, "ok")
+	if reason != "on_success_n" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
