@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 type Config struct {
 	Server         ServerConfig         `yaml:"server" json:"server"`
 	Thresholds     ThresholdConfig      `yaml:"thresholds" json:"thresholds"`
@@ -13,12 +15,55 @@ type Config struct {
 	Dashboard      DashboardConfig      `yaml:"dashboard" json:"dashboard"`
 	Transform      TransformConfig      `yaml:"transform" json:"transform"`
 	MITM           MITMConfig           `yaml:"mitm" json:"mitm"`
+	// Context tunes the hybrid contextgraph warm store (optional).
+	Context ContextConfig `yaml:"context,omitempty" json:"context,omitempty"`
+}
+
+// ContextConfig controls contextgraph retention / warm reload.
+type ContextConfig struct {
+	// MaxEvents is the in-memory event ring cap (0 → 4096).
+	MaxEvents int `yaml:"max_events,omitempty" json:"max_events,omitempty"`
+	// RetainDays is how long events-*.jsonl files are kept on disk (0 → 14).
+	RetainDays int `yaml:"retain_days,omitempty" json:"retain_days,omitempty"`
+	// WarmLoadDays is how many days of JSONL to replay on startup (0 → 2).
+	WarmLoadDays int `yaml:"warm_load_days,omitempty" json:"warm_load_days,omitempty"`
 }
 
 // OrchestrationConfig holds swarm/fan-out feature flags (foundation; default off).
 type OrchestrationConfig struct {
 	FanOut      FanOutConfig      `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	// Swarm gates POST /api/swarm/run and dashboard swarm runner (default off).
+	Swarm SwarmConfig `yaml:"swarm,omitempty" json:"swarm,omitempty"`
 	Concurrency ConcurrencyConfig `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+	// HoopsDir is where swarm templates + hoop YAML live (default ~/.glider/hoops).
+	HoopsDir string `yaml:"hoops_dir,omitempty" json:"hoops_dir,omitempty"`
+	// Loops configures Glider-owned recurring jobs (dashboard /api/loops).
+	// Independent of Cursor IDE /loop; default route local needs no Cursor sub.
+	Loops LoopConfig `yaml:"loops,omitempty" json:"loops,omitempty"`
+}
+
+// SwarmConfig enables the swarm FanOut API runner.
+type SwarmConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
+// LoopConfig gates the loop runner and hoop-learning weight adjust.
+type LoopConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// DefaultRoute is local|cloud|auto when a LoopSpec omits route (default local).
+	DefaultRoute string `yaml:"default_route,omitempty" json:"default_route,omitempty"`
+	// Dir overrides ~/.glider/loops state persistence.
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
+	// HoopLearning stores iteration outcomes and optionally biases next auto route.
+	HoopLearning HoopLearningConfig `yaml:"hoop_learning,omitempty" json:"hoop_learning,omitempty"`
+}
+
+// HoopLearningConfig is self-learning MVP for loops (see planning docs "hoop learning").
+type HoopLearningConfig struct {
+	Enabled       bool    `yaml:"enabled" json:"enabled"`
+	LocalBiasStep float64 `yaml:"local_bias_step,omitempty" json:"local_bias_step,omitempty"`
+	MaxBias       float64 `yaml:"max_bias,omitempty" json:"max_bias,omitempty"`
+	Window        int     `yaml:"window,omitempty" json:"window,omitempty"`
 }
 
 // FanOutConfig enables StrategyFanOut on the gateway executor (max 2–4 workers).
@@ -60,6 +105,22 @@ type MITMConfig struct {
 	// AgentRPCCannedText is the synthetic reply used when canned-on-error fires.
 	// Empty → default "pong from glider (canned Path B)".
 	AgentRPCCannedText string `yaml:"agent_rpc_canned_text,omitempty" json:"agent_rpc_canned_text,omitempty"`
+	// OriginOnLocalError: when CompleteLocal fails after a local arm and canned is
+	// off, fail-soft to Cursor origin (hybrid default). Set false for pure-local
+	// so Cursor sees a clear Glider/Ollama error via RunSSE instead of subscription.
+	// Nil → true (origin fail-soft).
+	OriginOnLocalError *bool `yaml:"origin_on_local_error,omitempty" json:"origin_on_local_error,omitempty"`
+	// RequireLocalHealthy gates ArmLocal on a live Ollama (or local) health check.
+	// When true and local is down, Path B does not arm local (avoids silent origin).
+	RequireLocalHealthy bool `yaml:"require_local_healthy,omitempty" json:"require_local_healthy,omitempty"`
+}
+
+// OriginOnLocalErrorOrDefault is true unless explicitly set false.
+func (c MITMConfig) OriginOnLocalErrorOrDefault() bool {
+	if c.OriginOnLocalError == nil {
+		return true
+	}
+	return *c.OriginOnLocalError
 }
 
 type ServerConfig struct {
@@ -97,10 +158,28 @@ type ModelConfig struct {
 
 type RoutingConfig struct {
 	Rules []RuleConfig `yaml:"rules" json:"rules"`
+	// Default is "local" | "cloud" | "". When set, rewrites/injects the priority-0
+	// always rule target so profiles can flip pure-local without editing every rule.
+	// See configs/glider.local.yaml.
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	// DefaultLocalModel is used when Default=local and an always rule needs a model.
+	DefaultLocalModel string `yaml:"default_local_model,omitempty" json:"default_local_model,omitempty"`
+	// AllowCloudFallback: when false, FallbackChain never appends BYOK cloud after
+	// a local primary (pure-local). Nil → true (hybrid).
+	AllowCloudFallback *bool `yaml:"allow_cloud_fallback,omitempty" json:"allow_cloud_fallback,omitempty"`
 	// TaskClassifier injects heuristic rules (tools → cloud, must-cloud keywords,
 	// small-local keywords) when Enabled. Priorities default below explicit /cloud
 	// (99) and above context_size (10). See planning/smart_routing_and_local_tools.md.
 	TaskClassifier TaskClassifierConfig `yaml:"task_classifier,omitempty" json:"task_classifier,omitempty"`
+	// ComplexityFrom selects the complexity score source for routing:
+	//   heuristic — Glider MVP score (tools / files / prompt length / mode strings)
+	//   cursor    — only Metadata.CursorComplexity when extract finds a Cursor field
+	//   both      — prefer Cursor when present, else heuristic
+	// Empty → heuristic. Cursor wire fields are not exposed in MITM dumps today;
+	// see planning/smart_routing_and_local_tools.md §Complexity.
+	ComplexityFrom string `yaml:"complexity_from,omitempty" json:"complexity_from,omitempty"`
+	// Complexity tunes the injected complexity→cloud rule (optional knobs).
+	Complexity ComplexityConfig `yaml:"complexity,omitempty" json:"complexity,omitempty"`
 	// TurnFamilyTTL is how long a DecideLocal / explicit turn family stays open for
 	// reply-summary / title follow-ons (e.g. "90s"). Empty → 90s. Not conversation-wide.
 	// See planning/routing_session_policy.md.
@@ -109,6 +188,19 @@ type RoutingConfig struct {
 	// after a parent cloud|local decision. Path B logs would_local and fulfills
 	// when HasRunSSEToolCodec; otherwise origin. Path A routes allowlisted tools locally.
 	ToolFollowup ToolFollowupConfig `yaml:"tool_followup,omitempty" json:"tool_followup,omitempty"`
+}
+
+// ComplexityConfig controls the optional complexity→cloud routing rule.
+// Disabled by default so existing classifier priorities stay unchanged until opted in.
+type ComplexityConfig struct {
+	// Enabled injects a complexity rule when true (default false).
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// CloudAbove routes to cloud when score >= this (0–100). Default 70.
+	CloudAbove int `yaml:"cloud_above,omitempty" json:"cloud_above,omitempty"`
+	// Priority of the injected rule. Default 75 (below must-cloud 80, above small-local 70).
+	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+	CloudBackend string `yaml:"cloud_backend,omitempty" json:"cloud_backend,omitempty"`
+	CloudModel   string `yaml:"cloud_model,omitempty" json:"cloud_model,omitempty"`
 }
 
 // ToolFollowupConfig is the configurable methodology for tool-step routing after a
@@ -170,6 +262,72 @@ func (c TaskClassifierConfig) ToolsForceCloudOrDefault() bool {
 		return true
 	}
 	return *c.ToolsForceCloud
+}
+
+// AllowCloudFallbackOrDefault is true unless explicitly set false (pure-local).
+func (c RoutingConfig) AllowCloudFallbackOrDefault() bool {
+	if c.AllowCloudFallback == nil {
+		return true
+	}
+	return *c.AllowCloudFallback
+}
+
+// ApplyDefaultTarget rewrites/injects the priority-0 always rule from routing.default.
+func (c *RoutingConfig) ApplyDefaultTarget() {
+	if c == nil {
+		return
+	}
+	want := strings.ToLower(strings.TrimSpace(c.Default))
+	if want != "local" && want != "cloud" {
+		return
+	}
+	model := strings.TrimSpace(c.DefaultLocalModel)
+	if model == "" {
+		model = "codellama:7b"
+	}
+	for i := range c.Rules {
+		r := &c.Rules[i]
+		if !strings.EqualFold(strings.TrimSpace(r.Trigger.Type), "always") {
+			continue
+		}
+		if r.Priority > 0 {
+			continue
+		}
+		r.Action.Target = want
+		if want == "local" {
+			r.Action.Backend = "ollama"
+			if r.Action.Model == "" || strings.EqualFold(r.Action.Model, "gpt-4o") {
+				r.Action.Model = model
+			}
+			if r.Name == "" || r.Name == "Default Origin" {
+				r.Name = "Default Local"
+			}
+		} else {
+			if r.Action.Backend == "" {
+				r.Action.Backend = "openai"
+			}
+			if r.Action.Model == "" {
+				r.Action.Model = "gpt-4o"
+			}
+			if r.Name == "" || r.Name == "Default Local" {
+				r.Name = "Default Origin"
+			}
+		}
+		return
+	}
+	// No always rule — inject one.
+	name := "Default Origin"
+	action := ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"}
+	if want == "local" {
+		name = "Default Local"
+		action = ActionConfig{Target: "local", Backend: "ollama", Model: model}
+	}
+	c.Rules = append(c.Rules, RuleConfig{
+		Name:     name,
+		Priority: 0,
+		Trigger:  TriggerConfig{Type: "always"},
+		Action:   action,
+	})
 }
 
 type RuleConfig struct {
@@ -236,6 +394,22 @@ type TransformConfig struct {
 	TrimContext    bool   `yaml:"trim_context" json:"trim_context"`
 	AugmentPrepend string `yaml:"augment_prepend" json:"augment_prepend"`
 	AugmentAppend  string `yaml:"augment_append" json:"augment_append"`
+	// LocalContext controls how messages are bounded when fulfilling on a local
+	// backend (Path A gateway / legacy StreamChat). Path B Bidi extract already
+	// sends a single TipTap latest-turn user message — this is a no-op there.
+	//   "" / "full"     — leave messages unchanged (legacy)
+	//   "latest_turn"   — leading system (bounded) + latest user turn (+ tool loop)
+	// Applied in PipelineCompleter only after a local routing decision so cloud
+	// / sticky origin paths keep the full client body. See planning docs.
+	LocalContext string `yaml:"local_context,omitempty" json:"local_context,omitempty"`
+	// LocalSystemMaxChars caps leading system content under latest_turn (default 4000).
+	LocalSystemMaxChars int `yaml:"local_system_max_chars,omitempty" json:"local_system_max_chars,omitempty"`
+	// LocalEpisodeCount injects up to N prior compressed episodes as a system
+	// preamble for local fulfills (0 → disabled; default 3 when unset in yaml use 0
+	// unless set). Keeps locals off TipTap mega-dumps.
+	LocalEpisodeCount int `yaml:"local_episode_count,omitempty" json:"local_episode_count,omitempty"`
+	// LocalEpisodeMaxChars caps the episode preamble (default 1500).
+	LocalEpisodeMaxChars int `yaml:"local_episode_max_chars,omitempty" json:"local_episode_max_chars,omitempty"`
 }
 
 func DefaultConfig() *Config {
@@ -277,6 +451,10 @@ func DefaultConfig() *Config {
 			BudgetCap: 50,
 		},
 		Dashboard: DashboardConfig{Enabled: true},
+		Transform: TransformConfig{
+			LocalContext:        "latest_turn",
+			LocalSystemMaxChars: 4000,
+		},
 		MITM: MITMConfig{
 			Enabled:               false,
 			Port:                  8082,

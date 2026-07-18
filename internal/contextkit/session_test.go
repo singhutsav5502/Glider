@@ -1,6 +1,7 @@
 package contextkit_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/glider-ai/glider/internal/contextkit"
@@ -42,5 +43,28 @@ func TestTurnBudgetOverSoft(t *testing.T) {
 	b := contextkit.TurnBudget{SoftTokens: 100, HardTokens: 200, SpentTokens: 100}
 	if !b.OverSoft() {
 		t.Fatal("expected over soft")
+	}
+}
+
+func TestRecentEpisodesAndPreamble(t *testing.T) {
+	s := contextkit.NewStore(8)
+	s.RecordEpisode("run-1", contextkit.Episode{ID: "1", Summary: "renamed foo"})
+	s.RecordEpisode("run-1", contextkit.Episode{ID: "2", Summary: "fixed lint", Model: "codellama:7b"})
+	eps := s.RecentEpisodes("run-1", 2)
+	if len(eps) != 2 {
+		t.Fatalf("eps=%d", len(eps))
+	}
+	pre := contextkit.FormatEpisodePreamble(eps, 500)
+	if !strings.Contains(pre, "renamed foo") || !strings.Contains(pre, "fixed lint") {
+		t.Fatalf("preamble=%q", pre)
+	}
+	s.SetLoop("run-1", contextkit.LoopCheckpoint{Goal: "babysit", LastEpisodeID: "2"})
+	st := s.Get("run-1")
+	if st.Loop == nil || st.Loop.LastEpisodeID != "2" {
+		t.Fatalf("loop=%+v", st.Loop)
+	}
+	exp := s.Export()
+	if _, ok := exp["run-1"]; !ok {
+		t.Fatal("export missing session")
 	}
 }

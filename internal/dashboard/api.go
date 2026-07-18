@@ -13,6 +13,8 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/loop"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"gopkg.in/yaml.v3"
@@ -549,6 +551,100 @@ func (s *Server) handleContextTurn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
+func (s *Server) handleContextEpisodes(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+	limit := 32
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+			if limit > 200 {
+				limit = 200
+			}
+		}
+	}
+	type payload struct {
+		Session  string                `json:"session,omitempty"`
+		Episodes []contextkit.Episode  `json:"episodes"`
+		Sessions []string              `json:"sessions,omitempty"`
+	}
+	out := payload{Session: sessionID, Episodes: []contextkit.Episode{}}
+	if s.Episodes == nil {
+		writeJSON(w, out)
+		return
+	}
+	if sessionID == "" {
+		out.Sessions = s.Episodes.SessionIDs()
+		// Merge recent across sessions (newest per session, capped).
+		for _, id := range out.Sessions {
+			eps := s.Episodes.RecentEpisodes(id, limit)
+			out.Episodes = append(out.Episodes, eps...)
+		}
+		if len(out.Episodes) > limit {
+			out.Episodes = out.Episodes[len(out.Episodes)-limit:]
+		}
+		writeJSON(w, out)
+		return
+	}
+	out.Episodes = s.Episodes.RecentEpisodes(sessionID, limit)
+	if out.Episodes == nil {
+		out.Episodes = []contextkit.Episode{}
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleContextExport(w http.ResponseWriter, r *http.Request) {
+	turnID := strings.TrimSpace(r.URL.Query().Get("turn"))
+	maxEvents := 500
+	if q := r.URL.Query().Get("events"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			maxEvents = n
+		}
+	}
+	out := map[string]any{}
+	if g, ok := s.ContextGraph.(*contextgraph.Store); ok && g != nil {
+		out = g.Export(turnID, maxEvents)
+	} else if s.ContextGraph != nil {
+		out["turns"] = s.ContextGraph.RecentTurns(50)
+		out["events"] = s.ContextGraph.RecentEvents(maxEvents)
+		out["stats"] = s.ContextGraph.Stats()
+	}
+	if s.Episodes != nil {
+		if sess := strings.TrimSpace(r.URL.Query().Get("session")); sess != "" {
+			st := s.Episodes.Get(sess)
+			out["session"] = st
+		} else {
+			out["episodes"] = s.Episodes.Export()
+		}
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleContextPrune(w http.ResponseWriter, r *http.Request) {
+	retain := s.ContextRetainDays
+	if retain <= 0 {
+		retain = 14
+	}
+	if q := r.URL.Query().Get("retain_days"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			retain = n
+		}
+	}
+	result := map[string]any{"retain_days": retain}
+	if g, ok := s.ContextGraph.(*contextgraph.Store); ok && g != nil {
+		n, err := g.PruneDisk(retain)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		result["disk_files_removed"] = n
+		result["memory_events_dropped"] = g.PruneMemory()
+	}
+	if s.Episodes != nil {
+		result["sessions_pruned"] = s.Episodes.Prune()
+	}
+	writeJSON(w, result)
+}
+
 func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 	var snap metrics.Snapshot
 	if s.Metrics == nil {
@@ -568,6 +664,128 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, snap)
+}
+
+func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
+	if s.Loops == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	list, err := s.Loops.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, list)
+}
+
+func (s *Server) handleCreateLoop(w http.ResponseWriter, r *http.Request) {
+	if s.Loops == nil {
+		http.Error(w, "loops not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	var spec loop.LoopSpec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	st, err := s.Loops.Create(spec)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	hoopsDir := s.HoopsDir
+	if hoopsDir == "" {
+		hoopsDir = loop.DefaultHoopsDir()
+	}
+	_ = loop.WriteHoopYAML(hoopsDir, st.Spec)
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, st)
+}
+
+func (s *Server) handleLoopAction(w http.ResponseWriter, r *http.Request) {
+	if s.Loops == nil {
+		http.Error(w, "loops not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/loops/"), "/")
+	if path == "" {
+		http.Error(w, "missing loop id", http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(path, "/")
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+
+	switch {
+	case action == "" && r.Method == http.MethodGet:
+		st, err := s.Loops.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, st)
+	case action == "" && r.Method == http.MethodPut:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+		var spec loop.LoopSpec
+		if err := json.Unmarshal(body, &spec); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st, err := s.Loops.Update(id, spec)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+	case action == "" && r.Method == http.MethodDelete:
+		if err := s.Loops.Delete(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		hoopsDir := s.HoopsDir
+		if hoopsDir == "" {
+			hoopsDir = loop.DefaultHoopsDir()
+		}
+		_ = loop.DeleteHoopYAML(hoopsDir, id)
+		w.WriteHeader(http.StatusNoContent)
+	case action == "start" && r.Method == http.MethodPost:
+		// Detach from request context — it cancels when the HTTP handler returns.
+		// Manager.Stop / process Shutdown own cancellation.
+		st, err := s.Loops.Start(context.Background(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+	case action == "stop" && r.Method == http.MethodPost:
+		if err := s.Loops.Stop(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st, err := s.Loops.Get(id)
+		if err != nil {
+			writeJSON(w, map[string]string{"id": id, "status": "stopped"})
+			return
+		}
+		writeJSON(w, st)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) discover(ctx context.Context) ([]DiscoveredModel, config.ModelCatalog, []string, []string) {

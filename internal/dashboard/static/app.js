@@ -3,6 +3,7 @@
     overview: document.getElementById("panel-overview"),
     vram: document.getElementById("panel-vram"),
     rules: document.getElementById("panel-rules"),
+    hoops: document.getElementById("panel-hoops"),
     settings: document.getElementById("panel-settings"),
   };
 
@@ -26,6 +27,7 @@
       panels[btn.dataset.tab].classList.add("active");
       if (btn.dataset.tab === "vram") loadVRAM();
       if (btn.dataset.tab === "rules") renderRulesEditor(currentCfg);
+      if (btn.dataset.tab === "hoops") refreshHoopsPanel();
       if (btn.dataset.tab === "overview") loadSessions();
     });
   });
@@ -830,7 +832,279 @@
     loadYamlEditor();
   });
 
-  // Quick log-level change from config still goes through full save; also listen for select blur optional â€” covered by Save.
+  async function refreshHoopsPanel() {
+    await Promise.all([loadHoops(), loadHotSwap(), loadSwarmTemplates()]);
+  }
+
+  async function loadHoops() {
+    const el = document.getElementById("hoops-list");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/loops");
+      const list = await res.json();
+      if (!Array.isArray(list) || list.length === 0) {
+        el.innerHTML = `<p class="hint">No hoops yet. Compose stages + eval above.</p>`;
+        return;
+      }
+      el.innerHTML = list.map((st) => {
+        const outcomes = (st.outcomes || []).slice(-8).reverse();
+        const rows = outcomes.map((o) => {
+          const pills = (o.stages || []).map((s) =>
+            `<span class="stage-pill ${s.success ? "ok" : "fail"}">${esc(s.kind)}</span>`
+          ).join("");
+          return `<div class="hoop-outcome ${o.success ? "ok" : "fail"}">` +
+            `<span>#${o.iteration}</span><span>${esc(o.route || "")}</span>` +
+            `<span>${o.latency_ms || 0}ms</span>` +
+            `<span>${pills} ${esc((o.summary || o.err || "").slice(0, 100))}</span></div>`;
+        }).join("");
+        const name = esc(st.spec?.name || st.spec?.id || "");
+        const id = esc(st.spec?.id || "");
+        const status = esc(st.status || "");
+        const bias = st.hoop?.local_bias != null ? Number(st.hoop.local_bias).toFixed(2) : "—";
+        const stageTags = (st.spec?.stages || []).filter((s) => s.enabled !== false)
+          .map((s) => `<span class="tag">${esc(s.kind)}</span>`).join(" ");
+        const evalGoal = esc(st.spec?.eval?.goal || st.spec?.goal || "");
+        const score = st.last_eval_score != null ? Number(st.last_eval_score).toFixed(2) : "—";
+        return `<div class="hoop-card" data-id="${id}">
+          <div class="hoop-card-head">
+            <strong>${name}</strong>
+            <span class="tag">${status}</span>
+            <span class="muted">bias ${bias}</span>
+            <span class="muted">score ${score}</span>
+            <span class="hoop-actions">
+              <button type="button" class="linkish hoop-start" data-id="${id}">Start</button>
+              <button type="button" class="linkish hoop-stop" data-id="${id}">Stop</button>
+              <button type="button" class="linkish hoop-del" data-id="${id}">Delete</button>
+            </span>
+          </div>
+          <p class="hint" style="margin:8px 0">Goal: ${esc((st.spec?.goal || st.spec?.prompt || "").slice(0, 160))}</p>
+          ${evalGoal ? `<p class="hint" style="margin:0 0 8px">Eval: ${evalGoal}</p>` : ""}
+          <div>${stageTags}</div>
+          <div class="hoop-outcomes">${rows || `<span class="muted">No cycles yet — start to run planner→actor→critic</span>`}</div>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".hoop-start").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "start")));
+      el.querySelectorAll(".hoop-stop").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "stop")));
+      el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", () => deleteHoop(b.dataset.id)));
+    } catch (e) {
+      el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
+    }
+  }
+
+  async function hoopAction(id, action) {
+    const res = await fetch(`/api/loops/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    if (!res.ok) {
+      showHoopsError(await res.text());
+      return;
+    }
+    showHoopsOk(`${action} ${id}`);
+    await loadHoops();
+  }
+
+  async function deleteHoop(id) {
+    const res = await fetch(`/api/loops/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) {
+      showHoopsError(await res.text());
+      return;
+    }
+    showHoopsOk(`deleted ${id}`);
+    await loadHoops();
+  }
+
+  function showHoopsError(msg) {
+    const e = document.getElementById("hoops-error");
+    const o = document.getElementById("hoops-ok");
+    if (o) o.hidden = true;
+    if (!e) return;
+    if (!msg) { e.hidden = true; e.textContent = ""; return; }
+    e.hidden = false;
+    e.textContent = msg;
+  }
+
+  function showHoopsOk(msg) {
+    const e = document.getElementById("hoops-error");
+    const o = document.getElementById("hoops-ok");
+    if (e) e.hidden = true;
+    if (!o) return;
+    o.hidden = false;
+    o.textContent = msg || "OK";
+  }
+
+  function esc(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  const hoopForm = document.getElementById("hoop-form");
+  if (hoopForm) {
+    hoopForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      showHoopsError("");
+      const route = document.getElementById("hoop-route").value || "local";
+      const name = document.getElementById("hoop-name").value.trim();
+      const stages = [];
+      document.querySelectorAll("#hoop-stages input[data-stage]").forEach((inp) => {
+        stages.push({ kind: inp.dataset.stage, enabled: inp.checked, id: inp.dataset.stage, name: inp.dataset.stage });
+      });
+      const evalGoal = (document.getElementById("hoop-eval-goal") || {}).value?.trim() || "";
+      const maxIter = Number(document.getElementById("hoop-max-iter")?.value) || 0;
+      const goal = document.getElementById("hoop-prompt").value.trim();
+      const body = {
+        id: name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || undefined,
+        name,
+        goal,
+        prompt: goal,
+        interval: document.getElementById("hoop-interval").value.trim() || "",
+        route,
+        learning: document.getElementById("hoop-learning").checked,
+        stages,
+        eval: { goal: evalGoal || goal, on_success_n: evalGoal ? 1 : 0, min_score: 0.7 },
+        max_iterations: maxIter || 3,
+        autonomy: "L1",
+      };
+      const res = await fetch("/api/loops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showHoopsError(await res.text());
+        return;
+      }
+      showHoopsOk("Hoop created");
+      hoopForm.reset();
+      document.querySelectorAll("#hoop-stages input[data-stage]").forEach((inp) => { inp.checked = true; });
+      document.getElementById("hoop-interval").value = "5m";
+      document.getElementById("hoop-max-iter").value = "3";
+      document.getElementById("hoop-route").value = "local";
+      await loadHoops();
+    });
+  }
+
+  const hoopsRefresh = document.getElementById("hoops-refresh");
+  if (hoopsRefresh) hoopsRefresh.addEventListener("click", () => refreshHoopsPanel());
+
+  async function loadHotSwap() {
+    const el = document.getElementById("hotswap-list");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/hotswap/modules");
+      const data = await res.json();
+      let mods = data.modules?.length ? data.modules : (data.catalog || []);
+      // Prefer stage modules first for Loop Engineering framing.
+      mods = [...mods].sort((a, b) => {
+        const as = a.stage ? 0 : 1;
+        const bs = b.stage ? 0 : 1;
+        if (as !== bs) return as - bs;
+        return String(a.name).localeCompare(String(b.name));
+      });
+      el.innerHTML = mods.map((m) => {
+        const en = m.enabled !== false;
+        return `<div class="hotswap-row ${m.stage ? "stage" : ""}">
+          <span class="hotswap-name">${esc(m.name)}</span>
+          <span class="tag">${esc(m.kind || "")}</span>
+          <span class="tag">${esc(m.reload || (m.hot ? "hot" : "restart"))}</span>
+          <span class="muted" title="${esc(m.description || "")}">gen ${m.generation || 0}</span>
+          <label class="check"><input type="checkbox" data-mod="${esc(m.name)}" ${en ? "checked" : ""} ${m.hot ? "" : "disabled"} /> enabled</label>
+        </div>`;
+      }).join("") || `<p class="hint">No modules registered.</p>`;
+      el.querySelectorAll("input[data-mod]").forEach((inp) => {
+        inp.addEventListener("change", async () => {
+          const res = await fetch(`/api/hotswap/modules/${encodeURIComponent(inp.dataset.mod)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: inp.checked }),
+          });
+          if (!res.ok) showHoopsError(await res.text());
+          else showHoopsOk(`${inp.dataset.mod} ${inp.checked ? "enabled" : "disabled"}`);
+        });
+      });
+    } catch (e) {
+      el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
+    }
+  }
+
+  async function loadSwarmTemplates() {
+    const el = document.getElementById("swarm-templates");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/swarm/templates");
+      const list = await res.json();
+      if (!Array.isArray(list) || !list.length) {
+        el.innerHTML = `<p class="hint">No swarm templates in ~/.glider/hoops.</p>`;
+        return;
+      }
+      el.innerHTML = list.map((t) =>
+        `<div class="hoop-card"><strong>${esc(t.name || t.id)}</strong> ` +
+        `<span class="tag">${t.enabled ? "on" : "off"}</span>` +
+        `<p class="hint">${esc((t.prompt || "").slice(0, 120))}</p></div>`
+      ).join("");
+    } catch (e) {
+      el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
+    }
+  }
+
+  const swarmForm = document.getElementById("swarm-form");
+  if (swarmForm) {
+    swarmForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const out = document.getElementById("swarm-result");
+      const roles = document.getElementById("swarm-roles").value.split(",").map((s) => s.trim()).filter(Boolean);
+      const body = {
+        prompt: document.getElementById("swarm-prompt").value.trim(),
+        roles,
+        max_workers: Number(document.getElementById("swarm-workers").value) || 2,
+        prefer_local: true,
+      };
+      const res = await fetch("/api/swarm/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      if (out) {
+        out.hidden = false;
+        out.textContent = text;
+      }
+      if (!res.ok) showHoopsError(text);
+      else showHoopsOk("Swarm finished");
+    });
+  }
+
+  const tplForm = document.getElementById("tpl-form");
+  if (tplForm) {
+    tplForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const body = {
+        id: document.getElementById("tpl-id").value.trim(),
+        name: document.getElementById("tpl-name").value.trim(),
+        prompt: document.getElementById("tpl-prompt").value.trim(),
+        roles: document.getElementById("tpl-roles").value.split(",").map((s) => s.trim()).filter(Boolean),
+        prefer_local: document.getElementById("tpl-local").checked,
+        enabled: true,
+        max_workers: 2,
+      };
+      const res = await fetch("/api/swarm/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showHoopsError(await res.text());
+        return;
+      }
+      showHoopsOk("Template saved");
+      tplForm.reset();
+      document.getElementById("tpl-local").checked = true;
+      document.getElementById("tpl-roles").value = "plan,exec";
+      await loadSwarmTemplates();
+    });
+  }
+
+  // Quick log-level change from config still goes through full save; also listen for select blur optional — covered by Save.
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);

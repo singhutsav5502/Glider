@@ -17,6 +17,7 @@
         <button class="tab active" data-tab="overview">Overview</button>
         <button class="tab" data-tab="vram">VRAM & Models</button>
         <button class="tab" data-tab="rules">Rules Engine</button>
+        <button class="tab" data-tab="hoops">Hoops & Swarm</button>
         <button class="tab" data-tab="settings">Config</button>
       </nav>
       <div class="status" id="status">Status: OK</div>
@@ -89,6 +90,89 @@
           <button type="button" id="rules-save">Save rules</button>
           <button type="button" id="rules-reload" class="linkish">Reload</button>
         </div>
+      </section>
+
+      <section id="panel-hoops" class="panel">
+        <p class="hint">
+          <strong>Loop Engineering</strong> hoops: compose stages (planner → actor → critic + memory/router) with eval feedback.
+          Not Cursor <code>/loop</code> cron — Glider owns the control system. Pure-local default (Ollama/vLLM only).
+          See <code>planning/loop_engineering.md</code>.
+        </p>
+
+        <div class="hoops-layout">
+          <fieldset class="cfg-section">
+            <legend>Compose hoop</legend>
+            <form id="hoop-form" class="cfg-grid">
+              <label>Name<input type="text" id="hoop-name" placeholder="daily-triage" required /></label>
+              <label title="Optional heartbeat between waves">Heartbeat<input type="text" id="hoop-interval" placeholder="5m" value="5m" /></label>
+              <label class="span2">Goal / purpose<textarea id="hoop-prompt" class="cfg-mono" rows="3" placeholder="Triage open issues and summarize blockers" required></textarea></label>
+              <label class="span2">Eval goal (critic stop condition)<input type="text" id="hoop-eval-goal" placeholder="Summary written; no critical failures" /></label>
+              <label class="span2">Stages
+                <div class="stage-checks" id="hoop-stages">
+                  <label class="check"><input type="checkbox" data-stage="router" checked /> router</label>
+                  <label class="check"><input type="checkbox" data-stage="planner" checked /> planner</label>
+                  <label class="check"><input type="checkbox" data-stage="actor" checked /> actor</label>
+                  <label class="check"><input type="checkbox" data-stage="critic" checked /> critic</label>
+                  <label class="check"><input type="checkbox" data-stage="memory" checked /> memory</label>
+                </div>
+              </label>
+              <label>Route
+                <select id="hoop-route">
+                  <option value="local" selected>local (pure)</option>
+                  <option value="cloud">cloud</option>
+                  <option value="auto">auto</option>
+                </select>
+              </label>
+              <label class="check"><input type="checkbox" id="hoop-learning" /> Self-learning</label>
+              <label>Max iterations<input type="number" id="hoop-max-iter" min="0" value="3" /></label>
+              <div class="span2 cfg-actions">
+                <button type="submit">Create hoop</button>
+                <button type="button" id="hoops-refresh" class="linkish">Refresh</button>
+              </div>
+            </form>
+            <p id="hoops-error" class="cfg-error" hidden></p>
+            <p id="hoops-ok" class="cfg-ok" hidden></p>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend>Hot-swap stages</legend>
+            <p class="hint" style="margin:0 0 12px">Loop Engineering stages are hot-swappable. Infra (backends, MITM, ports) needs restart.</p>
+            <div id="hotswap-list" class="hotswap-list"></div>
+          </fieldset>
+        </div>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Active hoops + eval feedback</legend>
+          <div id="hoops-list" class="hoops-list"></div>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Swarm wave (planner/actor fan-out)</legend>
+          <form id="swarm-form" class="cfg-grid">
+            <label class="span2">Prompt<textarea id="swarm-prompt" class="cfg-mono" rows="2" placeholder="Plan then execute a short summary of this repo"></textarea></label>
+            <label>Roles (comma)<input type="text" id="swarm-roles" value="plan,exec" /></label>
+            <label>Max workers<input type="number" id="swarm-workers" min="1" max="4" value="2" /></label>
+            <div class="span2 cfg-actions">
+              <button type="submit">Run swarm</button>
+            </div>
+          </form>
+          <pre id="swarm-result" class="swarm-result" hidden></pre>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Swarm templates</legend>
+          <div id="swarm-templates" class="hoops-list"></div>
+          <form id="tpl-form" class="cfg-grid" style="margin-top:16px">
+            <label>ID<input type="text" id="tpl-id" placeholder="dual-role" /></label>
+            <label>Name<input type="text" id="tpl-name" placeholder="Dual role" /></label>
+            <label class="span2">Prompt<textarea id="tpl-prompt" class="cfg-mono" rows="2"></textarea></label>
+            <label>Roles<input type="text" id="tpl-roles" value="plan,exec" /></label>
+            <label class="check"><input type="checkbox" id="tpl-local" checked /> Prefer local</label>
+            <div class="span2 cfg-actions">
+              <button type="submit">Save template</button>
+            </div>
+          </form>
+        </fieldset>
       </section>
 
       <section id="panel-settings" class="panel">

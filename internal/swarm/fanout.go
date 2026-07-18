@@ -10,6 +10,8 @@ import (
 // When ctx is cancelled, worker contexts are cancelled and FanOut returns
 // partial results collected so far plus ctx.Err() if no worker finished.
 // Never unbounded: MaxWorkers capped at 4; MaxInflight semaphore applied.
+// Results are buffered through a sized channel (ResultChanSize) for backpressure
+// before the final slice is assembled. Shared TurnID is stamped onto episodes.
 func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, error) {
 	if len(workers) == 0 {
 		return nil, nil
@@ -34,11 +36,12 @@ func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, erro
 		inflight = n
 	}
 	sem := make(chan struct{}, inflight)
+	buf := ChanSize(opts.ResultChanSize, DefaultResultChanSize)
+	outCh := make(chan indexedResult, buf)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	results := make([]Result, len(workers))
 	var wg sync.WaitGroup
 	for i, w := range workers {
 		wg.Add(1)
@@ -48,7 +51,7 @@ func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, erro
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				results[i] = Result{WorkerID: w.ID, Role: w.Role, Model: w.Model, Err: ctx.Err()}
+				pushResult(ctx, outCh, indexedResult{i: i, r: Result{WorkerID: w.ID, Role: w.Role, Model: w.Model, Err: ctx.Err()}})
 				return
 			}
 			id := w.ID
@@ -58,7 +61,7 @@ func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, erro
 			res := Result{WorkerID: id, Role: w.Role, Model: w.Model}
 			if w.Run == nil {
 				res.Err = fmt.Errorf("swarm: nil Run on worker %s", id)
-				results[i] = res
+				pushResult(ctx, outCh, indexedResult{i: i, r: res})
 				return
 			}
 			ep, err := w.Run(ctx)
@@ -70,25 +73,60 @@ func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, erro
 			if res.Episode.Role == "" && w.Role != "" {
 				res.Episode.Role = string(w.Role)
 			}
-			results[i] = res
+			if opts.TurnID != "" {
+				if res.Episode.Reason == "" {
+					res.Episode.Reason = "fan_out"
+				}
+				if res.Episode.ID == "" {
+					res.Episode.ID = fmt.Sprintf("%s-%s", opts.TurnID, id)
+				}
+			}
+			if opts.OnResult != nil {
+				opts.OnResult(res)
+			}
+			pushResult(ctx, outCh, indexedResult{i: i, r: res})
 		}(i, w)
 	}
 
-	done := make(chan struct{})
 	go func() {
 		wg.Wait()
-		close(done)
+		close(outCh)
 	}()
 
+	results := make([]Result, len(workers))
+	got := 0
+	for ir := range outCh {
+		if ir.i >= 0 && ir.i < len(results) {
+			results[ir.i] = ir.r
+			got++
+		}
+	}
+	_ = got
+
 	select {
-	case <-done:
-		return results, firstErr(results)
 	case <-ctx.Done():
-		<-done
 		if err := firstErr(results); err != nil {
 			return results, err
 		}
 		return results, ctx.Err()
+	default:
+		return results, firstErr(results)
+	}
+}
+
+type indexedResult struct {
+	i int
+	r Result
+}
+
+func pushResult(ctx context.Context, ch chan<- indexedResult, ir indexedResult) {
+	select {
+	case ch <- ir:
+	case <-ctx.Done():
+		select {
+		case ch <- ir:
+		default:
+		}
 	}
 }
 

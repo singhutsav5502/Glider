@@ -37,7 +37,7 @@ Both the gateway (`:8080`) and MITM (`:8082`) run the same pipeline for recogniz
 
 Unrecognized Cursor-proprietary envelopes always blind-passthrough on MITM.
 
-**Routing priority:** explicit (`/local`, `/cloud`, `/heavy`, `/fast`) → **task_classifier** (small-local / must-cloud / tools) → Starlark → context-token **ceiling** → default. See `configs/glider.yaml` and [planning/smart_routing_and_local_tools.md](planning/smart_routing_and_local_tools.md).
+**Routing priority:** explicit (`/local`, `/cloud`, `/heavy`, `/fast`) → **turn-family sticky** (Path B) → `tool_followup` → **task_classifier** → Starlark → context-token **ceiling** → default. See `configs/glider.yaml` and [planning/README.md](planning/README.md).
 
 **Path A tools:** gateway preserves `tools` / `tool_choice` and tool-loop message fields (`assistant.tool_calls`, `role=tool` + `tool_call_id`). Anthropic-shaped `tool_use` / `tool_result` blocks are normalized to OpenAI. Stream `tool_calls` are re-emitted on Cursor SSE. Ollama/vLLM attach tools best-effort; models that reject tools fall through `FallbackChain` to BYOK cloud (`ToolsUnsupportedError`). Default `routing.task_classifier.tools_force_cloud: true` (allowlisted tools can skip via `tool_followup`). Path B child/tool RunSSE stays origin.
 
@@ -113,8 +113,8 @@ Other HTTPS (updates, telemetry, non-allowlisted hosts) still goes through the p
 **Notes**
 
 - Prefer HTTP/1.1 (`disableHttp2`). Some Cursor builds bypass `http.proxy` on HTTP/2 / Agent singleton paths.
-- Agent Connect/gRPC bodies always **passthrough** — subscription Agent should not break; they are not harness-routable yet.
-- Force local with `/local` only when the body is chat/completions or Responses-shaped (gateway Mode A, or rare OpenAI-shaped MITM hits).
+- With `agent_rpc_fulfill: true`, **text-only** root Agent turns (BidiAppend → RunSSE) can fulfill locally; **tool loops / child RunSSE stay origin**. Unrecognized envelopes always passthrough.
+- Force local with `/local` on chat/Responses bodies (gateway Mode A, or OpenAI-shaped MITM hits). On Path B, `/local` / `/cloud` apply via TipTap extract when present.
 
 ---
 
@@ -150,12 +150,16 @@ Gateway accepts:
 | `internal/mitm` | HTTPS MITM forward proxy (CONNECT, CA, passthrough / local) |
 | `internal/backend` | Ollama, vLLM, OpenAI, Anthropic |
 | `internal/config` | `glider.yaml` load + hot-reload |
-| `internal/router` | Explicit / regex / context / Starlark rules |
+| `internal/router` | Explicit / classifier / Starlark / tool_followup |
+| `internal/contextgraph` | Turn-family event graph (sticky + analytics) |
+| `internal/swarm` | FanOut / Merge / Loop / HotSwap stubs |
 | `internal/transform` | Tokenizer + opt-in trim/augment |
-| `internal/orchestrator` | Lifecycle, queue, fallback, aliases |
+| `internal/orchestrator` | Lifecycle, queue, fallback, aliases, FanOut |
 | `internal/vram` | nvidia-smi monitor + allocation |
 | `internal/metrics` | Route/token/cost/latency + event bus |
 | `internal/dashboard` | Embedded Web UI + REST + WebSocket |
+
+Planning status index: [planning/README.md](planning/README.md).
 
 ## Tests
 

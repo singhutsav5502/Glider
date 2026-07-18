@@ -52,6 +52,10 @@ type Options struct {
 	MaxInflight     int // semaphore; 0 → MaxWorkers
 	WorkerQueueSize int // unused reserved slot sizing hint
 	ResultChanSize  int // merge / stream buffer; 0 → 32
+	// TurnID is the shared contextgraph turn family for this fan-out wave.
+	TurnID string
+	// OnResult is called as each worker finishes (optional; for streaming / graph sinks).
+	OnResult func(Result)
 }
 
 // Swarm runs a set of workers and returns merged-capable results.

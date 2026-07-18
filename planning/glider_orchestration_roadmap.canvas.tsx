@@ -47,12 +47,12 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "milestones", label: "Milestones" },
 ];
 
-/** Honest maturity % from Glider code + planning docs (2026-07-18). Not aspirational. */
+/** Honest maturity % from Glider code + planning docs (2026-07-18 late). Not aspirational. */
 const CAPABILITY_STATUS = [
   {
-    area: "Routing (explicit Ã¢â€ â€™ classifier Ã¢â€ â€™ Starlark Ã¢â€ â€™ ceiling)",
-    pct: 80,
-    truth: "Hard-force /cloud shipped; classifier MVP regex",
+    area: "Routing (explicit -> sticky -> classifier -> Starlark -> ceiling)",
+    pct: 90,
+    truth: "/cloud hard-force + Path B turn-family sticky; classifier MVP",
   },
   {
     area: "Path A gateway (cus- + OpenAI/Anthropic normalize)",
@@ -60,13 +60,13 @@ const CAPABILITY_STATUS = [
     truth: "Primary Agent+tools path; stream tool_calls bridge shipped",
   },
   {
-    area: "Path B MITM Agent (BidiAppend Ã¢â€ â€™ RunSSE)",
-    pct: 35,
-    truth: "Text fulfill experimental; child/tool RunSSE Ã¢â€ â€™ origin",
+    area: "Path B MITM Agent (BidiAppend -> RunSSE)",
+    pct: 55,
+    truth: "Text fulfill + sticky/summary/subagent; child/tool RunSSE -> origin",
   },
   {
     area: "Local tools (Path A Tools on request)",
-    pct: 75,
+    pct: 90,
     truth: "Attach + SSE tool_calls; no Glider-side tool runners yet",
   },
   {
@@ -82,12 +82,12 @@ const CAPABILITY_STATUS = [
   {
     area: "Swarms / multi-agent",
     pct: 40,
-    truth: "internal/swarm FanOut+Merge+Loop+HotSwap; FanOutExecutor cancel-aware",
+    truth: "internal/swarm FanOut+Merge+Loop+HotSwap; FanOutExecutor; no planner",
   },
   {
     area: "Context management (session / episodes / swarm memory)",
-    pct: 35,
-    truth: "contextgraph event log + turn sticky; Episode store still stub",
+    pct: 55,
+    truth: "contextgraph MVP + sticky consult; Episode store not wired to every fulfill",
   },
   {
     area: "Hot-swap modules (config Watch/Swap)",
@@ -96,13 +96,13 @@ const CAPABILITY_STATUS = [
   },
   {
     area: "Concurrency (fan-out, hub races, backpressure)",
-    pct: 70,
-    truth: "swarm.FanOut cancel + Group; orchestration.concurrency channel sizes",
+    pct: 50,
+    truth: "swarm.FanOut cancel + Group; product fan-out backpressure still open",
   },
   {
     area: "Loop engineering (eval / babysit / recurring)",
-    pct: 0,
-    truth: "Documented in impl plan Ã‚Â§9.2 only",
+    pct: 15,
+    truth: "IntervalLoop skeleton only — not Cursor /loop",
   },
 ];
 
@@ -123,29 +123,44 @@ const BACKLOG = [
   },
   {
     pri: "P0",
-    item: "Path A stream tool_calls Ã¢â€ â€™ Cursor SSE bridge",
+    item: "Path A stream tool_calls -> Cursor SSE bridge",
+    status: "Done",
+    depth: "ParseOpenAIStreamPayload + WriteChatSSE re-emit tool_calls",
+    tone: "success" as const,
+  },
+  {
+    pri: "P0",
+    item: "Path B sticky (summary / subagent / contextgraph)",
+    status: "Done",
+    depth: "turn-family + user_visible_high_level_summary + ResolveCloudSticky",
+    tone: "success" as const,
+  },
+  {
+    pri: "P0",
+    item: "Manual Cursor checklist verify",
     status: "Open",
-    depth: "Without this, tools_force_cloud stays default; Agent+tools cannot stay local",
+    depth: "docs/CURSOR_CHECKLIST.md on a real Cursor install",
     tone: "danger" as const,
   },
   {
     pri: "P1",
     item: "Role-aware classifier (plan / research / exec)",
+    status: "Done",
+    depth: "task_class.go InferTaskRole; dashboard CLASS chips",
+    tone: "success" as const,
+  },
+  {
+    pri: "P1",
+    item: "Episode record on local fulfill (wire store)",
     status: "Open",
-    depth: "Extend task_class.go; dashboard reason chips; metrics class rates",
+    depth: "contextkit stubs exist; wire into pipeline -> Overview/history",
     tone: "warning" as const,
   },
   {
     pri: "P1",
-    item: "Episode record on local fulfill",
-    status: "Open",
-    depth: "1-line summary + artifacts into ~/.glider/history; Overview field",
-    tone: "warning" as const,
-  },
-  {
-    pri: "P1",
-    item: "Feature-flagged FanOutExecutor (gateway, 2 workers)",`n    status: "Done",
-    depth: "StrategyFanOut exists; needs VRAM BatchReserve + SSE merge",
+    item: "Feature-flagged FanOutExecutor sample rule + e2e",
+    status: "Partial",
+    depth: "FanOutExecutor shipped flag-off; need default/sample StrategyFanOut rule",
     tone: "info" as const,
   },
   {
@@ -364,11 +379,11 @@ const SLATE_MAP = [
 ];
 
 const MILESTONE_48H = [
-  { id: "m0", content: "P0 done: /cloud hard-force verified on TipTap Agent turns", status: "completed" as const },
-  { id: "m1", content: "Path A tool_calls stream bridge (M2 remainder) Ã¢â‚¬â€ unblock local tools", status: "in_progress" as const },
-  { id: "m2", content: "Role tags on classifier + dashboard reason chips", status: "pending" as const },
-  { id: "m3", content: "Episode stub written on local fulfill Ã¢â€ â€™ history API", status: "pending" as const },
-  { id: "m4", content: "Flag FanOutExecutor: 2 local models, gateway-only, e2e green", status: "pending" as const },
+  { id: "m0", content: "P0 done: /cloud hard-force + turn-family sticky verified in tests", status: "completed" as const },
+  { id: "m1", content: "Path A tool_calls stream bridge shipped", status: "completed" as const },
+  { id: "m2", content: "Role tags on classifier + dashboard CLASS chips", status: "completed" as const },
+  { id: "m3", content: "Wire Episode store into pipeline fulfill -> Overview/history", status: "pending" as const },
+  { id: "m4", content: "Sample FanOut rule + gateway e2e (flag-on demo)", status: "pending" as const },
 ];
 
 const MILESTONE_2W = [
@@ -419,16 +434,14 @@ function StatusSection() {
 
   return (
     <Stack gap={16}>
-      <Callout tone="warning" title="Honest snapshot Ã¢â‚¬â€ 2026-07-18">
-        Do not treat green core (Phases 1Ã¢â‚¬â€œ4) as swarm-ready.{" "}
-        <Code>/cloud</Code> P0 is done. Path B text fulfill is experimental. Swarms are
-        stubs (~5%). Source: STATUS.md + planning docs, verified against code surfaces.
+      <Callout tone="info" title="Status snapshot — 2026-07-18 late">
+        Core dual-mode + Path A tools + Path B text/sticky shipped. Swarms are foundation stubs (~40%), not Slate. Authority: planning/README.md.
       </Callout>
 
       <Grid columns={4} gap={12}>
-        <Stat value="80%" label="Routing" tone="success" />
-        <Stat value="35%" label="Path B Agent" tone="warning" />
-        <Stat value="5%" label="Swarms" tone="danger" />
+        <Stat value="90%" label="Routing" tone="success" />
+        <Stat value="55%" label="Path B Agent" tone="warning" />
+        <Stat value="40%" label="Swarms" tone="warning" />
         <Stat value={`${avg}%`} label="Capability average" tone="info" />
       </Grid>
 
@@ -502,7 +515,6 @@ function StatusSection() {
           Companion docs:{" "}
           <Code>planning/swarm_orchestration.md</Code>,{" "}
           <Code>planning/context_management.md</Code>,{" "}
-          <Code>planning/context_and_swarm_architecture.md</Code>,{" "}
           <Code>planning/smart_routing_and_local_tools.md</Code>
         </Text>
       </div>
@@ -826,7 +838,7 @@ export default function GliderOrchestrationRoadmap() {
 
       <Spacer />
       <Text size="small" tone="quaternary">
-        Glider @ D:\___repos\Glider Ã‚Â· canvas mirrors planning/context_and_swarm_architecture.md
+        Glider @ D:\___repos\Glider Ã‚Â· canvas mirrors planning/swarm_orchestration.md
       </Text>
     </Stack>
   );

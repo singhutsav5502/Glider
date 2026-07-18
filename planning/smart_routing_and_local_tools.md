@@ -25,10 +25,10 @@ Goal: route by **task shape** (and tool need) to offload cheap work locally, and
 | Layer | What exists | Gap | ~Done |
 |-------|-------------|-----|-------|
 | Explicit overrides | `/local` `/cloud` `/fast` `/heavy` — **hard-force** | Cursor mention chips without slash text | **95%** |
-| Rules | Explicit → **task_classifier** (role hints) → Starlark → ceiling | Classifier is regex MVP (no ML) | **100%** (MVP) |
-| Config | `routing.task_classifier` + `tool_followup` | Dashboard Rules UI does not edit classifier block | **90%** |
+| Rules | Explicit → **task_classifier** (role hints) → optional **complexity** → Starlark → ceiling | Classifier is regex MVP (no ML); complexity opt-in | **100%** (MVP) |
+| Config | `routing.task_classifier` + `tool_followup` + `complexity_from` | Dashboard Rules UI does not edit classifier block | **90%** |
 | Path A tools | `Tools` / `ToolChoice`; message `tool_calls` / `tool_call_id`; Anthropic normalize; stream SSE | Optional Glider-side runners / MCP | **95%** |
-| Path B | Text-only root RunSSE; tool_followup would_* | Child RunSSE / tool frames | **40%** |
+| Path B | Text + sticky/summary/subagent + contextgraph; tool_followup would_* | Child RunSSE / tool frames | **55%** |
 | Swarms / multi-agent | `FanOutExecutor` + `contextkit` Episode/SessionState | No planner, no default fan_out rules | **15%** |
 | Metrics | distribution + class_rates/role_rates + Overview chips + contextgraph `RouteDecided` | — | **95%** |
 
@@ -44,10 +44,40 @@ Goal: route by **task shape** (and tool need) to offload cheap work locally, and
 4. **Tool-step re-decide** (`routing.tool_followup`) — Path B metric-only until codec; Path A allowlist bypass
 5. **Task classifier tools** (~85) → cloud when `tools[]` + `tools_force_cloud` (skipped when allowlisted)
 6. **Task classifier must-cloud** (~80) → cloud (`role: plan`)
-7. **Task classifier small-local** (~70) → local (`role: exec|research`)
-8. **Starlark**
-9. **Token ceiling** `context_size` (~10)
-10. **Default** always → cloud when unsure
+7. **Complexity→Cloud** (~75, opt-in `routing.complexity.enabled`) — see §Complexity
+8. **Task classifier small-local** (~70) → local (`role: exec|research`)
+9. **Starlark**
+10. **Token ceiling** `context_size` (~10)
+11. **Default** always → cloud when unsure
+
+---
+
+## Complexity (P1)
+
+**Cursor feasibility (2026-07-18):** MITM dumps (`~/.glider/mitm-debug`) and `InspectBidiAppend` / `ExtractBidiCompletionRequest` do **not** expose complexity, model_tier, or max_mode. Vendor protos mention `max_mode` on `ModelDetails` / `RequestedModel`, but Glider does not parse those tags yet. Prefer extract-from-envelope over any gateway model side-channel.
+
+| Config | Meaning |
+|--------|---------|
+| `routing.complexity_from: heuristic` | Glider MVP score (default when enabled) |
+| `routing.complexity_from: cursor` | Only `Metadata.CursorComplexity` when set |
+| `routing.complexity_from: both` | Cursor if present, else heuristic |
+| `routing.complexity.enabled: true` | Inject Complexity→Cloud rule |
+
+Heuristic signals: `tools[]`, file-path mentions, prompt length, agent/plan/max mode strings.
+
+**Plug-in when Cursor field appears:** in `bidi_extract` / `decode`, call `router.TryAttachCursorComplexity(req, score, true)` then set `complexity_from: both`. Starlark sees `request.complexity_score` / `complexity_source`.
+
+---
+
+## Local context → CompleteLocal
+
+| Path | What locals receive |
+|------|---------------------|
+| **B** Bidi→RunSSE | One TipTap **latest user turn** only (`LatestUserTurnText`). No tools. No full envelope. |
+| **A** gateway | Full body used for **routing**; when Target=local, `BoundLocalContext` (`transform.local_context: latest_turn`) keeps bounded system + latest user (+ tool-loop tail). |
+| Legacy StreamChat | Same BoundLocalContext on local fulfill. |
+
+Truncation: `thresholds.max_local_context_tokens` is mainly a **routing ceiling**; `transform.trim_context` remains optional middle-drop. StickyCloud / deny-local stays in MITM before CompleteLocal.
 
 ### `/cloud` leak (fixed 2026-07-18)
 
@@ -103,6 +133,7 @@ Client still owns tool **execution**; Glider only preserves definitions + call/r
 | **M1b** `/cloud` hard-force | ✅ | TipTap + priority inversion; never canned |
 | **M2** Path A tools | ✅ | tool_calls SSE + message round-trip + Anthropic bridge |
 | **M3** Metrics | ✅ | local%/cloud%/canned% + class_rates chips + RouteDecided |
+| **M3b** Path B sticky | ✅ | turn-family + summary chrome + subagent + contextgraph |
 | **M4** Path B tools | pending | Feature-flagged child RunSSE |
 | **S1–S3** Swarms | 🟡 stubs | FanOut + contextkit |
 

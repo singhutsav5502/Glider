@@ -1,23 +1,24 @@
 # Glider — Project Summary
 
-> A local AI harness that sits above Cursor in **dual mode**: an OpenAI-compatible BYOK gateway and an HTTPS MITM forward proxy. It routes simple work to local models and otherwise either uses your OpenAI/Anthropic keys **or** passthroughs to Cursor’s original upstream (`*.cursor.sh`) with auth intact.
+> Local AI harness above Cursor. **Dual mode:** OpenAI-compatible BYOK gateway + HTTPS MITM forward proxy.  
+> **Status authority:** [planning/README.md](README.md) (Done / Partial / Next). As of **2026-07-18**.
 
 ---
 
 ## The Problem
 
-Cursor Chat and Agent send requests to expensive cloud APIs (Cursor subscription cloud and/or OpenAI/Anthropic), burning credits even for simple tasks like adding docstrings, renaming variables, or small refactors. Meanwhile, local GPUs sit idle. There's no middleware that can:
+Cursor Chat and Agent burn cloud credits on simple work while local GPUs sit idle. There was no middleware that could:
 
-- Intercept these requests before they hit the cloud (including **Agent / all Cursor models**, not only BYOK OpenAI)
-- Route simple tasks to fast local models
-- Fall back to the **original Cursor destination** (or BYOK cloud) when local is not appropriate
-- Dynamically manage GPU memory without manual intervention
+- Intercept Chat **and** Agent (not only BYOK OpenAI)
+- Route simple work to local models
+- Fall back to **Cursor origin** (subscription) or BYOK cloud when appropriate
+- Manage VRAM without hand-holding
 
-**Glider solves this.**
+**Glider does that** (gateway + MITM + shared harness). Path B Agent tools still origin; use Path A + `cus-` for Agent+tools.
 
 ---
 
-## Core Concept — Dual Mode
+## Dual mode
 
 ```
 ┌────────────┐   Mode A: Override OpenAI Base URL    ┌────────────────┐
@@ -26,211 +27,132 @@ Cursor Chat and Agent send requests to expensive cloud APIs (Cursor subscription
 └────────────┘                                       └────────────────┘
 
 ┌────────────┐   Mode B: http.proxy + trust Glider CA ┌────────────────┐
-│   Cursor   │ ─────────────────────────────────────▶│  MITM :8082    │──▶ Local (if body known)
-│ Agent/all  │   CONNECT → decrypt allowlisted hosts │  (forward)     │──▶ Original Cursor upstream
-│  models    │                                       └────────────────┘    (api2.cursor.sh, …)
+│   Cursor   │ ─────────────────────────────────────▶│  MITM :8082    │──▶ Local (Path B text /
+│ Agent/all  │   CONNECT → decrypt allowlisted hosts │  (forward)     │    OpenAI JSON)
+│  models    │                                       └────────────────┘──▶ Cursor origin (else)
 └────────────┘
 ```
 
-| Mode | How Cursor connects | “Cloud” / non-local means |
-|------|---------------------|---------------------------|
-| **A — Gateway** | Override OpenAI Base URL → `http://localhost:8080/v1` | Configured OpenAI/Anthropic with **your** API keys |
-| **B — MITM** | `http.proxy` → `http://127.0.0.1:8082` + trust Glider CA | **Original Host** Cursor intended (subscription traffic preserved) |
-
-**Mode A** is ideal for Chat / Ask / Cmd+K with OpenAI-compatible models.  
-**Mode B** is required for Agent and built-in Cursor models that never hit a custom OpenAI Base URL.
+| Mode | Connect | Non-local means |
+|------|---------|-----------------|
+| **A — Gateway** | Base URL → `http://localhost:8080/v1` | Your OpenAI/Anthropic keys |
+| **B — MITM** | `http.proxy` → `:8082` + Glider CA | **Original Host** (subscription auth intact) |
 
 Dashboard: `http://localhost:8081`.
 
 ---
 
-## Key Design Decisions Made
+## Done / Partial / Next (summary)
 
-| # | Decision | Resolution | Rationale |
-|---|----------|------------|-----------|
-| 1 | **Where does Glider sit?** | Dual: OpenAI-compatible **gateway** + HTTPS **MITM** forward proxy | Gateway alone cannot see Cursor Agent / subscription models. MITM intercepts `*.cursor.sh` while preserving origin passthrough. |
-| 2 | **Proxy language** | **Go** (Golang) | Single binary, high concurrency for SSE, open-sourceable. |
-| 3 | **Scripting for rules** | **Starlark** | Sub-ms, sandboxed, Python-like. |
-| 4 | **Inference backends** | **Ollama + vLLM** (both core) | Variants vs true LoRA hot-swap. |
-| 5 | **LoRA strategy** | Dual approach | Ollama pre-baked variants; vLLM per-request adapters. |
-| 6 | **Routing logic** | **One shared harness** for both modes | Explicit `/local`/`/cloud` = overrides. Today: Starlark + **token thresholds**. Planned: task classifiers above tokens — [smart_routing_and_local_tools.md](smart_routing_and_local_tools.md). Unrecognized MITM bodies **passthrough**. |
-| 7 | **VRAM management** | Load on demand, unload after idle timeout | Scale-to-zero. |
-| 8 | **Context token threshold** | Configurable **ceiling / fallback** (today still primary auto driver) | e.g. `>8000` → cloud/origin; roadmap demotes tokens below task class. |
-| 9 | **Cursor system prompts** | **Never stripped by default** | UI depends on them. |
-| 10 | **Request transformation** | Opt-in trim + augment | Optional only. |
-| 11 | **Dashboard** | Core from day one | Live VRAM, routing, config. |
-| 12 | **Development methodology** | **TDD** | Tests define done; `go test ./...` green. |
-| 13 | **Agent / Responses API** | Accept `/v1/responses` + translate Responses-shaped bodies on `/chat/completions` | Cursor Agent BYOK quirk. |
-| 14 | **Model ID mapping** | `model_aliases` in `glider.yaml` | Map Cursor/OpenAI model IDs → local registry names before routing. |
-| 15 | **MITM CA** | Local CA under `~/.glider/mitm/` | User trusts CA; leaf certs minted per host. |
-| 16 | **MITM vs gateway engine** | Same `PipelineCompleter` | Gateway: `Complete`. MITM: `CompleteLocal` → non-local returns `ErrOriginPassthrough` → Cursor upstream. |
-| 17 | **Agent protocol on MITM** | Path B text-only when `agent_rpc_fulfill` | BidiAppend extract → RunSSE local fulfill (canned proven; Ollama when backends work). Tool loops / child RunSSE still origin — prefer gateway + `cus-` for Agent+tools. See [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md). |
+| | |
+|--|--|
+| **Done** | Dual-mode + shared harness; Path B text fulfill; `/cloud` hard-force; turn-family + summary + subagent sticky; `contextgraph` MVP; Path A tools + classifier; dashboard analytics LOCAL/CLOUD/CANNED %; orchestrator/VRAM; swarm stubs (flag-off) |
+| **Partial** | Path B tool loops (origin + would_*); Episode store not wired to every fulfill; FanOut not productized; hot-swap incomplete for backends/MITM; Loop Engineering hoops MVP (stages + eval) |
+| **Next** | See [README.md](README.md) P0–P2 backlog |
 
 ---
 
-## V2 Future Goals (Swarm & Loop Engineering)
+## Key design decisions
 
-- **Swarm Delegation:** Planner local model → worker swarm → aggregate SSE to Cursor. Status & Slate-inspired plan: [swarm_orchestration.md](swarm_orchestration.md) (~5% done).
-- **Loop Engineering:** Local lint/test reflection before Cursor sees the final stream.
-
----
-
-## Tech Stack
-
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Gateway + Orchestrator | **Go** | Single binary, SSE concurrency |
-| HTTPS MITM | **Go `crypto/tls` + CONNECT** | Forward proxy decrypt for allowlisted hosts |
-| Rule Scripting | **Starlark** (`go.starlark.net`) | Sandboxed, sub-ms |
-| Regex in Scripts | **Starlib** | Starlark stdlib extension |
-| Local Inference | **Ollama** + **vLLM** | Variants + LoRA |
-| Config | **YAML** + **fsnotify** | Hot-reload |
-| Token Counting | **tiktoken-go** | OpenAI-compatible counts |
-| VRAM Monitoring | **nvidia-smi** | Windows + Linux |
-| Dashboard | **gorilla/websocket** + **embed** | Live UI in one binary |
-| Logging | **`log/slog`** | Stdlib |
+| # | Decision | Resolution |
+|---|----------|------------|
+| 1 | Where Glider sits | Gateway **+** MITM |
+| 2 | Language | Go |
+| 3 | Rules | Starlark |
+| 4 | Backends | Ollama + vLLM |
+| 5 | Routing | One shared harness; explicit → sticky → classifier → Starlark → ceiling → default |
+| 6 | VRAM | Load on demand / scale-to-zero |
+| 7 | System prompts | Never stripped by default |
+| 8 | Transforms | Opt-in only |
+| 9 | Dashboard | Core from day one |
+| 10 | Methodology | TDD (`go test ./...`) |
+| 11 | Agent BYOK | `/v1/responses` + Responses-shaped chat bodies |
+| 12 | Model IDs | `model_aliases` |
+| 13 | MITM CA | `~/.glider/mitm/` |
+| 14 | Non-local MITM | `CompleteLocal` → `ErrOriginPassthrough` |
+| 15 | Path B Agent | Text-only when `agent_rpc_fulfill`; tools → prefer Path A |
 
 ---
 
-## Features (Current)
+## Features (current)
 
-### Dual-mode proxy & routing
-- OpenAI-compatible gateway: `/v1/chat/completions`, `/v1/models`, `/v1/responses`
-- Responses-shaped body accepted on `/v1/chat/completions` (Agent quirk)
-- HTTPS MITM forward proxy (`mitm.port`, default `8082`): CONNECT, CA, allowlist, decrypt
-- **Shared harness:** both modes run alias → tokenize → route → transform → execute via `PipelineCompleter`
-  - Gateway: `Complete` (cloud → BYOK OpenAI/Anthropic)
-  - MITM: `CompleteLocal` (cloud/non-local → `ErrOriginPassthrough` → original Cursor Host)
-- Blind tunnel for non-allowlisted CONNECT hosts
-- Routing priority: **explicit hard-force** (`/local` `/cloud` …) → **task_classifier** → **Starlark** → **context thresholds** → default cloud
-- Explicit `/local`, `/cloud`, `/heavy`, `/fast` (TipTap-safe; always beat classifiers)
-- `model_aliases` map
-- Opt-in request transform (trim / augment); system prompts preserved
+### Proxy & routing
+- Gateway: `/v1/chat/completions`, `/v1/models`, `/v1/responses`
+- MITM: CONNECT, CA, allowlist, blind tunnel for other hosts
+- Shared: alias → tokenize → route → transform → execute
+- Explicit `/local` `/cloud` `/heavy` `/fast` (TipTap-safe)
+- Task classifier + role hints; `tool_followup`
+- Path B turn-family sticky + `user_visible_high_level_summary` chrome sticky
+- `model_aliases`; opt-in transform
 
-### Model & VRAM
-- Dynamic / static / hybrid allocation, scale-to-zero, registry, LoRA (vLLM), multi-GPU, headroom, LRU
-- `GET /api/vram` discovers Ollama tags / vLLM models + nvidia-smi gauges; GPU pins via UI → `vram.gpu_assignments`
-- Soft catalog validation warnings (`GET|POST /api/validate`) when assignments/models don’t match discovered backends
+### Path A tools
+- `tools` / `tool_choice` + message tool_calls round-trip
+- Anthropic → OpenAI normalize; stream `tool_calls` on SSE
+- Tools-unsupported → cloud fallback; default `tools_force_cloud`
 
-### Resilience
-- Local → cloud fallback (gateway), circuit breaker, priority queue, health checks, cloud rate/budget
+### Path B Agent (MITM)
+- StreamChat* fulfill (legacy)
+- BidiAppend extract → hub → RunSSE text fulfill
+- Sticky: summary/title/subagent; consults `contextgraph`
+- Child/tool RunSSE → origin (`tool_followup_would_local` only)
 
-### Config & ops
-- `configs/glider.yaml` — **intro / full-system demo** (MITM on; scripts + thresholds drive; default cloud → MITM origin / gateway BYOK)
-- `configs/glider.cloud.yaml` (gateway default cloud BYOK, MITM off)
-- Hot-reload: routing rules, aliases, context thresholds, log level (GPU assignments persist via same Swap path)
-- Restart required: listen ports, MITM enable/port/CA/hosts, backend URLs, cloud provider registration
-- Windows setup: `scripts/setup-windows.ps1` (CA → Trusted Root + `NODE_EXTRA_CA_CERTS`). Cursor-only proxy — CA in Trusted Root does not change normal Windows internet for apps that ignore the system store / don’t use Glider’s proxy
-
-### Observability
-- Request metrics: Mode / Action / Host / Path / Rule / OriginalModel (+ tokens, latency)
-- slog: MITM CONNECT `decrypt` vs `blind_tunnel`; intercept local / origin_passthrough; skip kinds `skip_agent_rpc` / `skip_control` / `skip` / error
-- Path classification: `ClassifyPath` / `IsLLMPath` — OpenAI JSON harness vs Agent Connect/gRPC vs control (see [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md))
-- Dashboard Overview request log columns: TIME, MODE, ACTION, HOST / MODEL, RULE, LATENCY, TOKENS
-- Session history under `~/.glider/history` (one session = one Glider process run); live WS still tails the current session
-
-### Dashboard
-- Tabs: Overview (sessions + live log), VRAM & Models, Rules Engine, Config
-- Config: structured form primary (section cards + tooltips); Edit YAML optional/collapsed; `GET|PUT /api/config`
-- Rules Engine: create/edit/enable routing rules (explicit / script / context_size / always / etc.) → persisted to config
-- Cost / local-vs-cloud split metrics (functional UI; not pixel-perfect vs mockups)
+### Ops
+- Profiles: `configs/glider.yaml` (MITM on), `glider.cloud.yaml`
+- Hot-reload: rules, aliases, threshold, log, GPU assignments
+- Restart: ports, MITM, backends, cloud providers
+- Metrics + history `~/.glider/history`; context `~/.glider/context/`
+- Dashboard: Overview, VRAM, Rules, Config
 
 ---
 
-## Architecture (Simplified)
+## Architecture (simplified)
 
 ```
                     ┌──────────────────────────────────────────┐
                     │  SHARED HARNESS (PipelineCompleter)       │
                     │  alias → tokenize → route → transform     │
-                    │           → execute                       │
+                    │           → execute (+ optional Graph)    │
                     └────────────▲─────────────▲────────────────┘
                                  │             │
 Mode A: Gateway :8080 ──Complete─┘             │
-        → Local | BYOK Cloud                   │
                                                │
 Mode B: MITM :8082 ──decrypt──CompleteLocal────┘
         → Local | ErrOriginPassthrough → Cursor origin
-
-Dashboard :8081 ◀── Metrics (+ history store)
 ```
 
-**Routing priority (both modes):**
-1. Explicit `/local`, `/fast`, `/cloud`, `/heavy` (overrides)
-2. Starlark scripts (main driver)
-3. Context token thresholds (main driver)
-4. Default `cloud` (gateway → BYOK; MITM → origin)
-
-**MITM decrypt allowlist (default intro profile):** `api2.cursor.sh`, `api3.cursor.sh`, `api4.cursor.sh`, `*.api5.cursor.sh`. All other CONNECT hosts are blind-tunneled.
-
-**SOLID** as before: narrow interfaces, pluggable backends, core depends on abstractions.
+**Routing priority:** explicit → turn-family sticky (Path B) → tool_followup → task_classifier → Starlark → token ceiling → default cloud.
 
 ---
 
-## Phased Build Plan
+## Phased build (historical)
 
 | Phase | Focus | Status |
-|---|---|---|
-| **1** | Foundation & Gateway | Implemented |
-| **2** | Config, Router & Rules | Implemented |
-| **3** | VRAM, Lifecycle & Orchestrator | Implemented |
-| **4** | Dashboard & Transforms | Implemented (UI minimal vs mockups) |
-| **5** | E2E, benches, docs | Implemented (`go test -race` optional on Windows) |
-| **6** | Dual-mode MITM + Responses + aliases + **shared harness** | Implemented |
+|-------|-------|--------|
+| 1–5 | Gateway through E2E/benches | Done |
+| 6 | MITM + Responses + aliases + shared harness | Done |
+| Post-6 | Path B text, classifier, tools, sticky, contextgraph, swarm stubs | Done / partial — see [README.md](README.md) |
 
 ---
 
-## TDD Approach
+## How to use
 
-| Metric | Target / Current |
-|---|---|
-| Core phases | Phases 1–5 tests green via `go test ./...` |
-| Phase 6 | MITM + Responses + aliases; `CompleteLocal` / `ErrOriginPassthrough`; threshold/script-driven routing |
-| Coverage target | ≥ 80% line coverage per package |
-| Race detection | `go test -race` where CGO available |
-
----
-
-## Final Expected Output (How to use)
-
-### Binary
 ```bash
 glider.exe --config configs/glider.yaml
 ```
 
-### Mode A — BYOK gateway
-1. Override OpenAI Base URL → `http://localhost:8080/v1`
-2. Use Chat / Ask / Cmd+K with OpenAI-path models
-3. Optional overrides: `/local`, `/cloud` — otherwise scripts + token thresholds decide
+- **Mode A:** Override Base URL → `http://localhost:8080/v1`; Agent+tools use `cus-…` models
+- **Mode B:** Trust CA + `http.proxy` → `:8082`; `agent_rpc_fulfill: true` for text Agent; tools stay origin
 
-### Mode B — MITM (Agent TLS + Path B text fulfill)
-1. Trust `~/.glider/mitm/ca.crt` (see `scripts/setup-windows.ps1`)
-2. Set `NODE_EXTRA_CA_CERTS` to that CA
-3. Cursor settings: `http.proxy` = `http://127.0.0.1:8082`, `proxySupport` = `override`, `disableHttp2` = `true`
-4. Enable `mitm.agent_rpc_fulfill: true` (leave `agent_rpc_canned_on_error: false` for real Ollama)
-5. Fully quit and relaunch Cursor
-6. Text-only Agent turns can route local; tool loops stay on **origin passthrough**. Prefer Path A gateway + `cus-` for Agent+tools.
-
-### What Success Looks Like
-- Agent subscription models keep working through MITM (origin passthrough when not fulfilling)
-- Path B text-only Agent turns fulfill locally when `agent_rpc_fulfill` + local rules match
-- Gateway BYOK path routes `/local` and threshold/script decisions for OpenAI-compat / `cus-` models
-- Dashboard shows harness outcomes; debug dumps under `~/.glider/mitm-debug` when `debug_agent_rpc` is on
-- Explicit `/local` / `/cloud` still override when bodies are chat/Responses-shaped
-- < 5ms proxy overhead on passthrough
-- Dashboard at `:8081` shows routing for gateway and Path B fulfill hits
-
-> **Remaining gap:** Agent tool loops / child RunSSE are not fulfilled on MITM — see [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md).
+Success: local offload for simple turns; `/cloud` never interrupted by local summary chrome; dashboard shows LOCAL/CLOUD/CANNED %.
 
 ---
 
-## Reference Documents
+## Reference
 
-| Document | Purpose |
-|---|---|
-| [implementation_plan.md](implementation_plan.md) | HLD/LLD, package layout, config schema (incl. MITM) |
-| [tdd_test_plan.md](tdd_test_plan.md) | Phase tests + Phase 6 MITM/Responses/aliases |
-| [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md) | G13: Agent Connect/gRPC gap + phased plan |
-| [../README.md](../README.md) | User setup for dual mode |
-| [../docs/CURSOR_CHECKLIST.md](../docs/CURSOR_CHECKLIST.md) | Manual Cursor verification |
-| [../STATUS.md](../STATUS.md) | Build status snapshot |
+| Doc | Purpose |
+|-----|---------|
+| [README.md](README.md) | Index + backlog |
+| [implementation_plan.md](implementation_plan.md) | HLD/LLD |
+| [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md) | Path A/B Agent |
+| [../STATUS.md](../STATUS.md) | Build status |
+| [../README.md](../README.md) | User setup |

@@ -231,6 +231,32 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 			}
 		}
 	}
+	if from := strings.ToLower(strings.TrimSpace(cfg.Routing.ComplexityFrom)); from != "" {
+		switch from {
+		case "cursor", "heuristic", "both":
+		default:
+			res.Errors = append(res.Errors, fmt.Sprintf("routing.complexity_from %q is unknown (expected cursor|heuristic|both)", cfg.Routing.ComplexityFrom))
+		}
+	}
+	if def := strings.ToLower(strings.TrimSpace(cfg.Routing.Default)); def != "" {
+		switch def {
+		case "local", "cloud":
+		default:
+			res.Errors = append(res.Errors, fmt.Sprintf("routing.default %q is unknown (expected local|cloud)", cfg.Routing.Default))
+		}
+	}
+	if cfg.Routing.Complexity.Enabled {
+		if cfg.Routing.Complexity.CloudAbove < 0 || cfg.Routing.Complexity.CloudAbove > 100 {
+			res.Errors = append(res.Errors, "routing.complexity.cloud_above must be between 0 and 100")
+		}
+	}
+	if lc := strings.ToLower(strings.TrimSpace(cfg.Transform.LocalContext)); lc != "" {
+		switch lc {
+		case "full", "latest_turn":
+		default:
+			res.Errors = append(res.Errors, fmt.Sprintf("transform.local_context %q is unknown (expected full|latest_turn)", cfg.Transform.LocalContext))
+		}
+	}
 	if ttl := strings.TrimSpace(cfg.Routing.TurnFamilyTTL); ttl != "" {
 		if _, err := time.ParseDuration(ttl); err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("routing.turn_family_ttl invalid: %v", err))
@@ -243,7 +269,8 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 		}
 		tt := strings.ToLower(strings.TrimSpace(r.Trigger.Type))
 		switch tt {
-		case "explicit", "regex", "context_size", "always", "script":
+		case "explicit", "regex", "context_size", "always", "script",
+			"composer_wrapup", "wrapup_origin", "composer_wrapup_origin":
 		case "":
 			res.Errors = append(res.Errors, fmt.Sprintf("routing.rules[%d].trigger.type is required", i))
 		default:
@@ -278,6 +305,24 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("routing.rules[%d] (%s): local action model %q is not in models", i, r.Name, r.Action.Model))
 			}
 		}
+	}
+
+	if dr := strings.ToLower(strings.TrimSpace(cfg.Orchestration.Loops.DefaultRoute)); dr != "" {
+		switch dr {
+		case "local", "cloud", "auto":
+		default:
+			res.Errors = append(res.Errors, fmt.Sprintf("orchestration.loops.default_route %q is invalid (use local|cloud|auto)", cfg.Orchestration.Loops.DefaultRoute))
+		}
+	}
+	hl := cfg.Orchestration.Loops.HoopLearning
+	if hl.LocalBiasStep < 0 {
+		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.local_bias_step must be >= 0")
+	}
+	if hl.MaxBias < 0 {
+		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.max_bias must be >= 0")
+	}
+	if hl.Window < 0 {
+		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.window must be >= 0")
 	}
 
 	return res

@@ -277,6 +277,75 @@ html, body {
 }
 .yaml-editor { min-height: 520px; }
 
+.hoops-layout {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 28px;
+  align-items: start;
+}
+.hoops-list { display: grid; gap: 16px; }
+.hoop-card {
+  border: 1px solid var(--border);
+  background: var(--section);
+  padding: 16px 18px;
+}
+.hoop-card-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+}
+.hoop-actions { margin-left: auto; display: flex; gap: 12px; }
+.hoop-outcomes {
+  display: grid; gap: 6px; margin-top: 12px;
+  font-family: var(--mono); font-size: 0.78rem;
+}
+.hoop-outcome {
+  display: grid;
+  grid-template-columns: 40px 60px 70px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.hoop-outcome.ok { color: var(--ok); }
+.hoop-outcome.fail { color: #b91c1c; }
+.hotswap-list { display: grid; gap: 10px; }
+.hotswap-row {
+  display: grid;
+  grid-template-columns: 1.2fr auto auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.stage-checks {
+  display: flex; flex-wrap: wrap; gap: 12px 20px;
+  padding: 10px 0;
+}
+.stage-checks .check { padding-top: 0; color: var(--fg); }
+.stage-pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  margin: 2px 4px 2px 0;
+}
+.stage-pill.ok { border-color: var(--ok); color: var(--ok); }
+.stage-pill.fail { border-color: #b91c1c; color: #b91c1c; }
+.hotswap-row.stage { background: #f8fafc; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.swarm-result {
+  margin-top: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  max-height: 280px;
+  overflow: auto;
+}
+
 @media (max-width: 800px) {
   .cfg-grid, .rule-card-grid { grid-template-columns: 1fr; }
   .rule-card-head { grid-template-columns: 1fr; }
@@ -284,4 +353,7 @@ html, body {
   .metrics { grid-template-columns: 1fr 1fr; gap: 28px; }
   .tabs { flex-wrap: wrap; gap: 16px; }
   .status { text-align: left; }
+  .hoops-layout { grid-template-columns: 1fr; }
+  .hotswap-row { grid-template-columns: 1fr; }
 }
+

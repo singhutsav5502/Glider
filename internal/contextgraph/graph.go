@@ -30,6 +30,11 @@ const (
 	EventBidiSeen          EventKind = "BidiSeen"
 	EventError             EventKind = "Error"
 	EventTurnOpened        EventKind = "TurnOpened"
+	EventLoopStarted       EventKind = "LoopStarted"
+	EventLoopTick          EventKind = "LoopTick"
+	EventLoopStopped       EventKind = "LoopStopped"
+	EventSwarmFanOut       EventKind = "SwarmFanOut"
+	EventEpisodeMerged     EventKind = "EpisodeMerged"
 
 	// Deprecated aliases kept for callers/tests written against earlier names.
 	EventParentRunStarted EventKind = EventRunSSEOpen
@@ -378,6 +383,25 @@ func (s *Store) TurnIDForSession(sessionKey string) string {
 	return s.bySession[strings.TrimSpace(sessionKey)]
 }
 
+// SessionLastRoute returns the route ("cloud"|"local"|"") of the latest turn bound
+// to sessionKey, even when cloud grace has expired (wrap-up inheritance signal).
+func (s *Store) SessionLastRoute(sessionKey string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tid := s.bySession[strings.TrimSpace(sessionKey)]
+	if tid == "" {
+		return ""
+	}
+	ti, ok := s.turns[tid]
+	if !ok || ti == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(ti.view.Route))
+}
+
 // CloudTurnLive reports whether requestID (or its turn) is bound to a live cloud route.
 func (s *Store) CloudTurnLive(requestID string) bool {
 	if s == nil {
@@ -650,4 +674,164 @@ func (s *Store) RecordRoute(turnID, requestID, route, source, actor string, attr
 		Actor:     actor,
 		Attrs:     attrs,
 	})
+}
+
+// RecordEpisodeMerged emits EpisodeMerged onto the turn family (fulfill / fan-out / loop).
+func (s *Store) RecordEpisodeMerged(turnID, requestID, episodeID string, attrs map[string]string) {
+	if s == nil {
+		return
+	}
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	if episodeID != "" {
+		attrs["episode_id"] = episodeID
+	}
+	if turnID == "" {
+		turnID = requestID
+	}
+	s.Append(Event{
+		Kind:      EventEpisodeMerged,
+		TurnID:    turnID,
+		RequestID: requestID,
+		Actor:     "orch",
+		Attrs:     attrs,
+	})
+}
+
+// Export returns a JSON-serializable dump of recent events (+ optional turn filter).
+func (s *Store) Export(turnID string, maxEvents int) map[string]any {
+	if s == nil {
+		return map[string]any{"events": []Event{}, "turns": []TurnView{}}
+	}
+	if maxEvents <= 0 {
+		maxEvents = 500
+	}
+	out := map[string]any{}
+	if turnID != "" {
+		if v, ok := s.Turn(turnID); ok {
+			out["turn"] = v
+			out["events"] = v.Events
+			return out
+		}
+		out["turn"] = nil
+		out["events"] = []Event{}
+		return out
+	}
+	out["stats"] = s.Stats()
+	out["turns"] = s.RecentTurns(50)
+	out["events"] = s.RecentEvents(maxEvents)
+	return out
+}
+
+// LoadWarm replays JSONL files from Dir for the last retainDays (inclusive of today).
+// Returns the number of events loaded. No-op when Dir is empty.
+func (s *Store) LoadWarm(retainDays int) (int, error) {
+	if s == nil || strings.TrimSpace(s.Dir) == "" {
+		return 0, nil
+	}
+	if retainDays <= 0 {
+		retainDays = 2
+	}
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -(retainDays - 1))
+	cutoffDay := cutoff.Format("2006-01-02")
+	loaded := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "events-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		day := strings.TrimSuffix(strings.TrimPrefix(name, "events-"), ".jsonl")
+		if day < cutoffDay {
+			continue
+		}
+		path := filepath.Join(s.Dir, name)
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		dec := json.NewDecoder(f)
+		for {
+			var ev Event
+			if err := dec.Decode(&ev); err != nil {
+				break
+			}
+			if s.Max <= 0 {
+				s.Max = 4096
+			}
+			if len(s.events) >= s.Max {
+				cut := len(s.events) / 2
+				s.events = append([]Event(nil), s.events[cut:]...)
+				s.rebuildLocked()
+			}
+			idx := len(s.events)
+			s.events = append(s.events, ev)
+			s.indexLocked(idx, &s.events[idx])
+			loaded++
+		}
+		_ = f.Close()
+	}
+	return loaded, nil
+}
+
+// PruneDisk deletes events-*.jsonl older than retainDays. Returns files removed.
+func (s *Store) PruneDisk(retainDays int) (int, error) {
+	if s == nil || strings.TrimSpace(s.Dir) == "" {
+		return 0, nil
+	}
+	if retainDays <= 0 {
+		retainDays = 14
+	}
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -(retainDays - 1))
+	cutoffDay := cutoff.Format("2006-01-02")
+	removed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "events-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		day := strings.TrimSuffix(strings.TrimPrefix(name, "events-"), ".jsonl")
+		if day >= cutoffDay {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.Dir, name)); err == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// PruneMemory drops the oldest half of the in-memory ring when over Max (same as Append pressure).
+func (s *Store) PruneMemory() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Max <= 0 {
+		s.Max = 4096
+	}
+	if len(s.events) < s.Max {
+		return 0
+	}
+	cut := len(s.events) / 2
+	s.events = append([]Event(nil), s.events[cut:]...)
+	s.rebuildLocked()
+	return cut
 }

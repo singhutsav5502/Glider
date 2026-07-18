@@ -1,129 +1,122 @@
 # Swarm & orchestration engine
 
-> Honest status **2026-07-18**. Full architecture (context, hot-swap, concurrency, loops):
-> [context_and_swarm_architecture.md](./context_and_swarm_architecture.md),
-> [context_management.md](./context_management.md).
-> Routing/tools: [smart_routing_and_local_tools.md](./smart_routing_and_local_tools.md).
-> Turn-family + tool-followup: [routing_session_policy.md](./routing_session_policy.md).
-> Interactive canvas (open beside chat):
-> `C:\Users\Utsav\.cursor\projects\d-repos-Glider\canvases\glider-orchestration-roadmap.canvas.tsx`
+> Honest status **2026-07-18**. Index: [README.md](./README.md).  
+> Context graph: [context_management.md](./context_management.md).  
+> Routing: [smart_routing_and_local_tools.md](./smart_routing_and_local_tools.md), [routing_session_policy.md](./routing_session_policy.md).  
+> Canvas (visual companion): `glider_orchestration_roadmap.canvas.tsx` (may lag this file).
 >
-> Slate / Random Labs: https://randomlabs.ai/ Â· https://randomlabs.ai/blog/slate
+> Slate / Random Labs: https://randomlabs.ai/ · https://randomlabs.ai/blog/slate
 
 ---
 
 ## 1. How far are we? (honest %)
 
-| Capability | % done | What exists in Glider today |
-|------------|--------|------------------------------|
-| **Single-request routing** | **~85%** | Explicit overrides, task_classifier + roles, Starlark, token ceiling, shared `PipelineCompleter` |
-| **Orchestration engine (1:1 execute)** | **~75%** | Lifecycle, priority queue, fallback, breaker, rate/budget, aliases, VRAM hybrid |
-| **Local/cloud split + Path B** | **~55%** overall; Path B text **~40%** | Text fulfill; tools origin + `tool_followup_would_local`; `/cloud` hard-force **done** |
-| **Local tools (Path A)** | **~75%** | `Tools`/`ToolChoice` + stream tool_calls SSE bridge |
-| **Context management** | **~55%** | `contextgraph` hybrid MVP (JSONL + turn/request/session index); sticky/summary consults graph; dashboard `/api/context/*` | Blackboard; episode merge on FanOut |
-| **Hot-swap modules** | **~65%** | `internal/swarm` Registry + fan_out Apply; router/aliases/threshold/log/GPU hot; backends/MITM restart |
-| **Multi-agent / swarms** | **~40%** | `internal/swarm` FanOut+Merge+Loop+HotSwap; FanOutExecutor cancel-aware; no planner / default fan_out rules |
-| **Loop engineering (lint/test reflect)** | **~0%** | Documented only in implementation_plan Â§9.2 |
-| **Slate-like thread weaving** | **~0%** | Not started â€” patterns below are aspirational |
+| Capability | % done | What exists |
+|------------|--------|-------------|
+| **Single-request routing** | **~90%** | Explicit, sticky (Path B), classifier + roles, Starlark, ceiling, shared pipeline |
+| **Orchestration engine (1:1)** | **~75%** | Lifecycle, queue, fallback, breaker, rate/budget, aliases, VRAM |
+| **Local/cloud + Path B** | **~60%** | Text fulfill + sticky/contextgraph; tools origin + would_* |
+| **Local tools (Path A)** | **~90%** | Tools fields + stream tool_calls SSE; no Glider-side runners |
+| **Context management** | **~55%** | `contextgraph` MVP; `contextkit` Episode stubs not wired to every fulfill |
+| **Hot-swap modules** | **~65%** | Registry + fan_out Apply; router/aliases/threshold/log/GPU hot; backends/MITM restart |
+| **Multi-agent / swarms** | **~40%** | `internal/swarm` FanOut+Merge+Loop+HotSwap; FanOutExecutor; no planner / default rules |
+| **Loop engineering** | **~55%** | Hoops = planner/actor/critic cycles + eval score + hoop learning; Automations optional — see [loop_engineering.md](./loop_engineering.md) |
+| **Slate-like thread weaving** | **~0%** | Aspirational |
 
-**Bottom line:** Routing + Path A tool_calls bridge are production-usable. **Swarms have FanOut + context stubs** â€” not Slate parity.
-
----
-
-## 2. Slate (Random Labs) â€” takeaways for Glider
-
-Source: [randomlabs.ai](https://randomlabs.ai/), [docs](https://docs.randomlabs.ai/en/getting-started/introduction), [blog/slate](https://randomlabs.ai/blog/slate), VentureBeat / product writeups (2026).
-
-### Architecture patterns
-
-| Slate idea | Meaning | Glider fit |
-|------------|---------|------------|
-| **Orchestrator thread** | Central agent â€œprograms in action spaceâ€ (DSL), does not do all tactics itself | Future: local planner model or Starlark+LLM that emits bounded work units |
-| **Worker threads** | One **action** then pause; not long-lived role subagents | Maps to short-lived `SubTask` jobs on local Ollama pool |
-| **Episodes** | Compressed step history returned to orchestrator (not full transcript / brittle message-pass) | New type: `Episode{Summary, Artifacts, Tokens}` fed into next route decision |
-| **Thread weaving** | Parallel workers; episodes compose; shared context by design | Needs VRAM `BatchReserve` + aggregator SSE (already sketched in impl plan Â§9.1) |
-| **Model routing by role** | Plan â†’ Claude-class; research â†’ retrieval-strong; exec â†’ Codex-class | Glider already has multi-backend + aliases â€” extend classifier with `role: plan\|research\|exec` |
-| **Implicit planning** | No separate â€œplan modeâ€; research then present plan in conversation | Prefer adaptive decomposition over rigid plannerâ†’coderâ†’reviewer pipelines (Slate warns those feel slow) |
-| **Dumb-zone avoidance** | Keep working memory small via episodes, not lossy whole-context compaction | Aligns with Glider token ceiling as safety net, not primary signal |
-| **Worktrees / sessions** | Parallel git contexts with separate chat state | Out of Glider scope (Cursor owns workspace); optional later for multi-root |
-
-### What *not* to copy blindly
-
-- Full TypeScript DSL orchestration runtime â€” Glider stays Go; start with JSON/Starlark work graphs.
-- Swarm-native UX CLI â€” Glider is a **proxy/harness**, not a coding agent product.
-- Claiming â€œhive mindâ€ before Path A tool loops and reliable `/cloud` (now fixed) are solid.
-
-### Quick wins inspired by Slate (safe, high leverage)
-
-1. **Role-tagged routing** â€” extend task_classifier with `plan` / `exec` / `research` hints â†’ different local models (already in registry).
-2. **Episode stub** â€” after local fulfill, store 1-line summary + rule/reason in metrics/history (no multi-agent yet).
-3. **Bounded fan-out prototype** â€” `StrategyFanOut` only for gateway Mode A, 2 workers, text-merge; feature-flagged.
-4. **Keep explicit overrides absolute** â€” Slate-style expressivity still needs a human hard-force (`/cloud`).
+**Bottom line:** Routing + Path A tools + Path B text/sticky are usable. Swarms are **foundation stubs**, not Slate parity.
 
 ---
 
-## 3. Gap vs Slate-inspired target
+## 2. Slate takeaways (keep short)
+
+| Slate idea | Glider fit |
+|------------|------------|
+| Orchestrator + worker threads | Future planner → short `SubTask` jobs |
+| Episodes | `contextkit` / MergeResults stubs |
+| Role routing | Classifier `plan` / `exec` / `research` (MVP done) |
+| Dumb-zone avoidance | Ceiling = safety net; classifier primary |
+
+**Do not copy:** TypeScript DSL runtime, swarm CLI UX, hive-mind claims.
+
+---
+
+## 3. Gap vs target
 
 ```
-Glider today:     request â†’ route â†’ single Execute â†’ stream
-Slate-like target: request â†’ orchestrator â†’ N threads â†’ episodes â†’ weave â†’ stream
+Glider today:     request → route → single Execute → stream
+Slate-like target: request → orchestrator → N threads → episodes → weave → stream
 ```
 
-| Gap | Effort | Blocked by |
-|-----|--------|------------|
-| Fan-out executor | M | VRAM batch + merge SSE |
-| Planner decomposition | L | Stable Path A tools (M2) preferred |
-| Episode memory store | M | Schema + dashboard |
-| Session / loop checkpoints | M | Context architecture doc Â§2 |
-| Parallel Agent Path B | XL | Cursor tool-loop protocol |
-| DSL action space | L | Product decision (Starlark vs JSON) |
+| Gap | Effort | Notes |
+|-----|--------|-------|
+| Wire Episode on fulfill | M | P1 |
+| Fan-out default rules | M | Flag-off today |
+| Planner decomposition | L | After Path A tools in user workflow |
+| Path B multi-agent | XL | Blocked on tool codec |
+| DSL action space | L | Product decision |
 
 ---
 
-## 4. ASAP milestone order (next 48h)
+## 4. Hot-swap & concurrency (merged)
 
-Ordered for **user-visible reliability first**, then swarm foundation:
+`internal/config/watcher.go`: `Watch` / `Swap` rebuild router, aliases, threshold, slog, GPU (+ swarm Registry Apply). **Restart** for ports, MITM, backends, cloud providers.
 
-| # | Window | Work | Done when |
-|---|--------|------|-----------|
-| **P0** | 0â€“2h | âœ… `/cloud` hard-force + rebuild | TipTap `/cloud` never local/canned |
-| **P1** | 2â€“8h | âœ… Path A `tool_calls` stream bridge (M2) | Agent+tools via gateway SSE |
-| **P2** | 8â€“16h | âœ… Role-aware classifier + dashboard class chips | Metrics show class/role rates |
-| **P3** | 16â€“32h | ðŸŸ¡ `Episode` stubs (`contextkit`) â€” not wired to fulfill | Wire â†’ Overview episodes |
-| **P4** | 32â€“48h | ðŸŸ¡ Feature-flagged `FanOutExecutor` (default off) | Enable + e2e with StrategyFanOut rule |
+Rules: immutable decision snapshot at `Route()`; backend live-swap only after in-flight drain; do not hot-swap MITM listeners without drain. Fan-out: `BatchReserve` all-or-nothing; never unbounded workers.
 
-**Do not** start Path B multi-agent or full thread-weaving until Path A tools proven (now green).
+| Loop type | Glider hook | Status |
+|-----------|-------------|--------|
+| Recurring Automations heartbeat | Optional `interval`/`cron` **around** hoop cycles | MVP |
+| Babysit / CI wake | Wake → local fix hoop | Not built |
+| Swarm wave | FanOut + Episode weave | Stub |
+| **Loop Engineering cycle** | Planner→Actor→Critic + memory/router + eval | **MVP** — [loop_engineering.md](./loop_engineering.md) |
 
-### 2-week horizon (see context doc)
-
-SessionState + turn budgets â†’ eval/reflect loop MVP â†’ CI babysit wake â†’ cautious provider hot-reload â†’ Path B tools only if Path A proven â†’ race detector sign-off.
+Checkpoint sketch: `{ goal, last_episode_id, eval_status, wake_reason, next_delay_s }`.
 
 ---
 
-## 5. Code anchors
+## 5. Swarm package API (quick)
+
+```go
+swarm.FanOut(ctx, workers, opts)
+swarm.MergeResults(results)
+swarm.DefaultSwarm{Opts}.Run(ctx, workers)
+swarm.IntervalLoop{}
+swarm.NewRegistry().BindProvider(p)
+swarm.OptionsFromConfig(cfg.Orchestration)
+```
+
+---
+
+## 6. Next steps (aligned with [README.md](./README.md))
+
+| Pri | Work | Done when |
+|-----|------|-----------|
+| **P0** | Manual Cursor verify Path B text + `/cloud` sticky | Checklist green |
+| **P1** | Wire Episode → Overview/history | API shows episodes after fulfill |
+| **P1** | Sample FanOut rule + e2e (gateway, 2 workers) | Flag-on demo |
+| **P2** | SessionState + turn budgets | Dashboard gauges |
+| **P2** | Loop Engineering hoop polish (skills load, worktrees, L3 gates) | See [loop_engineering.md](./loop_engineering.md) |
+| **P2** | Path B tools | Only if Path A insufficient |
+
+---
+
+## 7. Code anchors
 
 | Piece | Path |
 |-------|------|
-| Hard-force explicit | `internal/router/explicit.go`, `router.go` |
-| Task classifier | `internal/router/task_class.go` |
-| Tool followup | `internal/router/tool_followup.go` |
+| Explicit / classifier / tool_followup | `internal/router/` |
 | Path A tool_calls bridge | `internal/backend/stream.go`, `internal/api/streaming.go` |
-| Context stubs | `internal/contextkit` |
-| FanOut executor | `internal/orchestrator/fanout.go` + `internal/swarm` |
-| Swarm package | `internal/swarm` |
-| Pipeline / CompleteLocal | `internal/orchestrator/pipeline.go` |
-| Config Watch/Swap | `internal/config/watcher.go` |
+| Context graph / stubs | `internal/contextgraph`, `internal/contextkit` |
+| FanOut / swarm | `internal/orchestrator/fanout.go`, `internal/swarm` |
 | Path B hub | `internal/mitm/agent_fulfill_hub.go`, `intercept.go` |
-| V2 swarm notes | `planning/implementation_plan.md` Â§9 |
-| Strategy enum | `internal/backend/interfaces.go` (`RoutingDecision.Strategy`) |
-| VRAM BatchReserve | `internal/vram/manager.go` |
+| Config Watch/Swap | `internal/config/watcher.go` |
+| V2 notes | `planning/implementation_plan.md` §9 |
 
 ---
 
-## 6. Retest `/cloud` (operator)
+## 8. Operator retest `/cloud`
 
-1. Stop any running Glider.
-2. Start `D:\___repos\Glider\glider.exe` (or `glider.new.exe` if `.exe` was locked).
-3. Agent chat: `/cloud say hello` (and a TipTap-only `/cloud` turn).
-4. Expect: Cursor origin model prose â€” **not** Ollama â€” **not** `pong from glider (canned Path B)`.
-5. Logs/metrics: `bidi_cloud_override` or `bidi_decide_passthrough`; **zero** `runsse_local` / `runsse_canned` for that corr_id.
+1. Restart Glider with `agent_rpc_fulfill: true`.
+2. Agent: `/cloud say hello` → origin prose, **not** canned/Ollama interrupt.
+3. Follow-on summary / composer wrap-up → sticky cloud (`bidi_sticky_cloud` / `_summary`).
+4. Next user msg without flag → re-decide.

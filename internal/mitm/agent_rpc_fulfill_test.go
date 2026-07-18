@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
@@ -289,13 +290,172 @@ func TestShouldStickyCloudOriginUsesGraphLookup(t *testing.T) {
 		Attrs:     map[string]string{"route": "cloud", "source": "explicit_cloud", "root_request_id": "graph-root"},
 	})
 	// No OpenTurnFamily — sticky must come from contextgraph ResolveCloudSticky.
-	root, src, ok := hub.ShouldStickyCloudOrigin("write a final summary of what was done", nil, nil)
+	root, src, ok := hub.ShouldStickyCloudOrigin("write a final summary of what was done", "", nil, nil)
 	if !ok || root != "graph-root" {
 		t.Fatalf("want graph sticky cloud root=graph-root ok=true, got root=%q src=%q ok=%v", root, src, ok)
 	}
-	_, _, ok = hub.ShouldStickyCloudOrigin("rename foo to bar in this file now", nil, nil)
+	_, _, ok = hub.ShouldStickyCloudOrigin("rename foo to bar in this file now", "tiptap_text", nil, nil)
 	if ok {
 		t.Fatal("new user turn must not inherit graph cloud sticky")
+	}
+}
+
+func TestIsSystemSummaryChromeDetectsUserVisibleHighLevel(t *testing.T) {
+	// Regression: Jul 2026 leak — composer wrap-up body had user_visible_high_level_summary
+	// but extract was a title-like "Stock market today status" (no TipTap). \bsummary\b
+	// does not match underscore compounds; must still detect chrome.
+	body := []byte("user_visible_high_level_summary\x00Markets are closed today (weekend)")
+	if !mitm.IsSystemSummaryChrome("Stock market today status", body) {
+		t.Fatal("want IsSystemSummaryChrome for user_visible_high_level_summary body")
+	}
+	if mitm.LooksLikeNewUserTurn("Stock market today status", body) {
+		t.Fatal("printable_hint title without TipTap must not look like new user turn")
+	}
+	if mitm.HasFreshUserTipTapTurn("Stock market today status", "printable_hint", body) {
+		t.Fatal("printable_hint → not a fresh user turn")
+	}
+	// Wildcard user_visible_* compounds (not only high_level_summary).
+	if !mitm.IsSystemSummaryChrome("", []byte("user_visible_reply_summary\x00done")) {
+		t.Fatal("want user_visible_* prefix match")
+	}
+}
+
+func TestDenyLocalDefaultNonTipTapWhileStickyCloud(t *testing.T) {
+	hub := mitm.NewAgentFulfillHub()
+	hub.OpenTurnFamily("cloud-root", mitm.StickyCloud, "explicit_cloud")
+
+	// Real dump titles (weather/delhi / planning) — printable_hint, no TipTap.
+	for _, title := range []string{
+		"Delhi weather today",
+		"Bangalore weather today",
+		"Friday stock market close",
+		"Today's weather lookup",
+		"Refresh planning docs to latest",
+	} {
+		root, _, ok := hub.ShouldStickyCloudOrigin(title, "printable_hint", nil, nil)
+		if !ok || root != "cloud-root" {
+			t.Fatalf("%q: want sticky cloud deny-local, got root=%q ok=%v", title, root, ok)
+		}
+		if mitm.IsAllowlistedFreshTipTapUser(title, "printable_hint", nil) {
+			t.Fatalf("%q must not be allowlisted TipTap re-decide", title)
+		}
+	}
+
+	// Body TipTap history alone must NOT allow re-decide (wrap-up packs embed docs).
+	hist := []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"rename foo to bar in this file now"}]}]}`)
+	_, _, ok := hub.ShouldStickyCloudOrigin("rename foo to bar in this file now", "printable_hint", nil, hist)
+	if !ok {
+		t.Fatal("printable_hint + body TipTap must still deny-local under StickyCloud")
+	}
+
+	// Allowlist: explicit tiptap_text extract may re-decide.
+	_, _, ok = hub.ShouldStickyCloudOrigin("rename foo to bar in this file now", "tiptap_text", nil, hist)
+	if ok {
+		t.Fatal("fresh TipTap user turn must re-decide (not sticky)")
+	}
+}
+
+func TestComposerChromeOriginEvenWithoutStickyFamily(t *testing.T) {
+	// Dump 48f01fc5 shape: StickyCloud expired, but user_visible_high_level_summary
+	// still present — must ArmOrigin path (ShouldStickyCloudOrigin ok), never local.
+	hub := mitm.NewAgentFulfillHub()
+	hub.Graph = contextgraph.New("") // isolate from process Default() pollution
+	body := []byte("Refresh planning docs to latest\x00user_visible_high_level_summary\x00Planning docs are now current")
+	root, src, ok := hub.ShouldStickyCloudOrigin("Refresh planning docs to latest", "printable_hint", nil, body)
+	if !ok {
+		t.Fatal("system chrome must force origin even with no live StickyCloud family")
+	}
+	if src != "composer_chrome" {
+		t.Fatalf("want source=composer_chrome, got root=%q src=%q", root, src)
+	}
+}
+
+func TestInterceptorPostCloudComposerSummaryTitleStaysOrigin(t *testing.T) {
+	// Exact leak shape: after /cloud heavy turn, a short follow-on Bidi without /cloud
+	// whose extract looks like a title ("Stock market today status") but body carries
+	// user_visible_high_level_summary — must ArmOrigin, never runsse_local.
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		TaskClassifier: config.TaskClassifierConfig{
+			Enabled:            true,
+			LocalModel:         "codellama:7b",
+			SmallLocalPriority: 200,
+		},
+		Rules: []config.RuleConfig{
+			{
+				Name: "Explicit Cloud", Priority: 99,
+				Trigger: config.TriggerConfig{Type: "explicit", Commands: []string{"/cloud"}},
+				Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+			},
+			{
+				Name: "Always Local", Priority: 0,
+				Trigger: config.TriggerConfig{Type: "always"},
+				Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := metrics.NewCollector(nil)
+	hub := mitm.NewAgentFulfillHub()
+	inter := &mitm.Interceptor{
+		Harness:         &orchestrator.PipelineCompleter{Router: engine, Executor: &countingExecutor{}},
+		Metrics:         c,
+		AgentRPCFulfill: true,
+		FulfillHub:      hub,
+	}
+
+	cloudID := "227ce39a-9b2f-4873-8c35-472d9536feb5"
+	tipTap := []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"/cloud wassup are we up or down in the stock market today"}]}]}`)
+	bidi1 := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
+		strings.NewReader(string(buildContextEnvelopeBidiWithID(tipTap, cloudID))))
+	bidi1.Header.Set("Content-Type", "application/proto")
+	bidi1.Header.Set("X-Request-Id", cloudID)
+	bidi1.Header.Set("X-Session-Id", "be5ca4c5-643c-4860-a7c8-ea46cf690233")
+	if _, err := inter.TryHandle(httptest.NewRecorder(), bidi1); err != nil {
+		t.Fatal(err)
+	}
+	hub.BeginParentRun(cloudID)
+	hub.EndParentRun(cloudID) // parent stream ended; grace must still cover summary
+
+	sumID := "49fec7e0-43a0-4378-a900-be71f28bd0df"
+	// No TipTap — printable pack with chrome marker + title-like hint (real dump shape).
+	chromePack := []byte("Stock market today status\x00user_visible_high_level_summary\x00Markets are closed today (weekend). Friday")
+	bidi2 := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
+		strings.NewReader(string(buildContextEnvelopeBidiWithID(chromePack, sumID))))
+	bidi2.Header.Set("Content-Type", "application/proto")
+	bidi2.Header.Set("X-Request-Id", sumID)
+	bidi2.Header.Set("X-Session-Id", "be5ca4c5-643c-4860-a7c8-ea46cf690233")
+	if _, err := inter.TryHandle(httptest.NewRecorder(), bidi2); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := c.GetRouteCounts()
+	if counts["action:bidi_sticky_cloud_summary"] < 1 && counts["action:bidi_sticky_cloud"] < 1 {
+		t.Fatalf("counts=%v want bidi_sticky_cloud_summary for composer wrap-up", counts)
+	}
+	if counts["action:bidi_fulfill_armed"] > 0 || counts["action:would_fulfill_local"] > 0 {
+		t.Fatalf("counts=%v must not arm local on post-/cloud composer summary", counts)
+	}
+
+	rr := httptest.NewRecorder()
+	runReq := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/agent.v1.AgentService/RunSSE",
+		bytes.NewReader(buildRunSSERequest(sumID)))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runReq.Header.Set("X-Request-Id", sumID)
+	handled, err := inter.TryHandle(rr, runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("composer summary RunSSE must origin-passthrough, not local")
+	}
+	counts = c.GetRouteCounts()
+	if counts["action:runsse_local"] > 0 {
+		t.Fatalf("counts=%v want no runsse_local for post-cloud composer summary", counts)
 	}
 }
 
@@ -357,9 +517,9 @@ func TestInterceptorDecideCloudBindsSummarySticky(t *testing.T) {
 		t.Fatalf("counts=%v decide_cloud family must not arm local on summarize", counts)
 	}
 
-	// Next real user message re-decides (may go local).
+	// Next real user TipTap message re-decides (may go local).
 	nextID := "ffffffff-ffff-4fff-8fff-ffffffffffff"
-	nextBody := []byte(`{"type":"text","text":"rename foo to bar please"}`)
+	nextBody := []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"rename foo to bar please"}]}]}`)
 	bidi3 := httptest.NewRequest(http.MethodPost,
 		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
 		strings.NewReader(string(buildContextEnvelopeBidiWithID(nextBody, nextID))))
@@ -368,6 +528,70 @@ func TestInterceptorDecideCloudBindsSummarySticky(t *testing.T) {
 	counts = c.GetRouteCounts()
 	if counts["action:bidi_fulfill_armed"] < 1 {
 		t.Fatalf("counts=%v next user msg should re-decide local", counts)
+	}
+}
+
+func TestInterceptorDumpShapeChromeWithoutFamilyNeverLocal(t *testing.T) {
+	// Real dump 48f01fc5 / Delhi weather wrap-up: no live StickyCloud TTL, body has
+	// user_visible_high_level_summary + short title — must not runsse_local.
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{
+			{
+				Name: "Always Local", Priority: 0,
+				Trigger: config.TriggerConfig{Type: "always"},
+				Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := metrics.NewCollector(nil)
+	hub := mitm.NewAgentFulfillHub()
+	hub.Graph = contextgraph.New("") // isolate from Default() live-cloud leftovers
+	inter := &mitm.Interceptor{
+		Harness:         &orchestrator.PipelineCompleter{Router: engine, Executor: &countingExecutor{}},
+		Metrics:         c,
+		AgentRPCFulfill: true,
+		FulfillHub:      hub,
+	}
+
+	sumID := "48f01fc5-2735-4fc3-8075-3c718be7bd43"
+	chromePack := []byte("Delhi weather today\x00user_visible_high_level_summary\x00Delhi's muggy and cloudy today")
+	bidi := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
+		strings.NewReader(string(buildContextEnvelopeBidiWithID(chromePack, sumID))))
+	bidi.Header.Set("Content-Type", "application/proto")
+	bidi.Header.Set("X-Request-Id", sumID)
+	bidi.Header.Set("X-Session-Id", "be5ca4c5-643c-4860-a7c8-ea46cf690233")
+	if _, err := inter.TryHandle(httptest.NewRecorder(), bidi); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := c.GetRouteCounts()
+	if counts["action:bidi_sticky_cloud_summary"] < 1 && counts["action:bidi_sticky_cloud"] < 1 {
+		t.Fatalf("counts=%v want bidi_sticky_cloud_summary for dump-shaped chrome", counts)
+	}
+	if counts["action:bidi_fulfill_armed"] > 0 || counts["action:would_fulfill_local"] > 0 {
+		t.Fatalf("counts=%v chrome wrap-up must not arm local", counts)
+	}
+
+	rr := httptest.NewRecorder()
+	runReq := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/agent.v1.AgentService/RunSSE",
+		bytes.NewReader(buildRunSSERequest(sumID)))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runReq.Header.Set("X-Request-Id", sumID)
+	handled, err := inter.TryHandle(rr, runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("dump-shaped chrome RunSSE must origin, not local")
+	}
+	counts = c.GetRouteCounts()
+	if counts["action:runsse_local"] > 0 {
+		t.Fatalf("counts=%v want no runsse_local", counts)
 	}
 }
 
@@ -473,6 +697,62 @@ func TestInterceptorRunSSECompleteErrorNoCannedFallsThrough(t *testing.T) {
 	}
 	if handled {
 		t.Fatal("without canned flag must fail-soft to origin")
+	}
+}
+
+func TestInterceptorRunSSECompleteErrorSurfacesLocal(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Always Local", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := mitm.NewAgentFulfillHub()
+	hub.Graph = contextgraph.New("") // isolate from package Default sticky pollution
+	c := metrics.NewCollector(nil)
+	inter := &mitm.Interceptor{
+		Harness:           &orchestrator.PipelineCompleter{Router: engine, Executor: failExecutor{}},
+		Metrics:           c,
+		AgentRPCFulfill:   true,
+		CannedOnError:     false,
+		SurfaceLocalError: true,
+		FulfillHub:        hub,
+	}
+	reqID := "35353535-3535-4535-8535-353535353535"
+	hub.ArmLocal(reqID, &mitm.AgentFulfillOffer{
+		Local:   true,
+		Request: &backend.CompletionRequest{Model: "x", Messages: []backend.Message{{Role: "user", Content: "x"}}},
+	})
+	rr := httptest.NewRecorder()
+	runReq := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/agent.v1.AgentService/RunSSE",
+		bytes.NewReader(buildRunSSERequest(reqID)))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runReq.Header.Set("X-Request-Id", reqID)
+	handled, err := inter.TryHandle(rr, runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("pure-local must surface clear error via RunSSE (not origin)")
+	}
+	counts := c.GetRouteCounts()
+	if counts["action:runsse_local_error"] < 1 {
+		t.Fatalf("counts=%v want runsse_local_error", counts)
+	}
+	insp := cursorrpc.InspectRunSSEResponseBody(rr.Body.Bytes(), 200, "application/connect+proto")
+	found := false
+	for _, f := range insp.Frames {
+		if f.Kind == "text_delta" && strings.Contains(f.TextHint, "Glider local fulfill failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("clear error text missing in frames=%+v", insp.Frames)
 	}
 }
 
@@ -854,6 +1134,7 @@ func TestInterceptorStickyLocalInheritsSummaryOnly(t *testing.T) {
 	}
 	c := metrics.NewCollector(nil)
 	hub := mitm.NewAgentFulfillHub()
+	hub.Graph = contextgraph.New("")
 	inter := &mitm.Interceptor{
 		Harness:         &orchestrator.PipelineCompleter{Router: engine, Executor: &countingExecutor{}},
 		Metrics:         c,
@@ -1279,6 +1560,103 @@ func TestInterceptorBidiFulfillFlagOffNoWouldFulfill(t *testing.T) {
 	counts := c.GetRouteCounts()
 	if counts["action:would_fulfill_local"] != 0 {
 		t.Fatalf("flag off must not would_fulfill: %v", counts)
+	}
+}
+
+// TestComposerWrapupOriginAfterCloudGraceExpired is the aggressive dump leak:
+// /cloud → parent ends → grace/TTL wiped → wrap-up Bidi with title-like hint
+// "Friday stock market close" + user_visible_high_level_summary in body must
+// still ArmOrigin via composer_wrapup_origin (never Small Context Local).
+func TestComposerWrapupOriginAfterCloudGraceExpired(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{
+			{
+				Name: "Explicit Cloud", Priority: 99,
+				Trigger: config.TriggerConfig{Type: "explicit", Commands: []string{"/cloud"}},
+				Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+			},
+			{
+				Name: router.ComposerWrapupRuleName, Priority: 95,
+				Trigger: config.TriggerConfig{Type: router.TriggerComposerWrapup},
+				Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+			},
+			{
+				Name: "Small Context Local", Priority: 5,
+				Trigger: config.TriggerConfig{Type: "context_size", Operator: "<=", Value: 8000},
+				Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := metrics.NewCollector(nil)
+	g := contextgraph.New("")
+	hub := mitm.NewAgentFulfillHub()
+	hub.Graph = g
+	inter := &mitm.Interceptor{
+		Harness:         &orchestrator.PipelineCompleter{Router: engine, Executor: &countingExecutor{}, Graph: g},
+		Metrics:         c,
+		AgentRPCFulfill: true,
+		FulfillHub:      hub,
+	}
+
+	cloudID := "d05741d4-2dba-405f-b3db-adffe35b7483"
+	sess := "be5ca4c5-643c-4860-a7c8-ea46cf690233"
+	tipTap := []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"/cloud hello hows the stock market today"}]}]}`)
+	bidi1 := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
+		strings.NewReader(string(buildContextEnvelopeBidiWithID(tipTap, cloudID))))
+	bidi1.Header.Set("Content-Type", "application/proto")
+	bidi1.Header.Set("X-Request-Id", cloudID)
+	bidi1.Header.Set("X-Session-Id", sess)
+	if _, err := inter.TryHandle(httptest.NewRecorder(), bidi1); err != nil {
+		t.Fatal(err)
+	}
+	hub.BeginParentRun(cloudID)
+	hub.EndParentRun(cloudID)
+
+	// Simulate TTL+grace fully expired (dump hunt: wrap-up after cloud_live=false).
+	hub.ResetFamilyForTest()
+	g.Grace = time.Nanosecond
+	time.Sleep(2 * time.Millisecond)
+
+	sumID := "fa99e307-8449-404e-bb29-590a4cebd6fe"
+	chromePack := []byte("Friday stock market close\x00user_visible_high_level_summary\x00Markets are closed Saturday. Friday session was down.")
+	bidi2 := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend",
+		strings.NewReader(string(buildContextEnvelopeBidiWithID(chromePack, sumID))))
+	bidi2.Header.Set("Content-Type", "application/proto")
+	bidi2.Header.Set("X-Request-Id", sumID)
+	bidi2.Header.Set("X-Session-Id", sess)
+	if _, err := inter.TryHandle(httptest.NewRecorder(), bidi2); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := c.GetRouteCounts()
+	if counts["action:bidi_composer_wrapup"] < 1 && counts["action:bidi_sticky_cloud_summary"] < 1 {
+		t.Fatalf("counts=%v want bidi_composer_wrapup after expired grace", counts)
+	}
+	if counts["action:bidi_fulfill_armed"] > 0 || counts["action:would_fulfill_local"] > 0 {
+		t.Fatalf("counts=%v must not arm local on expired-grace wrap-up", counts)
+	}
+
+	rr := httptest.NewRecorder()
+	runReq := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/agent.v1.AgentService/RunSSE",
+		bytes.NewReader(buildRunSSERequest(sumID)))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runReq.Header.Set("X-Request-Id", sumID)
+	handled, err := inter.TryHandle(rr, runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("wrap-up RunSSE must origin-passthrough")
+	}
+	counts = c.GetRouteCounts()
+	if counts["action:runsse_local"] > 0 {
+		t.Fatalf("counts=%v want no runsse_local for composer_wrapup_origin", counts)
 	}
 }
 

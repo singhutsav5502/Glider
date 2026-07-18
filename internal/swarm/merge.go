@@ -55,6 +55,23 @@ func MergeResults(results []Result) contextkit.Episode {
 	}
 }
 
+// OrchestratorSummary is a compact string for dashboards / gateway finish text.
+func OrchestratorSummary(merged contextkit.Episode, results []Result) string {
+	ok, fail := 0, 0
+	for _, r := range results {
+		if r.Err != nil {
+			fail++
+		} else {
+			ok++
+		}
+	}
+	sum := strings.TrimSpace(merged.Summary)
+	if sum == "" {
+		sum = fmt.Sprintf("swarm %d ok / %d fail", ok, fail)
+	}
+	return fmt.Sprintf("swarm[%d/%d] %s", ok, ok+fail, truncate(sum, 240))
+}
+
 // MergeTexts concatenates non-empty worker text blobs (gateway SSE merge helper).
 func MergeTexts(parts []string) string {
 	var b strings.Builder

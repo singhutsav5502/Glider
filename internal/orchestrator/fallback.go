@@ -33,16 +33,17 @@ type fallbackStep struct {
 
 // FallbackChain tries backends in order with circuit breaking and health checks.
 type FallbackChain struct {
-	registry         *backend.Registry
-	lifecycle        *ModelLifecycle
-	breakers         map[string]*CircuitBreaker
-	failureThreshold int
-	cooldown         time.Duration
-	isHealthy        HealthFunc
-	rateLimiter      *CloudRateLimiter
-	budget           *BudgetTracker
-	cloudBackend     string
-	cloudModel       string
+	registry           *backend.Registry
+	lifecycle          *ModelLifecycle
+	breakers           map[string]*CircuitBreaker
+	failureThreshold   int
+	cooldown           time.Duration
+	isHealthy          HealthFunc
+	rateLimiter        *CloudRateLimiter
+	budget             *BudgetTracker
+	cloudBackend       string
+	cloudModel         string
+	disableCloudFallback bool
 }
 
 // FallbackConfig configures the fallback chain.
@@ -56,6 +57,8 @@ type FallbackConfig struct {
 	Budget           *BudgetTracker
 	CloudBackend     string
 	CloudModel       string
+	// DisableCloudFallback skips appending BYOK cloud after a local primary (pure-local).
+	DisableCloudFallback bool
 }
 
 // NewFallbackChain creates a fallback chain.
@@ -70,16 +73,17 @@ func NewFallbackChain(cfg FallbackConfig) *FallbackChain {
 		cfg.IsHealthy = DefaultHealthCheck(cfg.Registry)
 	}
 	return &FallbackChain{
-		registry:         cfg.Registry,
-		lifecycle:        cfg.Lifecycle,
-		breakers:         make(map[string]*CircuitBreaker),
-		failureThreshold: cfg.FailureThreshold,
-		cooldown:         cfg.Cooldown,
-		isHealthy:        cfg.IsHealthy,
-		rateLimiter:      cfg.RateLimiter,
-		budget:           cfg.Budget,
-		cloudBackend:     cfg.CloudBackend,
-		cloudModel:       cfg.CloudModel,
+		registry:             cfg.Registry,
+		lifecycle:            cfg.Lifecycle,
+		breakers:             make(map[string]*CircuitBreaker),
+		failureThreshold:     cfg.FailureThreshold,
+		cooldown:             cfg.Cooldown,
+		isHealthy:            cfg.IsHealthy,
+		rateLimiter:          cfg.RateLimiter,
+		budget:               cfg.Budget,
+		cloudBackend:         cfg.CloudBackend,
+		cloudModel:           cfg.CloudModel,
+		disableCloudFallback: cfg.DisableCloudFallback,
 	}
 }
 
@@ -113,7 +117,7 @@ func (f *FallbackChain) steps(decision *backend.RoutingDecision, req *backend.Co
 	}
 
 	steps := []fallbackStep{primary}
-	if primary.local && f.cloudBackend != "" {
+	if primary.local && !f.disableCloudFallback && f.cloudBackend != "" {
 		cloudModel := f.cloudModel
 		if cloudModel == "" {
 			cloudModel = req.Model

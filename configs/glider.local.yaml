@@ -1,0 +1,176 @@
+# Glider pure-local profile — Ollama-first, no cloud keys required.
+#
+#   glider.exe --config configs/glider.local.yaml
+#
+# What this does:
+#   - routing.default: local (priority-0 always → Ollama)
+#   - allow_cloud_fallback: false (no BYOK OpenAI after local failure)
+#   - Skips registering cloud providers when default=local + no fallback
+#   - MITM Path B text fulfill: clear Ollama errors (not silent Cursor origin)
+#   - agent_rpc_canned_on_error: false (never fake "pong" replies)
+#   - Bounded local context: latest user turn + compressed episodes
+#
+# Gateway-only (no MITM / no Cursor subscription):
+#   Set mitm.enabled: false below. Point Cursor Override Base URL at
+#   http://localhost:8080/v1 and use a cus- model alias — optional.
+#   Dashboard loops (/api/loops) and gateway chat work without Cursor at all.
+#
+# Hybrid dual-mode (MITM + gateway): leave mitm.enabled: true (default here).
+# See planning/context_management.md and STATUS.md.
+
+server:
+  proxy_port: 8080
+  dashboard_port: 8081
+  log_level: info
+
+thresholds:
+  max_local_context_tokens: 8000
+  idle_unload_timeout: 5m
+  request_timeout: 120s
+
+vram:
+  strategy: hybrid
+  headroom_mb: 512
+  max_loaded_models: 3
+
+models:
+  - name: codellama:7b
+    backend: ollama
+    vram_estimate_mb: 4200
+    max_context: 16384
+    capabilities: [code, refactor, debug]
+    keep_warm: true
+  - name: llama3:8b-instruct
+    backend: ollama
+    vram_estimate_mb: 5000
+    max_context: 8192
+    capabilities: [general, docs, explain]
+    keep_warm: false
+
+model_aliases:
+  claude-3.5-sonnet: codellama:7b
+  gpt-4o: codellama:7b
+  gpt-4o-mini: llama3:8b-instruct
+
+context:
+  max_events: 4096
+  retain_days: 14
+  warm_load_days: 2
+
+routing:
+  default: local
+  default_local_model: codellama:7b
+  allow_cloud_fallback: false
+  turn_family_ttl: 90s
+  tool_followup:
+    enabled: true
+    inherit_parent_default: true
+    reevaluate: true
+    local_tool_allowlist:
+      - read_file
+      - Read
+      - grep
+      - Grep
+      - Glob
+      - list_dir
+      - codebase_search
+      - ReadLints
+    cloud_tool_denylist:
+      - Shell
+      - Write
+      - Delete
+      - ApplyPatch
+      - edit_file
+      - EditNotebook
+      - WebFetch
+      - WebSearch
+  complexity_from: heuristic
+  complexity:
+    enabled: false
+  # Pure-local: do not force tools → cloud; allowlisted tools can stay local on Path A.
+  task_classifier:
+    enabled: true
+    tools_force_cloud: false
+    local_model: codellama:7b
+  rules:
+    - name: Explicit Local
+      priority: 100
+      enabled: true
+      trigger:
+        type: explicit
+        commands: [/local, /fast]
+      action:
+        target: local
+        model: codellama:7b
+    - name: Explicit Cloud
+      priority: 99
+      enabled: true
+      trigger:
+        type: explicit
+        commands: [/cloud, /heavy]
+      action:
+        target: cloud
+        backend: openai
+        model: gpt-4o
+    - name: Default Local
+      priority: 0
+      enabled: true
+      trigger:
+        type: always
+      action:
+        target: local
+        backend: ollama
+        model: codellama:7b
+
+# Cloud block kept for optional /cloud; not registered when allow_cloud_fallback is false
+# and routing.default is local (no API keys required to start).
+cloud:
+  providers: []
+  rate_limit:
+    requests_per_minute: 30
+    tokens_per_minute: 100000
+  budget_cap_usd: 0
+
+backends:
+  - name: ollama
+    type: local
+    url: http://127.0.0.1:11434
+    health_check_interval: 30s
+
+dashboard:
+  enabled: true
+  auth: false
+
+transform:
+  enabled: false
+  trim_context: false
+  local_context: latest_turn
+  local_system_max_chars: 4000
+  local_episode_count: 3
+  local_episode_max_chars: 1500
+  augment_prepend: ""
+  augment_append: ""
+
+mitm:
+  enabled: true
+  port: 8082
+  ca_cert: ~/.glider/mitm/ca.crt
+  ca_key: ~/.glider/mitm/ca.key
+  hosts:
+    - api2.cursor.sh
+    - api3.cursor.sh
+    - api4.cursor.sh
+    - '*.api5.cursor.sh'
+  passthrough_default: true
+  debug_agent_rpc: false
+  agent_rpc_fulfill: true
+  # Production local: never canned; surface real Ollama failures to Cursor.
+  agent_rpc_canned_on_error: false
+  # Pure-local: do not silently fall back to Cursor subscription on Ollama errors.
+  origin_on_local_error: false
+  require_local_healthy: true
+
+orchestration:
+  loops:
+    enabled: true
+    default_route: local

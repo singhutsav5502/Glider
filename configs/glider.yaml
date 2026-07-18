@@ -1,13 +1,23 @@
-# Glider intro profile â€” dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
+# Glider intro profile — dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
 #
 # Routing priority (highest first):
 #   1. Explicit /local /fast /cloud /heavy on current user turn
 #   2. Turn-family sticky (reply-summary / title only; TTL = routing.turn_family_ttl)
 #   3. Tool-step re-decide for child RunSSE (routing.tool_followup)
-#   4. task_classifier (tools â†’ cloud unless allowlisted; must-cloud; small-local)
+#   4. task_classifier (tools → cloud unless allowlisted; must-cloud; small-local)
 #   5. Starlark scripts
 #   6. context_size token ceiling (not the primary "is this simple?" signal)
-#   7. Default always rule â†’ cloud when unsure (Path B opaque)
+#   7. Default always rule → cloud when unsure (Path B opaque)
+#
+# Pure local mode (Ollama only, no cloud keys):
+#   Use configs/glider.local.yaml  OR  set:
+#     routing.default: local
+#     routing.allow_cloud_fallback: false
+#     mitm.agent_rpc_canned_on_error: false   # already the default
+#     mitm.origin_on_local_error: false       # clear Ollama errors vs Cursor origin
+#     mitm.require_local_healthy: true
+#   Gateway-only: mitm.enabled: false + Override Base URL → :8080/v1 (cus- optional).
+#   See planning/context_management.md §Local context → Ollama.
 #
 # See planning/smart_routing_and_local_tools.md and planning/routing_session_policy.md
 
@@ -77,6 +87,18 @@ routing:
             - EditNotebook
             - WebFetch
             - WebSearch
+    # Complexity score for routing (P1). Cursor Agent/Bidi envelopes do NOT expose
+    # complexity / max_mode / model_tier in MITM dumps today — complexity_from:
+    # heuristic uses tools + file mentions + prompt length + mode strings.
+    # When a Cursor field appears, set complexity_from: both|cursor and wire
+    # TryAttachCursorComplexity in bidi_extract. Opt-in: complexity.enabled.
+    complexity_from: heuristic
+    complexity:
+        enabled: false
+        cloud_above: 70
+        priority: 75
+        # cloud_backend: openai
+        # cloud_model: gpt-4o
     # Task-shape routing (M1): prefer local for rename/explain/format/Q&A; force cloud
     # for architecture/migration/multi-file; tools[] â†’ cloud unless tool_followup
     # allowlists every tool. Local Ollama models that reject tools fall back to BYOK
@@ -113,6 +135,18 @@ routing:
             commands:
                 - /cloud
                 - /heavy
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        # Composer wrap-up / final summary → always origin. Beats Small Context Local
+        # and task_classifier so post-/cloud chrome (user_visible_high_level_summary,
+        # title-like printable_hint) never runsse_local. See routing_session_policy.md.
+        - name: composer_wrapup_origin
+          priority: 95
+          enabled: true
+          trigger:
+            type: composer_wrapup
           action:
             target: cloud
             backend: openai
@@ -187,6 +221,14 @@ dashboard:
 transform:
     enabled: false
     trim_context: false
+    # Path A local fulfills: drop mega-history; keep bounded system + latest user
+    # turn (+ tool-loop tail). Path B TipTap extract is already single-turn.
+    # Optionally prepend compressed episodes (not TipTap dumps).
+    # full | latest_turn
+    local_context: latest_turn
+    local_system_max_chars: 4000
+    local_episode_count: 3
+    local_episode_max_chars: 1500
     augment_prepend: ""
     augment_append: ""
 mitm:
@@ -203,25 +245,64 @@ mitm:
     # Path B R&D: observe/dump Connect Agent RPCs. Turn off after R&D.
     # Also: set GLIDER_MITM_DEBUG_RPC=1
     debug_agent_rpc: true
-    # Path B: BidiAppend extract â†’ DecideLocal â†’ RunSSE text fulfill (experimental).
-    # Tool-loop child RunSSE still origin. Fail-soft â†’ origin when wait/encode fails.
+    # Path B: BidiAppend extract → DecideLocal → RunSSE text fulfill (experimental).
+    # Tool-loop child RunSSE still origin. Fail-soft → origin when wait/encode fails.
     # Also: GLIDER_MITM_AGENT_RPC_FULFILL=1
     agent_rpc_fulfill: true
     # Opt-in R&D only: on CompleteLocal failure write canned RunSSE text instead of
-    # origin. Codec is proven â€” leave false so Path B returns real Ollama text (or
+    # origin. Codec is proven — leave false so Path B returns real Ollama text (or
     # origin on error). Enable with GLIDER_MITM_AGENT_RPC_CANNED=1 when needed.
+    # Production local: keep false (never ship canned as "the model").
     agent_rpc_canned_on_error: false
     agent_rpc_canned_text: "pong from glider (canned Path B)"
+    # Hybrid default: omit / true (origin fail-soft). Pure-local: false (clear error).
+    # origin_on_local_error: true
+    # require_local_healthy: false
     # debug_dump_dir: ~/.glider/mitm-debug
 
-# Swarm foundation (off by default). When enabled, StrategyFanOut can merge
-# up to max_workers local Completes on the gateway via internal/swarm.
-# See planning/swarm_orchestration.md.
+context:
+    max_events: 4096
+    retain_days: 14
+    warm_load_days: 2
+
+# Swarm / fan-out / loops (off by default).
 # orchestration:
 #   fan_out:
 #     enabled: false
 #     max_workers: 2
+#   swarm:
+#     enabled: false
 #   concurrency:
 #     worker_queue_size: 16
 #     result_chan_size: 32
 #     max_inflight: 4
+#   hoops_dir: ~/.glider/hoops
+#   loops:
+#     enabled: true
+#     default_route: local
+#     hoop_learning:
+#       enabled: false
+#       local_bias_step: 0.05
+#       max_bias: 0.5
+#       window: 20
+#   # Glider-owned loops (dashboard /api/loops). Default route local = pure local
+#   # harness; no Cursor subscription required for the loop runner itself.
+#   loops:
+#     enabled: true
+#     default_route: local
+#     # dir: ~/.glider/loops
+#     hoop_learning:
+#       enabled: false
+#       local_bias_step: 0.05
+#       max_bias: 0.5
+#       window: 20
+
+orchestration:
+  loops:
+    enabled: true
+    default_route: local
+    hoop_learning:
+      enabled: true
+      local_bias_step: 0.05
+      max_bias: 0.5
+      window: 20

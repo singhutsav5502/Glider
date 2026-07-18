@@ -4,13 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
+	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/router"
 	"github.com/glider-ai/glider/internal/transform"
+	"github.com/google/uuid"
 )
 
 // ErrOriginPassthrough is returned when MITM mode routes to a non-local target.
@@ -25,17 +29,33 @@ type CompleteOptions struct {
 }
 
 // PipelineCompleter implements api.Completer: tokenize → route → transform → execute.
+//
+// Context to locals (see planning/smart_routing_and_local_tools.md §Local context):
+//
+//	Path B: ExtractBidiCompletionRequest → one TipTap latest-turn user message
+//	        (no tools, no full envelope) → DecideLocal / CompleteLocal.
+//	Path A: full gateway body is used for routing; when Target=local,
+//	        BoundLocalContext may shrink to system + latest turn before execute.
+//
+// StickyCloud / deny-local happens in MITM before CompleteLocal; this pipeline
+// never overrides ArmOrigin.
 type PipelineCompleter struct {
 	Router       router.Router
 	Executor     Executor
 	Tokenizer    *transform.Tokenizer
 	Transformer  *transform.Transformer
+	// TransformCfg drives BoundLocalContext for local fulfills (optional).
+	TransformCfg config.TransformConfig
 	MaxContext   int
 	Metrics      *metrics.Collector
 	ModelAliases map[string]string
-	// Graph is optional; nil → contextgraph.Default(). Classifier / explicit
+	// Graph is optional; nil → no contextgraph emits (tests). Classifier / explicit
 	// decisions emit EventRouteDecided without owning contextgraph internals.
 	Graph *contextgraph.Store
+	// Episodes is optional session episode ring (wired from main).
+	Episodes *contextkit.Store
+	// EpisodeSession is the default session key for RecordEpisode / inject (Glider run id).
+	EpisodeSession string
 }
 
 func (p *PipelineCompleter) Complete(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
@@ -125,6 +145,18 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 		return nil, ErrOriginPassthrough
 	}
 
+	// Bound context for local fulfills only (Path A mega-history / StreamChat).
+	// Path B single-turn extract is unchanged; sticky origin never reaches here.
+	// Inject compressed episodes first (not TipTap dumps), then bound to latest turn.
+	if IsLocalTarget(decision.Target) {
+		if p.Episodes != nil && p.TransformCfg.LocalEpisodeCount > 0 {
+			sess := p.episodeSessionKey(req)
+			eps := p.Episodes.RecentEpisodes(sess, p.TransformCfg.LocalEpisodeCount)
+			req = transform.InjectEpisodeContext(req, eps, p.TransformCfg)
+		}
+		req = transform.BoundLocalContext(req, p.TransformCfg)
+	}
+
 	if p.Transformer != nil {
 		maxCtx := p.MaxContext
 		if maxCtx <= 0 {
@@ -147,6 +179,8 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 			p.emitOrchEvent(contextgraph.EventFulfilledLocal, req, "local", map[string]string{
 				"rule": decision.RuleName, "source": mode,
 			})
+			// Still wrap so we can record the episode when the stream finishes.
+			return p.wrapRecordEpisode(ch, req, decision, mode), nil
 		}
 		return ch, nil
 	}
@@ -154,7 +188,11 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 	out := make(chan backend.CompletionChunk, 16)
 	go func() {
 		defer close(out)
+		var buf strings.Builder
 		for chunk := range ch {
+			if chunk.Content != "" {
+				buf.WriteString(chunk.Content)
+			}
 			out <- chunk
 		}
 		action := "local"
@@ -166,9 +204,85 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 			p.emitOrchEvent(contextgraph.EventFulfilledLocal, req, "local", map[string]string{
 				"rule": decision.RuleName, "source": mode,
 			})
+			p.recordLocalEpisode(req, decision, buf.String())
 		}
 	}()
 	return out, nil
+}
+
+func (p *PipelineCompleter) wrapRecordEpisode(ch <-chan backend.CompletionChunk, req *backend.CompletionRequest, decision *backend.RoutingDecision, mode string) <-chan backend.CompletionChunk {
+	out := make(chan backend.CompletionChunk, 16)
+	go func() {
+		defer close(out)
+		var buf strings.Builder
+		for chunk := range ch {
+			if chunk.Content != "" {
+				buf.WriteString(chunk.Content)
+			}
+			out <- chunk
+		}
+		p.recordLocalEpisode(req, decision, buf.String())
+	}()
+	return out
+}
+
+func (p *PipelineCompleter) episodeSessionKey(req *backend.CompletionRequest) string {
+	if p != nil && p.EpisodeSession != "" {
+		return p.EpisodeSession
+	}
+	if req != nil && req.Metadata.RequestID != "" {
+		return req.Metadata.RequestID
+	}
+	return "default"
+}
+
+func (p *PipelineCompleter) recordLocalEpisode(req *backend.CompletionRequest, decision *backend.RoutingDecision, text string) {
+	if p == nil || p.Episodes == nil || req == nil {
+		return
+	}
+	summary := strings.TrimSpace(text)
+	if len(summary) > 512 {
+		summary = summary[:512]
+	}
+	if summary == "" {
+		summary = "(empty local fulfill)"
+	}
+	epID := uuid.New().String()
+	reqID := req.Metadata.RequestID
+	turnID := reqID
+	if g := p.graph(); g != nil && reqID != "" {
+		if tid := g.TurnIDForRequest(reqID); tid != "" {
+			turnID = tid
+		}
+	}
+	rule, reason, role := "", "", "local"
+	if decision != nil {
+		rule = decision.RuleName
+		reason = decision.Reason
+		if decision.Role != "" {
+			role = decision.Role
+		}
+	}
+	tokens := len(summary) / 4
+	if req.Metadata.EstimatedTokens > 0 {
+		tokens = req.Metadata.EstimatedTokens
+	}
+	sess := p.episodeSessionKey(req)
+	p.Episodes.RecordEpisode(sess, contextkit.Episode{
+		ID:        epID,
+		TurnID:    turnID,
+		Summary:   summary,
+		Tokens:    tokens,
+		Model:     req.Model,
+		Rule:      rule,
+		Reason:    reason,
+		Role:      role,
+	})
+	if g := p.graph(); g != nil {
+		g.RecordEpisodeMerged(turnID, reqID, epID, map[string]string{
+			"rule": rule, "model": req.Model, "source": "fulfill",
+		})
+	}
 }
 
 func (p *PipelineCompleter) graph() *contextgraph.Store {

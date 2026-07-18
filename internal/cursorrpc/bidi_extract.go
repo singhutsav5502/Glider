@@ -29,6 +29,16 @@ var tipTapTextRE = regexp.MustCompile(`"type"\s*:\s*"text"\s*,\s*"text"\s*:\s*"(
 // into a CompletionRequest when the append is a context_envelope with recoverable
 // user text. Returns (nil, nil) when the body is not an extractable turn
 // (acks, tool blobs, empty).
+//
+// Local context contract (Path B):
+//   - Messages: exactly one user message = TipTap LatestUserTurnText (not the
+//     full context_envelope / history / system sections).
+//   - Tools: never set (child tool RunSSE stays origin until tool codec).
+//   - Model: string hint from envelope or "cursor-agent".
+//   - Complexity / max_mode / model_tier: not present on the wire in MITM dumps
+//     (2026-07-18); when Cursor exposes them, call router.TryAttachCursorComplexity.
+// CompleteLocal receives this slim request via AgentFulfillHub — sticky Cloud
+// deny-local still runs before fulfill in intercept.go.
 func ExtractBidiCompletionRequest(body []byte) (*BidiExtract, error) {
 	if len(body) == 0 {
 		return nil, fmt.Errorf("empty body")

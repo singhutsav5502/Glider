@@ -12,6 +12,7 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/router"
@@ -22,12 +23,14 @@ type recordExecutor struct {
 	n        int
 	lastTgt  string
 	lastName string
+	lastReq  *backend.CompletionRequest
 }
 
 func (e *recordExecutor) Execute(ctx context.Context, decision *backend.RoutingDecision, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	e.n++
 	e.lastTgt = decision.Target
 	e.lastName = decision.RuleName
+	e.lastReq = req
 	ch := make(chan backend.CompletionChunk, 1)
 	ch <- backend.CompletionChunk{Content: "ok", FinishReason: "stop", Model: req.Model}
 	close(ch)
@@ -119,6 +122,66 @@ func TestPipelineCompleteLocalMITMFulfillsLocal(t *testing.T) {
 	}
 }
 
+func TestPipelineRecordsEpisodeOnLocalFulfill(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Local", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := contextgraph.New("")
+	store := contextkit.NewStore(8)
+	pc := &orchestrator.PipelineCompleter{
+		Router:         engine,
+		Executor:       &recordExecutor{},
+		Graph:          g,
+		Episodes:       store,
+		EpisodeSession: "test-run",
+	}
+	req := &backend.CompletionRequest{
+		Model: "codellama:7b",
+		Messages: []backend.Message{
+			{Role: "user", Content: "old"},
+			{Role: "assistant", Content: "old reply"},
+			{Role: "user", Content: "rename x"},
+		},
+		Metadata: backend.RequestMetadata{RequestID: "req-ep-1"},
+	}
+	pc.TransformCfg = config.TransformConfig{
+		LocalContext:      "latest_turn",
+		LocalEpisodeCount: 0,
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ch, err := pc.Complete(r, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	// Allow goroutine to finish episode record.
+	time.Sleep(20 * time.Millisecond)
+	eps := store.RecentEpisodes("test-run", 5)
+	if len(eps) != 1 {
+		t.Fatalf("episodes=%d want 1", len(eps))
+	}
+	evs := g.RecentEvents(20)
+	found := false
+	for _, e := range evs {
+		if e.Kind == contextgraph.EventEpisodeMerged {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing EpisodeMerged in %+v", evs)
+	}
+}
+
+
 func TestPipelineTokenizeBeforeRoute(t *testing.T) {
 	tok, err := transform.NewTokenizer()
 	if err != nil {
@@ -174,6 +237,84 @@ func TestIsLocalTarget(t *testing.T) {
 	}
 	if orchestrator.IsLocalTarget("cloud") {
 		t.Fatal("cloud")
+	}
+}
+
+func TestPipelineLocalBoundsMegaContext(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Local", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordExecutor{}
+	pc := &orchestrator.PipelineCompleter{
+		Router:       engine,
+		Executor:     exec,
+		TransformCfg: config.TransformConfig{LocalContext: "latest_turn", LocalSystemMaxChars: 4000},
+	}
+	req := &backend.CompletionRequest{
+		Model: "codellama:7b",
+		Messages: []backend.Message{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "user", Content: "old history"},
+			{Role: "assistant", Content: "old reply"},
+			{Role: "user", Content: "rename foo"},
+		},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ch, err := pc.Complete(r, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	if exec.lastReq == nil || len(exec.lastReq.Messages) != 2 {
+		t.Fatalf("local should get system+latest user, got %+v", exec.lastReq)
+	}
+	if exec.lastReq.Messages[1].Content != "rename foo" {
+		t.Fatalf("latest turn lost: %+v", exec.lastReq.Messages)
+	}
+}
+
+func TestPipelineCloudKeepsFullContext(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Cloud", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordExecutor{}
+	pc := &orchestrator.PipelineCompleter{
+		Router:       engine,
+		Executor:     exec,
+		TransformCfg: config.TransformConfig{LocalContext: "latest_turn"},
+	}
+	req := &backend.CompletionRequest{
+		Model: "gpt-4o",
+		Messages: []backend.Message{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "old"},
+			{Role: "user", Content: "new"},
+		},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ch, err := pc.Complete(r, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	if exec.lastReq == nil || len(exec.lastReq.Messages) != 3 {
+		t.Fatalf("cloud must keep full history, got %+v", exec.lastReq)
 	}
 }
 

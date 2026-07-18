@@ -33,8 +33,10 @@ func NewEngine(rules []Rule) *Engine {
 // When routing.task_classifier.enabled, injects heuristic rules (tools / must-cloud /
 // small-local) so task shape beats token thresholds; explicit /local|/cloud still win
 // when their priorities are higher (default 100/99).
+// When routing.complexity.enabled, injects Complexity→Cloud (see complexity_from).
 func NewEngineFromConfig(routing config.RoutingConfig, executor *StarlarkExecutor) (*Engine, error) {
-	rules := make([]Rule, 0, len(routing.Rules)+3)
+	routing.ApplyDefaultTarget()
+	rules := make([]Rule, 0, len(routing.Rules)+4)
 	for _, cfg := range routing.Rules {
 		if !cfg.IsEnabled() {
 			continue
@@ -50,6 +52,9 @@ func NewEngineFromConfig(routing config.RoutingConfig, executor *StarlarkExecuto
 		return nil, err
 	}
 	rules = append(rules, extra...)
+	if cr := NewComplexityRule(routing); cr != nil {
+		rules = append(rules, cr)
+	}
 	return NewEngine(rules), nil
 }
 

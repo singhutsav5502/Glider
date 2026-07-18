@@ -1,15 +1,10 @@
 # Cursor Agent protocol interception
 
-> Status: **research complete** — full methodology in [`cursor_intercept_methodology.md`](./cursor_intercept_methodology.md).
-> Prior art survey: [`cursor_prior_art.md`](./cursor_prior_art.md).
+> **Status (2026-07-18):** Path A **production path** for Agent+tools. Path B **text-only fulfill shipped** (BidiAppend → RunSSE) with turn-family sticky + `contextgraph`. Tool loops / child RunSSE still **origin**.
 >
-> Related: live capture notes in [`cursor_agent_rpc_debug_findings.md`](./cursor_agent_rpc_debug_findings.md) (2026-07-18: api2 BidiAppend + `agent.v1.AgentService/RunSSE`).
-> Routing / local tools roadmap: [`smart_routing_and_local_tools.md`](./smart_routing_and_local_tools.md).
+> Index: [README.md](./README.md) · Policy: [routing_session_policy.md](./routing_session_policy.md) · Methodology (frozen research): [cursor_intercept_methodology.md](./cursor_intercept_methodology.md) · Captures: [cursor_agent_rpc_debug_findings.md](./cursor_agent_rpc_debug_findings.md) · Prior art: [cursor_prior_art.md](./cursor_prior_art.md)
 >
-> Implementation: dual-path (Path A gateway primary; Path B MITM StreamChat* partial).
->
-> Related code: `internal/mitm/`, `internal/cursorrpc/`, `internal/api/anthropic_normalize.go`.
-> Attribution: `internal/cursorrpc/THIRD_PARTY.md` (cursor-rpc has **no published LICENSE**; schemas only).
+> Code: `internal/mitm/`, `internal/cursorrpc/`, `internal/contextgraph/`, `internal/api/anthropic_normalize.go`
 
 ---
 
@@ -17,50 +12,47 @@
 
 | Source | What it provides | How Glider uses it |
 |--------|------------------|--------------------|
-| [everestmz/cursor-rpc](https://github.com/everestmz/cursor-rpc) | Go + Connect stubs for `aiserver.v1` (`AiService.StreamChat`, `GetChatRequest`, `StreamChatResponse`, Composer, …). Pin Cursor **0.43.5**. | In-process decode/encode for fulfillable Agent chat RPCs on MITM |
-| [jacksonkasi DEV.to](https://dev.to/jacksonkasi/how-i-reverse-engineered-cursor-ide-to-run-on-github-copilot-a-proxy-architecture-deep-dive-2jin) / [copilot-for-cursor](https://github.com/jacksonkasi1/copilot-for-cursor) | Proven **Agent → OpenAI-compat HTTP**: Override Base URL + `cus-` + Anthropic→OpenAI tool mutation | Gateway Mode A — **recommended primary** for Agent+tools today |
-| [eisbaw/cursor_api_demo](https://github.com/eisbaw/cursor_api_demo) (2.6.22) | Modern `ChatService/StreamUnifiedChatWithTools`, `agent*.api5`, auth/checksum, Bidi | Gap analysis — not in cursor-rpc pin; opaque passthrough |
-| [Cursor network docs](https://cursor.com/docs/enterprise/network-configuration) | Official host roles (api2/3/4/5) | MITM allowlist rationale |
+| [everestmz/cursor-rpc](https://github.com/everestmz/cursor-rpc) | Go + Connect stubs (`AiService.StreamChat*`, …). Pin **0.43.5**. | Legacy StreamChat* decode/encode on MITM |
+| [jacksonkasi / copilot-for-cursor](https://github.com/jacksonkasi1/copilot-for-cursor) | Agent → OpenAI-compat via `cus-` + Anthropic→OpenAI tools | **Path A primary** for Agent+tools |
+| [eisbaw/cursor_api_demo](https://github.com/eisbaw/cursor_api_demo) | Modern Unified / Bidi schemas | Gap analysis; not in cursor-rpc pin |
+| [burpheart/cursor-tap](https://github.com/burpheart/cursor-tap) | MITM observe/decode modern Agent | Architecture notes; observe-only prior art |
+| [Cursor network docs](https://cursor.com/docs/enterprise/network-configuration) | Host roles | MITM allowlist |
 
-Critical design point: modern Cursor **Agent with tools** can be forced off Cursor hosts onto a custom OpenAI Base URL via `cus-…`. That traffic is JSON (often Anthropic-flavored), not BidiAppend. Full Agent tool loops are primarily a **gateway transform** problem; MITM protobuf covers subscription AiService text chat that still hits the Connect plane.
+Modern Agent+tools can be forced onto a custom Base URL via `cus-…` (JSON, often Anthropic-flavored). Subscription Connect plane (BidiAppend + RunSSE) is Path B.
 
 ---
 
 ## Dual-path architecture (current)
 
 ```text
-Path A — Gateway (article-proven) ★ PRIMARY
+Path A — Gateway ★ PRIMARY for Agent+tools
   Cursor (cus-MODEL + Override Base URL) → Glider :8080/v1
-       → NormalizeAnthropicShapedJSON (cus- strip, system/content/tools)
-       → Complete / harness → local or cloud BYOK
+       → NormalizeAnthropicShapedJSON
+       → Complete / harness → local or BYOK cloud
+       → stream tool_calls re-emitted on SSE
 
-Path B — MITM Connect (cursor-rpc + experimental Bidi/RunSSE fulfill)
+Path B — MITM Connect (text Agent + sticky)
   Cursor → MITM decrypt api2 / *.api5
-       → ClassifyPath agent_rpc
-       → DecodeChatRequest (StreamChat* / StreamComposer)
-       → CompleteLocal → local StreamChatResponse Connect stream
-                      → OR ErrOriginPassthrough (original bytes unchanged)
-       → BidiAppend context_envelope (experimental):
-            ExtractBidiCompletionRequest → DecideLocal
-            → AgentFulfillHub.ArmLocal (corr request UUID)
-       → RunSSE root (experimental, agent_rpc_fulfill):
-            Wait hub ≤800ms → CompleteLocal → WriteRunSSETextResponse
-            (no origin body); tool-loop child RunSSE → origin
-       → other Bidi / ChatService: opaque → origin
-         (debug: dumps + RunSSE response peeks / .bin)
+       → ClassifyPath
+       → StreamChat*: decode → CompleteLocal → Connect stream | origin
+       → BidiAppend: ExtractBidiCompletionRequest → DecideLocal / sticky
+            → AgentFulfillHub.ArmLocal | ArmOrigin (corr UUID + turn family)
+       → RunSSE root: Wait hub → CompleteLocal → WriteRunSSETextResponse
+            OR origin (cloud sticky / tools / fail-soft)
+       → Child / tool-loop RunSSE → origin (+ tool_followup_would_local)
 ```
 
 ---
 
 ## Product intent vs reality
 
-| Intent | Reality (2026-07) |
-|--------|-------------------|
-| Intercept Agent chats on Cursor hosts | TLS CONNECT decrypt works; **StreamChat\*** decode+local fulfill shipped |
-| Parse prompt → shared harness | StreamChat* yes; **Bidi context_envelope → CompletionRequest** (TipTap) |
-| Route small/simple → local; else origin | StreamChat* yes; **Bidi+RunSSE text MVP** when `agent_rpc_fulfill` (canned proven in UI; Ollama when backends work) |
-| Full Agent tools on subscription plane | Incomplete — child RunSSE skipped; prefer Path A |
-| Agent tools via BYOK | Prefer Path A (`cus-` + gateway); Anthropic tool normalize **partial** |
+| Intent | Reality |
+|--------|---------|
+| Intercept Agent on Cursor hosts | TLS decrypt works; StreamChat* + **Bidi/RunSSE text** fulfill |
+| Parse prompt → harness | TipTap / LatestUserTurnText extract |
+| Small → local; else origin | Classifier + sticky; `/cloud` hard-force |
+| Full Agent tools on subscription plane | **Incomplete** — prefer Path A |
+| Agent tools via BYOK | Path A shipped |
 
 ---
 
@@ -68,9 +60,9 @@ Path B — MITM Connect (cursor-rpc + experimental Bidi/RunSSE fulfill)
 
 | Kind | Examples | MITM behavior |
 |------|----------|---------------|
-| `openai_compat` | `/v1/chat/completions`, `/v1/responses` | JSON (+ Anthropic normalize) → harness |
-| `agent_rpc` fulfillable | `AiService/StreamChat`, `StreamChatWeb`, `StreamChatTryReallyHard`, `StreamNotepadChat`, `StreamComposer` | cursor-rpc decode → harness → Connect `StreamChatResponse` **or** origin |
-| `agent_rpc` opaque / experimental | `BidiService/BidiAppend`, `agent.v1.AgentService/RunSSE` | Extract+hub+RunSSE text fulfill when flag on; else opaque → origin |
+| `openai_compat` | `/v1/chat/completions`, `/v1/responses` | JSON → harness |
+| `agent_rpc` fulfillable | `AiService/StreamChat*` / StreamComposer | cursor-rpc → harness or origin |
+| `agent_rpc` Path B modern | `BidiAppend`, `agent.v1.AgentService/RunSSE` | Text fulfill when `agent_rpc_fulfill`; sticky/origin otherwise |
 | `cursor_control` | Dashboard / Analytics / … | `skip_control` → origin |
 
 ---
@@ -79,125 +71,79 @@ Path B — MITM Connect (cursor-rpc + experimental Bidi/RunSSE fulfill)
 
 ### Done
 
-- [x] Depend on `github.com/everestmz/cursor-rpc` (+ connect/protobuf); attribute in `THIRD_PARTY.md`
-- [x] `internal/cursorrpc`: Connect frame helpers, `DecodeChatRequest`, `WriteStreamChatResponse`, fail-closed end-stream errors
-- [x] MITM `handleAgentRPC`: decode → `CompleteLocal` → local Connect stream / passthrough / opaque
-- [x] Gateway + MITM OpenAI path: `cus-`/`glider-` strip; Anthropic system/content/tools normalize (article)
-- [x] Unit tests: decode fixtures, Connect encode, MITM local vs passthrough, opaque Bidi metrics
-- [x] Deep methodology research doc (`cursor_intercept_methodology.md`)
-- [x] Path B R&D debug: `mitm.debug_agent_rpc` / `GLIDER_MITM_DEBUG_RPC`, dumps, `/api/mitm/debug/recent`
-- [x] Phase 1 extract: `ExtractBidiCompletionRequest` (TipTap nested field 2 → `CompletionRequest`)
-- [x] Phase 2 deep: RunSSE response classify (`text_delta`/`heartbeat`/`turn_ended`/…) + `*_RESP.bin`
-- [x] Phase 3+4 experimental: `agent_rpc_fulfill` → hub → `WriteRunSSETextResponse` (text-only; canned proven in Cursor UI)
-### Still incomplete
+- [x] cursor-rpc dependency + `THIRD_PARTY.md`
+- [x] `internal/cursorrpc` Connect helpers + StreamChat* fulfill
+- [x] Gateway/MITM OpenAI: `cus-` strip; Anthropic normalize
+- [x] Debug dumps + `/api/mitm/debug/recent`
+- [x] `ExtractBidiCompletionRequest` (TipTap / latest user turn)
+- [x] RunSSE response classify + RESP peeks
+- [x] `agent_rpc_fulfill` hub → `WriteRunSSETextResponse` (canned UI-proven)
+- [x] `/cloud` TipTap hard-force; never canned
+- [x] Turn-family sticky (~90s); summary/title follow-ons
+- [x] Composer chrome: `user_visible_high_level_summary` → `bidi_sticky_cloud_summary`
+- [x] Subagent sticky (`bidi_sticky_cloud_child`)
+- [x] Sticky consults `contextgraph` (`ResolveCloudSticky` / live `RunSSEOpen`)
+- [x] Path A tools + stream tool_calls SSE
+- [x] `tool_followup` metrics on Path B child steps
 
-- [ ] **Tool loops / child RunSSE** — not fulfilled on MITM (prefer Path A + `cus-`); `tool_followup_would_local` logged
-- [ ] **Live Ollama Path B** on every install (depends on healthy local backends; leave `agent_rpc_canned_on_error: false`)
-- [ ] **BidiService / ChatService Unified** — schema not in pinned cursor-rpc; needs newer extract or capture
-- [ ] **Toolformer / client-side tool RPCs** — child RunSSE / tool_call frames not fulfilled (Path A)
-- [x] **Gateway tools passthrough** — `CompletionRequest.Tools` + stream tool_calls SSE bridge
-- [ ] **Auth headers / checksum** — MITM passthrough preserves client headers; local fulfill does not re-sign (N/A for local)
-- [ ] Re-extract schema against current Cursor (upstream `make extract-schema` assumes macOS Cursor.app)
+### Incomplete
 
-### Path B R&D observability (debug dumps)
-
-Use this to confirm which Connect paths modern Agent traffic hits (`BidiAppend` / `RunSSE` / …) and to verify fulfill logs (`mitm runsse local fulfill`).
-
-1. Enable (either):
-   ```yaml
-   mitm:
-     debug_agent_rpc: true
-     agent_rpc_fulfill: true
-     # leave false so Path B returns real Ollama (or origin on error)
-     agent_rpc_canned_on_error: false
-     # optional: debug_dump_dir: ~/.glider/mitm-debug
-   ```
-   or env: `GLIDER_MITM_DEBUG_RPC=1` / `GLIDER_MITM_AGENT_RPC_FULFILL=1`
-2. Restart Glider; trust CA + Cursor proxy as usual (HTTP/1.1).
-3. Send an Agent chat on a built-in / subscription model.
-4. Inspect:
-   - Logs: `mitm agent rpc debug`; `mitm runsse local fulfill` / `runsse_canned` when Path B answers
-   - With `agent_rpc_canned_on_error: true` / `GLIDER_MITM_AGENT_RPC_CANNED=1`: CompleteLocal failure → canned RunSSE text instead of origin — codec dry-run only
-   - Files: `~/.glider/mitm-debug/*.txt` (redacted headers + hex preview; RunSSE **response** peeks when debug on)
-   - API: `GET http://127.0.0.1:8081/api/mitm/debug/recent` (recent ring + per-path counts + mitm metrics)
-
-Default passthrough remains for tool-loop / uncorrelated RPCs. Text-only Path B fulfill is **on** when `agent_rpc_fulfill` is true.
+- [ ] Path B **tool loops / child RunSSE** fulfill (codec)
+- [ ] Unified ChatService schema in pin (newer extract if needed)
+- [ ] Re-extract schema vs current Cursor (upstream assumes macOS Cursor.app)
+- [ ] Live Ollama on every install (env-dependent; leave canned off for real backends)
 
 ---
 
-## How to test with Cursor
+## Path B phases (modern Agent)
 
-See methodology **§F** for full recipes. Short version:
+| Phase | Deliverable | Status |
+|------:|-------------|--------|
+| 1 | BidiAppend → `CompletionRequest` | **Done** |
+| 2 | Observe RunSSE responses | **Done** |
+| 3 | Decision hook + hub arm | **Done** |
+| 4 | Text-only local RunSSE fulfill | **Done** (experimental flag; canned UI-proven) |
+| 5 | Tool calls / child RunSSE | **Deferred** (Path A) |
+| 6 | Origin passthrough when cloud/rules say so | **Done** (must not regress) |
 
-### Path A (recommended for Agent + tools)
-
-1. Run Glider gateway (`:8080`).
-2. Override OpenAI Base URL → `http://127.0.0.1:8080/v1` (HTTPS tunnel if required).
-3. Model **must** use prefix: `cus-codellama:7b` / `cus-gpt-4o`.
-4. Watch harness decisions (`/local`, context thresholds).
-
-### Path B (MITM subscription / text-only Agent)
-
-1. Install Glider MITM CA; proxy Cursor at `:8082`; allowlist includes `api2` + `*.api5`.
-2. Force HTTP/1.1 compatibility.
-3. `agent_rpc_fulfill: true` — text-only BidiAppend→RunSSE can local-fulfill; tool loops / child RunSSE → origin.
-
----
-
-## “Fulfill everything” (Path B modern Agent) — ordered plan
-
-> Goal: local/cloud harness for **modern** Cursor Agent (`BidiAppend` writes + `RunSSE` reads), not observe-only.
-> Honesty: public prior art ([cursor-tap](https://github.com/burpheart/cursor-tap), LaiKash) **decrypts + decodes then forwards to origin**. No shipped open MITM that answers RunSSE/Bidi with a local model. Glider StreamChat* fulfill is legacy; this plan is the modern plane.
-
-Live traffic (2026-07 Capture 5): api2 `BidiAppend` + `agent.v1.AgentService/RunSSE`; user text recoverable from context_envelope nested field **2** (TipTap). See [`cursor_agent_rpc_debug_findings.md`](./cursor_agent_rpc_debug_findings.md).
-
-| Phase | Deliverable | Difficulty | Status |
-|------:|-------------|------------|--------|
-| **1** | **Request extract:** `BidiAppend` context_envelope → `CompletionRequest` (messages + model hint) | Medium — TipTap/printable heuristics; not a full schema | **Done** (`ExtractBidiCompletionRequest`) |
-| **2** | **Observe RunSSE response** stream (assistant tokens + tool-call frames) — dump/decode before any rewrite | Medium-Hard — long-lived Connect stream; must not stall passthrough | **Done** (deep classify + `*_RESP.bin` / `_frames.txt`) |
-| **3** | **Decision hook:** extract → harness decide (`DecideLocal` / metrics) even while still origin | Easy once Phase 1 works | **Done** (`bidi_fulfill_armed` / hub) |
-| **4** | **Local fulfill MVP:** text-only reply encoded as RunSSE `AgentServerMessage` stream | **Hard** — live UI acceptance still unverified | **Shipped experimental** (`WriteRunSSETextResponse` + RunSSE hijack) |
-| **5** | **Tool calls:** client-side tools loop on Bidi field-14 stdout / child RunSSE | Hard — defer tools to Path A (`cus-` + gateway) | Deferred (child RunSSE skipped) |
-| **6** | **Origin passthrough** remains correct when cloud/rules say so (default off for experimental fulfill) | Easy — already the default | **Must not regress** |
-
-### Phase details
-
-1. **Extract** — Only `role_guess=context_envelope` (inner top field 1). Nested field 2 → TipTap `"type":"text","text":"…"` (and printable fallback) → `messages[{role:user}]`. Model from inspect strings / section labels. Unit-test with synthetic fixtures mirroring dumps (`ping-glider-*`).
-2. **Response Observe** — Debug tees first N KB of RunSSE response: Connect frames, gunzip, classify `text_delta` / `heartbeat` / `token_delta` / `turn_ended` / checkpoint. Writes `*_RESP.bin` + `_frames.txt`.
-3. **Decision** — Flag `mitm.agent_rpc_fulfill`: extract → `DecideLocal` → `AgentFulfillHub.ArmLocal` (corr via Bidi/RunSSE request UUID). Metric `bidi_fulfill_armed` (+ legacy `would_fulfill_local`).
-4. **MVP text fulfill** — Root `RunSSE` waits ≤800ms for hub offer; on local: `CompleteLocal` → `WriteRunSSETextResponse` (heartbeat + empty checkpoint + text_delta + token_delta + turn_ended); **does not** forward origin body. Fail-soft → origin on timeout / CompleteLocal passthrough / errors before write. **Live Cursor UI acceptance not yet proven** — restart + short Agent chat required.
-5. **Tools** — Child RunSSE with `X-Parent-Agent-Tool-Call-Id` always origin. Prefer Path A for Agent+tools.
-6. **Passthrough** — Default `agent_rpc_fulfill: false`. Opaque paths without extract remain `agent_rpc_opaque` → origin.
-
-### Enable (experimental)
+### Enable
 
 ```yaml
 mitm:
-  debug_agent_rpc: true          # dumps + RunSSE response peek (+ .bin)
-  agent_rpc_fulfill: true        # BidiAppend → hub → RunSSE text fulfill
+  debug_agent_rpc: true
+  agent_rpc_fulfill: true
+  agent_rpc_canned_on_error: false   # prefer real Ollama
 ```
 
-Env: `GLIDER_MITM_DEBUG_RPC=1`, `GLIDER_MITM_AGENT_RPC_FULFILL=1`. Restart Glider after changing flags / rebuilding `glider.exe`.
-
-### Parallel Path A (still primary for Agent+tools)
-
-1. Carry `tools` on `CompletionRequest` + Anthropic transform parity.
-2. Capability-aware routing (tools → cloud unless local model supports tools).
+Env: `GLIDER_MITM_DEBUG_RPC=1`, `GLIDER_MITM_AGENT_RPC_FULFILL=1`. Restart after flag/binary change.
 
 ---
 
-## Near-term next steps (ordered)
+## How to test
 
-1. **Live verify Phase 4** — restart new `glider.exe`, send short root Agent message (no tools); look for `mitm runsse local fulfill` / `action:runsse_local`. If UI blank/errors, capture fuller `*_RESP.bin` and refine checkpoint/text frames.
-2. Improve empty `conversation_checkpoint_update` (origin sends large gzip checkpoints).
-3. Path A tools first-class on `CompletionRequest`.
-4. Path B tool_call frames only after text MVP proven in UI.
+### Path A (Agent + tools)
+
+1. Gateway `:8080`; Override Base URL → `http://127.0.0.1:8080/v1`
+2. Model prefix: `cus-codellama:7b` / `cus-gpt-4o`
+3. Watch tool_calls on SSE + dashboard CLASS chips
+
+### Path B (text Agent + sticky)
+
+1. CA + proxy `:8082`; HTTP/1.1; `agent_rpc_fulfill: true`
+2. Short root Agent message → expect `runsse_local` or origin fail-soft
+3. `/cloud …` → origin; follow-on summary / `user_visible_high_level_summary` → sticky cloud (**no** `runsse_local`)
+4. Next user turn without flag → re-decide (may local)
+
+Policy checklist: [routing_session_policy.md](./routing_session_policy.md).
 
 ---
 
-## Non-goals
+## Next steps (Path B / G13)
 
-- Mutating unknown Bidi frames.
-- Claiming a license grant from unlicensed cursor-rpc beyond schema interoperability attribution.
-- Replacing gateway Mode A — it remains the supported path for full Agent+tools (article architecture).
-- Shipping a fake RunSSE encoder before live response Observe confirms the wire shape.
+| Pri | Item |
+|-----|------|
+| **P0** | Manual Cursor verify (checklist) for text fulfill + `/cloud` wrap-up |
+| **P1** | Checkpoint/codec hardening from origin RESP when UI flakes |
+| **P2** | Feature-flagged child RunSSE / tool frames (only if Path A insufficient) |
+
+Non-goals: mutate unknown Bidi frames; replace Path A for tools; claim public prior art for Path B tool fulfill (none exists — see prior art).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
@@ -216,7 +217,7 @@ func (r *StarlarkScriptRule) Evaluate(ctx context.Context, req *backend.Completi
 
 // NewRuleFromConfig constructs a Rule from configuration.
 func NewRuleFromConfig(cfg config.RuleConfig, executor *StarlarkExecutor) (Rule, error) {
-	switch cfg.Trigger.Type {
+	switch strings.ToLower(strings.TrimSpace(cfg.Trigger.Type)) {
 	case "explicit":
 		return NewExplicitCommandRule(cfg)
 	case "regex":
@@ -230,6 +231,8 @@ func NewRuleFromConfig(cfg config.RuleConfig, executor *StarlarkExecutor) (Rule,
 			return nil, fmt.Errorf("script rule %q: starlark executor required", cfg.Name)
 		}
 		return NewStarlarkScriptRule(cfg, executor)
+	case TriggerComposerWrapup, "wrapup_origin", "composer_wrapup_origin":
+		return NewComposerWrapupOriginRule(cfg), nil
 	default:
 		return nil, fmt.Errorf("unknown trigger type %q for rule %q", cfg.Trigger.Type, cfg.Name)
 	}

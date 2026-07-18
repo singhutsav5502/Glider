@@ -8,6 +8,7 @@ import (
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/swarm"
 )
@@ -22,6 +23,10 @@ type FanOutConfig struct {
 	// EpisodeStore optionally records compressed worker returns.
 	EpisodeStore *contextkit.Store
 	SessionID    string
+	// Graph optionally emits EpisodeMerged (hook; nil-safe).
+	Graph *contextgraph.Store
+	// TurnID binds fan-out merge into a turn family when set.
+	TurnID string
 	// ResultChanSize backpressure for merged chunk channel (0 → swarm default).
 	ResultChanSize int
 	MaxInflight    int
@@ -149,9 +154,15 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 		}
 	}
 
+	turnID := ""
+	if req != nil {
+		turnID = req.Metadata.RequestID
+	}
 	results, err := swarm.FanOut(ctx, workers, swarm.Options{
-		MaxWorkers:  n,
-		MaxInflight: cfg.MaxInflight,
+		MaxWorkers:     n,
+		MaxInflight:    cfg.MaxInflight,
+		ResultChanSize: cfg.ResultChanSize,
+		TurnID:         turnID,
 	})
 	// Partial success still merges; only hard-fail when parent cancelled with zero text.
 	merged := swarm.MergeResults(results)
@@ -182,6 +193,15 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 		out <- backend.CompletionChunk{FinishReason: "stop", Model: "glider-fanout"}
 		if cfg.EpisodeStore != nil {
 			cfg.EpisodeStore.RecordEpisode(cfg.SessionID, merged)
+		}
+		epTurn := cfg.TurnID
+		if epTurn == "" {
+			epTurn = turnID
+		}
+		if cfg.Graph != nil {
+			cfg.Graph.RecordEpisodeMerged(epTurn, turnID, merged.ID, map[string]string{
+				"source": "fan_out", "tokens": fmt.Sprintf("%d", merged.Tokens),
+			})
 		}
 	}()
 	return out, nil

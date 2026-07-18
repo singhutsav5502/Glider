@@ -45,6 +45,12 @@ type Interceptor struct {
 	CannedOnError bool
 	// CannedText used when CannedOnError fires; empty → DefaultCannedRunSSEText.
 	CannedText string
+	// SurfaceLocalError: when CompleteLocal fails and canned is off, write a clear
+	// Glider/Ollama error via RunSSE instead of Cursor origin fail-soft.
+	// False (default) preserves hybrid origin fallback. Pure-local sets true.
+	SurfaceLocalError bool
+	// LocalHealthy optionally gates ArmLocal (RequireLocalHealthy). Nil → skip gate.
+	LocalHealthy func() bool
 	// FulfillHub correlates BidiAppend ↔ RunSSE by request UUID. Nil → package default.
 	FulfillHub *AgentFulfillHub
 	// ToolFollowup is routing.tool_followup (child RunSSE re-decide). Copied from config.
@@ -64,6 +70,28 @@ func (i *Interceptor) fulfillHub() *AgentFulfillHub {
 		return i.FulfillHub
 	}
 	return defaultAgentFulfillHub
+}
+
+// allowArmLocal applies the Ollama health gate when LocalHealthy is set.
+// Unhealthy + hybrid (!SurfaceLocalError) → skip arm (fail-soft origin on RunSSE wait).
+// Unhealthy + pure-local (SurfaceLocalError) → still arm so RunSSE can surface a clear error.
+func (i *Interceptor) allowArmLocal(log *slog.Logger, corrID string) bool {
+	if i == nil || i.LocalHealthy == nil {
+		return true
+	}
+	if i.LocalHealthy() {
+		return true
+	}
+	if log != nil {
+		log.Warn("mitm local health gate: backend unhealthy",
+			"corr_id", corrID,
+			"surface_local_error", i.SurfaceLocalError,
+		)
+	}
+	if i.Metrics != nil {
+		i.Metrics.IncAction("mitm", "bidi_local_unhealthy")
+	}
+	return i.SurfaceLocalError
 }
 
 // TryHandle implements LocalHandler.
@@ -470,6 +498,10 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 				Model:    req.Model,
 			}
 		}
+		if !i.allowArmLocal(log, corrID) {
+			log.Info("mitm bidi /local skipped — local unhealthy", "corr_id", corrID)
+			return
+		}
 		hub.ArmLocal(corrID, &AgentFulfillOffer{
 			Local:    true,
 			Request:  req,
@@ -500,18 +532,21 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 
 	// StickyCloud belt: mid-turn children, final-summary/title chrome, and short
 	// tool-result crumbs must stay origin for the full parent cloud turn.
-	if root, src, stick := hub.ShouldStickyCloudOrigin(ext.UserText, r, wire); stick {
+	if root, src, stick := hub.ShouldStickyCloudOrigin(ext.UserText, ext.Source, r, wire); stick {
 		rule := "turn_family_cloud"
 		metric := "bidi_sticky_cloud"
+		scan := chromeScanBytes(ext.UserText, wire)
 		if IsSubagentOrChildTurn(ext.UserText, r, wire) {
 			rule = "turn_family_cloud_child"
 			metric = "bidi_sticky_cloud_child"
 			i.emitContextEvent(contextgraph.EventSubagentSpawned, corrID, root, "cloud", map[string]string{
 				"source": src, "preview": truncateRunes(ext.UserText, 80),
 			}, sess)
-		} else if IsTurnFollowOnBody(ext.UserText, wire) {
+		} else if IsComposerWrapUpChrome(ext.UserText, ext.Source, scan) ||
+			IsSystemSummaryChrome(ext.UserText, scan) ||
+			!IsAllowlistedFreshTipTapUser(ext.UserText, ext.Source, scan) {
 			rule = "turn_family_cloud_summary"
-			metric = "bidi_sticky_cloud"
+			metric = "bidi_sticky_cloud_summary"
 			i.emitContextEvent(contextgraph.EventSummaryRequested, corrID, root, "cloud", map[string]string{
 				"source": src, "preview": truncateRunes(ext.UserText, 80),
 			}, sess)
@@ -522,6 +557,7 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 			"family_root", root,
 			"family_source", src,
 			"rule", rule,
+			"metric", metric,
 			"user_preview", truncateRunes(ext.UserText, 64),
 		)
 		hub.ArmOrigin(corrID)
@@ -536,10 +572,23 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 		if i.Metrics != nil {
 			i.Metrics.IncAction("mitm", "bidi_decide_passthrough")
 			i.Metrics.IncAction("mitm", metric)
+			// Keep legacy bidi_sticky_cloud counter for dashboards when summary-specific.
+			if metric == "bidi_sticky_cloud_summary" {
+				i.Metrics.IncAction("mitm", "bidi_sticky_cloud")
+			}
 		}
 		i.emitContextEvent(contextgraph.EventOriginPassthrough, corrID, root, "cloud", map[string]string{
 			"source": src, "rule": rule,
 		}, sess)
+		return
+	}
+
+	// composer_wrapup_origin belt: chrome wrap-up / title packs always ArmOrigin
+	// even when StickyCloud TTL+grace already expired (dump leak: "Friday stock
+	// market close" + user_visible_high_level_summary → Small Context Local).
+	scanWrap := chromeScanBytes(ext.UserText, wire)
+	i.annotateComposerWrapupMeta(req, hub, ext, scanWrap, sess, corrID)
+	if i.tryArmComposerWrapupOrigin(r, req, hub, ext, scanWrap, corrID, sess, host, path) {
 		return
 	}
 
@@ -566,6 +615,7 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 			return
 		}
 		if mode == StickyLocal {
+			i.annotateComposerWrapupMeta(req, hub, ext, chromeScanBytes(ext.UserText, wire), sess, corrID)
 			decision, err := decider.DecideLocal(r, req)
 			if err != nil {
 				log.Info("mitm bidi turn-family local DecideLocal failed → origin", "id", req.Metadata.RequestID, "err", err)
@@ -584,6 +634,10 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 					Reason:   "turn_family_sticky",
 					Model:    req.Model,
 				}
+			}
+			if !i.allowArmLocal(log, corrID) {
+				log.Info("mitm bidi turn-family local skipped — unhealthy", "corr_id", corrID)
+				return
 			}
 			hub.ArmLocal(corrID, &AgentFulfillOffer{
 				Local:    true,
@@ -611,6 +665,7 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 		}
 	}
 
+	i.annotateComposerWrapupMeta(req, hub, ext, chromeScanBytes(ext.UserText, wire), sess, corrID)
 	decision, err := decider.DecideLocal(r, req)
 	if err != nil {
 		log.Info("mitm bidi DecideLocal failed → origin", "id", req.Metadata.RequestID, "err", err)
@@ -625,6 +680,14 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 	if decision == nil {
 		return
 	}
+	// Belt: never arm local for wrap-up / sticky-cloud non-fresh even if a lower
+	// priority rule (Small Context Local) won — composer_wrapup_origin must win.
+	if orchestrator.IsLocalTarget(decision.Target) {
+		scan := chromeScanBytes(ext.UserText, wire)
+		if i.tryArmComposerWrapupOrigin(r, req, hub, ext, scan, corrID, sess, host, path) {
+			return
+		}
+	}
 	if !orchestrator.IsLocalTarget(decision.Target) {
 		log.Info("mitm bidi extract origin intent",
 			"id", req.Metadata.RequestID,
@@ -634,22 +697,48 @@ func (i *Interceptor) maybeBidiExtractDecide(r *http.Request, body []byte, host,
 		)
 		hub.ArmOrigin(corrID)
 		// Bind turn-family from DecideLocal cloud so reply-summary / same-turn
-		// chrome follow-ons stay origin (not conversation-wide).
-		hub.OpenTurnFamily(corrID, StickyCloud, "decide_cloud")
-		if sess != "" {
-			hub.graph().BindSession(corrID, sess)
+		// chrome follow-ons stay origin (not conversation-wide). Skip opening a
+		// NEW family for composer_wrapup_origin alone — that would sticky-lock
+		// the next real user turn after an expired /cloud grace window.
+		if !strings.EqualFold(decision.RuleName, router.ComposerWrapupRuleName) {
+			hub.OpenTurnFamily(corrID, StickyCloud, "decide_cloud")
+			if sess != "" {
+				hub.graph().BindSession(corrID, sess)
+			}
+		} else {
+			hub.TouchTurnFamily()
+			if sess != "" {
+				if tid := hub.graph().TurnIDForSession(sess); tid != "" {
+					hub.graph().BindRequest(tid, corrID)
+				}
+			}
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "bidi_composer_wrapup")
+			}
 		}
 		i.recordPathB(r, "origin_passthrough", "cloud", host, path, req.Model, req.Metadata.OriginalModel,
 			decision.RuleName, req.Metadata.EstimatedTokens, corrID, time.Now())
 		if i.Metrics != nil {
 			i.Metrics.IncAction("mitm", "bidi_decide_passthrough")
-			i.Metrics.IncAction("mitm", "bidi_decide_cloud_family")
+			if !strings.EqualFold(decision.RuleName, router.ComposerWrapupRuleName) {
+				i.Metrics.IncAction("mitm", "bidi_decide_cloud_family")
+			}
 		}
 		i.emitContextEvent(contextgraph.EventRouteDecided, corrID, corrID, "cloud", map[string]string{
 			"source": "decide_cloud", "route": "cloud", "rule": decision.RuleName,
 		}, sess)
 		i.emitContextEvent(contextgraph.EventOriginPassthrough, corrID, corrID, "cloud", map[string]string{
 			"rule": decision.RuleName,
+		}, sess)
+		return
+	}
+
+	if !i.allowArmLocal(log, corrID) {
+		log.Info("mitm bidi local decision skipped — local unhealthy → origin",
+			"corr_id", corrID, "rule", decision.RuleName)
+		hub.ArmOrigin(corrID)
+		i.emitContextEvent(contextgraph.EventOriginPassthrough, corrID, corrID, "mitm", map[string]string{
+			"rule": "local_unhealthy",
 		}, sess)
 		return
 	}
@@ -726,7 +815,51 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 
 	// Turn-family belt: refuse local/canned for summary/title/child while cloud family live.
 	if ok && offer != nil && offer.Local {
-		if _, _, stick := hub.ShouldStickyCloudOrigin(offer.UserText, r, body); stick {
+		scanBody := body
+		if offer.Request != nil && offer.Request.Metadata.WrapupScan != "" {
+			scanBody = append(scanBody, []byte(offer.Request.Metadata.WrapupScan)...)
+		}
+		fresh := HasFreshUserTipTapTurn(offer.UserText, offer.Source, chromeScanBytes(offer.UserText, scanBody))
+		wrapup := router.MatchComposerWrapup(offer.UserText, chromeScanBytes(offer.UserText, scanBody)) ||
+			(offer.Request != nil && router.MatchComposerWrapup(offer.UserText, []byte(offer.Request.Metadata.WrapupScan)))
+
+		if mode, _, _, famOK := hub.LookupTurnFamily(); famOK && mode == StickyCloud && !fresh {
+			log.Info("mitm runsse StickyCloud refuses non-TipTap-new-user local → origin",
+				"corr_id", reqID, "user_preview", truncateRunes(offer.UserText, 64))
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "runsse_cloud_override")
+				i.Metrics.IncAction("mitm", "runsse_sticky_cloud")
+			}
+			i.emitContextEvent(contextgraph.EventOriginPassthrough, reqID, "", "cloud", map[string]string{
+				"rule": "runsse_sticky_cloud_live",
+			})
+			return false, nil
+		}
+		if hub.graph().CloudTurnLive(reqID) && !fresh {
+			log.Info("mitm runsse contextgraph cloud refuses non-fresh local → origin",
+				"corr_id", reqID, "user_preview", truncateRunes(offer.UserText, 64))
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "runsse_cloud_override")
+				i.Metrics.IncAction("mitm", "runsse_sticky_cloud")
+			}
+			i.emitContextEvent(contextgraph.EventOriginPassthrough, reqID, "", "cloud", map[string]string{
+				"rule": "runsse_graph_cloud_live",
+			})
+			return false, nil
+		}
+		if wrapup || (offer.Decision != nil && strings.EqualFold(offer.Decision.RuleName, router.ComposerWrapupRuleName)) {
+			log.Info("mitm runsse composer_wrapup_origin refuses local → origin",
+				"corr_id", reqID, "user_preview", truncateRunes(offer.UserText, 64))
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "runsse_cloud_override")
+				i.Metrics.IncAction("mitm", "runsse_composer_wrapup")
+			}
+			i.emitContextEvent(contextgraph.EventOriginPassthrough, reqID, "", "cloud", map[string]string{
+				"rule": router.ComposerWrapupRuleName,
+			})
+			return false, nil
+		}
+		if _, _, stick := hub.ShouldStickyCloudOrigin(offer.UserText, offer.Source, r, body); stick {
 			log.Info("mitm runsse turn-family cloud refuses local child/follow-on → origin",
 				"corr_id", reqID, "user_preview", truncateRunes(offer.UserText, 64))
 			if i.Metrics != nil {
@@ -740,7 +873,8 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 		}
 		// Graph Bind/Lookup belt: request already bound into a live cloud turn.
 		if hub.graph().CloudTurnLive(reqID) &&
-			(IsTurnFollowOn(offer.UserText) || IsSubagentOrChildTurn(offer.UserText, r, body) || !LooksLikeNewUserTurn(offer.UserText, body)) {
+			(IsTurnFollowOnBody(offer.UserText, body) || IsSystemSummaryChrome(offer.UserText, body) ||
+				IsSubagentOrChildTurn(offer.UserText, r, body) || !LooksLikeNewUserTurn(offer.UserText, body)) {
 			log.Info("mitm runsse contextgraph cloud refuses local follow-on → origin",
 				"corr_id", reqID, "user_preview", truncateRunes(offer.UserText, 64))
 			if i.Metrics != nil {
@@ -795,6 +929,7 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 
 	chunks, err := i.Harness.CompleteLocal(r, req)
 	canned := false
+	localErrSurface := false
 	if errors.Is(err, orchestrator.ErrOriginPassthrough) {
 		log.Info("mitm runsse CompleteLocal passthrough → origin",
 			"corr_id", reqID, "model", req.Model)
@@ -815,36 +950,57 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 			i.Metrics.IncAction("mitm", "runsse_complete_err")
 		}
 		if !i.CannedOnError {
-			log.Info("mitm runsse CompleteLocal failed → origin fallback",
-				"corr_id", reqID)
-			return false, nil
-		}
-		// Final guard: never canned when /cloud is present (even if arm was wrong).
-		if router.HasCloudOverride(offer.UserText) || requestHasCloudOverride(req) {
-			log.Info("mitm runsse skip canned — /cloud override",
-				"corr_id", reqID)
-			if i.Metrics != nil {
-				i.Metrics.IncAction("mitm", "runsse_cloud_override")
+			if i.SurfaceLocalError {
+				msg := fmt.Sprintf("Glider local fulfill failed (Ollama/local backend): %v\n\nFix: start Ollama (`ollama serve`), pull the model, or set mitm.origin_on_local_error: true to fall back to Cursor origin.", err)
+				log.Error("mitm runsse CompleteLocal failed → clear local error (no origin)",
+					"corr_id", reqID, "err", err)
+				if i.Metrics != nil {
+					i.Metrics.IncAction("mitm", "runsse_local_error")
+				}
+				i.emitContextEvent(contextgraph.EventError, reqID, "", "local", map[string]string{
+					"where": "complete_local", "err": err.Error(),
+				})
+				chunks = cursorrpc.CannedCompletionChunks(msg)
+				localErrSurface = true
+				rule := "local_error"
+				if offer.Decision != nil && offer.Decision.RuleName != "" {
+					rule = offer.Decision.RuleName + "+local_error"
+				}
+				i.recordPathB(r, "error", "local", host, path, req.Model, req.Metadata.OriginalModel,
+					rule, req.Metadata.EstimatedTokens, reqID, start)
+			} else {
+				log.Info("mitm runsse CompleteLocal failed → origin fallback",
+					"corr_id", reqID)
+				return false, nil
 			}
-			return false, nil
+		} else {
+			// Final guard: never canned when /cloud is present (even if arm was wrong).
+			if router.HasCloudOverride(offer.UserText) || requestHasCloudOverride(req) {
+				log.Info("mitm runsse skip canned — /cloud override",
+					"corr_id", reqID)
+				if i.Metrics != nil {
+					i.Metrics.IncAction("mitm", "runsse_cloud_override")
+				}
+				return false, nil
+			}
+			text := strings.TrimSpace(i.CannedText)
+			if text == "" {
+				text = DefaultCannedRunSSEText
+			}
+			log.Error("mitm runsse CompleteLocal failed → canned fulfill (opt-in)",
+				"corr_id", reqID, "err", err, "model", req.Model, "canned_chars", len(text))
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "runsse_canned")
+			}
+			chunks = cursorrpc.CannedCompletionChunks(text)
+			canned = true
+			rule := "canned"
+			if offer.Decision != nil && offer.Decision.RuleName != "" {
+				rule = offer.Decision.RuleName + "+canned"
+			}
+			i.recordPathB(r, "canned", "local", host, path, req.Model, req.Metadata.OriginalModel,
+				rule, req.Metadata.EstimatedTokens, reqID, start)
 		}
-		text := strings.TrimSpace(i.CannedText)
-		if text == "" {
-			text = DefaultCannedRunSSEText
-		}
-		log.Error("mitm runsse CompleteLocal failed → canned fulfill (opt-in)",
-			"corr_id", reqID, "err", err, "model", req.Model, "canned_chars", len(text))
-		if i.Metrics != nil {
-			i.Metrics.IncAction("mitm", "runsse_canned")
-		}
-		chunks = cursorrpc.CannedCompletionChunks(text)
-		canned = true
-		rule := "canned"
-		if offer.Decision != nil && offer.Decision.RuleName != "" {
-			rule = offer.Decision.RuleName + "+canned"
-		}
-		i.recordPathB(r, "canned", "local", host, path, req.Model, req.Metadata.OriginalModel,
-			rule, req.Metadata.EstimatedTokens, reqID, start)
 	} else {
 		// Successful Ollama fulfill — always publish Overview local % (not only IncAction).
 		rule := "local"
@@ -863,19 +1019,25 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 		"tokens", req.Metadata.EstimatedTokens,
 		"user_preview", truncateRunes(offer.UserText, 64),
 		"canned", canned,
+		"local_error", localErrSurface,
 		"latency_ms", float64(time.Since(start).Microseconds())/1000.0,
 	)
 	if i.Metrics != nil {
 		i.Metrics.IncAction("mitm", "runsse_local")
 		i.Metrics.IncAction("mitm", "agent_rpc_local")
 	}
-	i.emitContextEvent(contextgraph.EventFulfilledLocal, reqID, "", "local", map[string]string{
-		"canned": fmt.Sprintf("%v", canned),
-	})
+	if !localErrSurface {
+		i.emitContextEvent(contextgraph.EventFulfilledLocal, reqID, "", "local", map[string]string{
+			"canned": fmt.Sprintf("%v", canned),
+		})
+	}
 	if i.Debug != nil && i.Debug.Enabled {
 		kind := "agent_rpc_runsse_local"
 		if canned {
 			kind = "agent_rpc_runsse_canned"
+		}
+		if localErrSurface {
+			kind = "agent_rpc_runsse_local_error"
 		}
 		i.Debug.Observe(r, body, kind)
 	}
@@ -1100,6 +1262,149 @@ func scanToolNamesInBytes(body []byte, catalog []string) []string {
 		out = append(out, c)
 	}
 	return out
+}
+
+// annotateComposerWrapupMeta stamps Path B sticky/wrap-up signals onto req so the
+// first-class composer_wrapup_origin routing rule can match in DecideLocal.
+func (i *Interceptor) annotateComposerWrapupMeta(req *backend.CompletionRequest, hub *AgentFulfillHub, ext *cursorrpc.BidiExtract, scan []byte, sess, corrID string) {
+	if req == nil {
+		return
+	}
+	src := ""
+	if ext != nil {
+		src = ext.Source
+	}
+	req.Metadata.ExtractSource = src
+	if len(scan) > 0 {
+		// Cap metadata copy; keywords appear early in chrome packs.
+		capN := len(scan)
+		if capN > 64<<10 {
+			capN = 64 << 10
+		}
+		req.Metadata.WrapupScan = string(scan[:capN])
+	}
+	sticky := false
+	if hub != nil {
+		if mode, _, _, ok := hub.LookupTurnFamily(); ok && mode == StickyCloud {
+			sticky = true
+		}
+		if !sticky {
+			if _, _, stick := hub.ShouldStickyCloudOrigin(extUserText(ext), src, nil, scan); stick {
+				sticky = true
+			}
+		}
+		g := hub.graph()
+		if g != nil {
+			if corrID != "" && g.CloudTurnLive(corrID) {
+				sticky = true
+			}
+			if sess != "" {
+				if tid := g.TurnIDForSession(sess); tid != "" && g.CloudTurnLive(tid) {
+					sticky = true
+				}
+				if route := g.SessionLastRoute(sess); route == "cloud" {
+					req.Metadata.LastRouteCloud = true
+				}
+			}
+			if _, _, _, live := g.LiveCloudFamily(); live {
+				sticky = true
+				req.Metadata.LastRouteCloud = true
+			}
+		}
+	}
+	req.Metadata.StickyCloudLive = sticky
+}
+
+func extUserText(ext *cursorrpc.BidiExtract) string {
+	if ext == nil {
+		return ""
+	}
+	return ext.UserText
+}
+
+// tryArmComposerWrapupOrigin ArmOrigins when wrap-up chrome matches or when a
+// StickyCloud / last-cloud family is live for a non-fresh TipTap follow-on.
+func (i *Interceptor) tryArmComposerWrapupOrigin(r *http.Request, req *backend.CompletionRequest, hub *AgentFulfillHub, ext *cursorrpc.BidiExtract, scan []byte, corrID, sess, host, path string) bool {
+	if hub == nil || ext == nil {
+		return false
+	}
+	userText := ext.UserText
+	wrapup := router.MatchComposerWrapup(userText, scan) || IsSystemSummaryChrome(userText, scan) || IsTurnFollowOnBody(userText, scan)
+	fresh := HasFreshUserTipTapTurn(userText, ext.Source, scan)
+	sticky := req != nil && req.Metadata.StickyCloudLive
+	lastCloud := req != nil && req.Metadata.LastRouteCloud
+	chromeCrumb := !fresh && (strings.TrimSpace(userText) == "" || len(strings.TrimSpace(userText)) < 16 ||
+		ext.Source == "printable_hint" || ext.Source == "section_fallback")
+
+	if !(wrapup || (sticky && !fresh) || (lastCloud && !fresh && (wrapup || chromeCrumb))) {
+		return false
+	}
+	// Never steal a live StickyLocal family's reply-summary / title inherit.
+	if mode, _, _, ok := hub.LookupTurnFamily(); ok && mode == StickyLocal {
+		return false
+	}
+
+	rule := router.ComposerWrapupRuleName
+	metric := "bidi_composer_wrapup"
+	if sticky && !wrapup {
+		rule = "turn_family_cloud_summary"
+		metric = "bidi_sticky_cloud_summary"
+	}
+	log := i.log()
+	log.Info("mitm bidi composer_wrapup_origin → origin",
+		"id", reqMetaID(req),
+		"corr_id", corrID,
+		"rule", rule,
+		"wrapup", wrapup,
+		"sticky_cloud", sticky,
+		"last_route_cloud", lastCloud,
+		"extract_source", ext.Source,
+		"user_preview", truncateRunes(userText, 64),
+	)
+	hub.ArmOrigin(corrID)
+	if sticky || lastCloud {
+		// Keep family warm for subsequent chrome while graph still knows last cloud.
+		if mode, root, _, ok := hub.LookupTurnFamily(); ok && mode == StickyCloud && root != "" {
+			if corrID != "" && root != corrID {
+				hub.graph().BindRequest(root, corrID)
+			}
+			if sess != "" {
+				hub.graph().BindSession(root, sess)
+			}
+		} else if sess != "" {
+			if tid := hub.graph().TurnIDForSession(sess); tid != "" {
+				hub.graph().BindRequest(tid, corrID)
+				hub.rehydrateCloudFamily(tid, "composer_wrapup")
+			}
+		}
+	}
+	model, orig, tokens := "", "", 0
+	if req != nil {
+		model, orig, tokens = req.Model, req.Metadata.OriginalModel, req.Metadata.EstimatedTokens
+	}
+	i.recordPathB(r, "origin_passthrough", "cloud", host, path, model, orig, rule, tokens, corrID, time.Now())
+	if i.Metrics != nil {
+		i.Metrics.IncAction("mitm", "bidi_decide_passthrough")
+		i.Metrics.IncAction("mitm", metric)
+		i.Metrics.IncAction("mitm", "bidi_composer_wrapup")
+		if metric == "bidi_sticky_cloud_summary" {
+			i.Metrics.IncAction("mitm", "bidi_sticky_cloud")
+		}
+	}
+	i.emitContextEvent(contextgraph.EventSummaryRequested, corrID, "", "cloud", map[string]string{
+		"rule": rule, "preview": truncateRunes(userText, 80),
+	}, sess)
+	i.emitContextEvent(contextgraph.EventOriginPassthrough, corrID, "", "cloud", map[string]string{
+		"rule": rule,
+	}, sess)
+	return true
+}
+
+func reqMetaID(req *backend.CompletionRequest) string {
+	if req == nil {
+		return ""
+	}
+	return req.Metadata.RequestID
 }
 
 func truncateRunes(s string, max int) string {

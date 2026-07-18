@@ -12,6 +12,9 @@ import (
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/loop"
+	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/gorilla/websocket"
 )
 
@@ -31,6 +34,20 @@ type Server struct {
 	MITMDebug MITMDebugSource
 	// ContextGraph is optional turn-family event log (GET /api/context/turns/{id}).
 	ContextGraph ContextGraphSource
+	// Episodes is optional session episode ring (GET /api/context/episodes).
+	Episodes *contextkit.Store
+	// ContextRetainDays used by POST /api/context/prune (0 → 14).
+	ContextRetainDays int
+	// Loops is optional Glider-owned loop manager (CRUD + start/stop on /api/loops).
+	Loops *loop.Manager
+	// HotSwap is optional module registry (GET /api/hotswap/modules).
+	HotSwap *swarm.Registry
+	// Swarm is optional fan-out runner (POST /api/swarm/run).
+	Swarm *swarm.Runner
+	// Templates is optional swarm template store (~/.glider/hoops).
+	Templates *swarm.TemplateStore
+	// HoopsDir is where hoop YAML mirrors are written.
+	HoopsDir string
 	upgrader websocket.Upgrader
 }
 
@@ -156,6 +173,74 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		s.handleContextTurn(w, r)
+	})
+	mux.HandleFunc("/api/context/episodes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextEpisodes(w, r)
+	})
+	mux.HandleFunc("/api/context/export", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextExport(w, r)
+	})
+	mux.HandleFunc("/api/context/prune", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextPrune(w, r)
+	})
+	mux.HandleFunc("/api/loops", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleListLoops(w, r)
+		case http.MethodPost:
+			s.handleCreateLoop(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/loops/modules", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, loop.Catalog())
+	})
+	mux.HandleFunc("/api/loops/", func(w http.ResponseWriter, r *http.Request) {
+		s.handleLoopAction(w, r)
+	})
+	mux.HandleFunc("/api/hotswap/modules", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleHotSwapList(w, r)
+	})
+	mux.HandleFunc("/api/hotswap/modules/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleHotSwapEnable(w, r)
+	})
+	mux.HandleFunc("/api/swarm/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleSwarmRun(w, r)
+	})
+	mux.HandleFunc("/api/swarm/templates", func(w http.ResponseWriter, r *http.Request) {
+		s.handleSwarmTemplates(w, r)
+	})
+	mux.HandleFunc("/api/swarm/templates/", func(w http.ResponseWriter, r *http.Request) {
+		s.handleSwarmTemplate(w, r)
 	})
 	mux.HandleFunc("/ws", s.handleWS)
 

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/dashboard"
+	"github.com/glider-ai/glider/internal/loop"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/orchestrator"
@@ -118,15 +120,19 @@ func main() {
 	}
 
 	exec := orchestrator.NewSimpleExecutor(orchestrator.SimpleExecutorConfig{
-		Registry:         reg,
-		VRAM:             orchestrator.AdaptVRAM{Inner: vramMgr},
-		IdleUnload:       idle,
-		FailureThreshold: 5,
-		BreakerCooldown:  30 * time.Second,
-		CloudBackend:     "openai",
-		CloudModel:       "gpt-4o",
-		IsHealthy:        orchestrator.DefaultHealthCheck(reg),
+		Registry:             reg,
+		VRAM:                 orchestrator.AdaptVRAM{Inner: vramMgr},
+		IdleUnload:           idle,
+		FailureThreshold:     5,
+		BreakerCooldown:      30 * time.Second,
+		CloudBackend:         "openai",
+		CloudModel:           "gpt-4o",
+		DisableCloudFallback: !cfg.Routing.AllowCloudFallbackOrDefault(),
+		IsHealthy:            orchestrator.DefaultHealthCheck(reg),
 	})
+	if !cfg.Routing.AllowCloudFallbackOrDefault() {
+		log.Info("pure-local: cloud fallback after local disabled")
+	}
 	episodeStore := contextkit.NewStore(32)
 	fanCfg := orchestrator.FanOutConfigFromOrchestration(cfg.Orchestration, episodeStore, sessionID)
 	fanOut := &orchestrator.FanOutExecutor{Inner: exec, Config: fanCfg}
@@ -136,13 +142,63 @@ func main() {
 		log.Info("fan_out executor enabled", "max_workers", fanCfg.MaxWorkers, "result_chan", fanCfg.ResultChanSize)
 	}
 	hotSwap := swarm.NewRegistry()
+	hotSwap.RegisterLoopStages()
 	_ = hotSwap.Register(&swarm.Module{
 		Name: "fan_out",
 		Kind: swarm.ModuleFanOut,
 		Hot:  true,
 		Apply: func(c *config.Config) error {
 			next := orchestrator.FanOutConfigFromOrchestration(c.Orchestration, episodeStore, sessionID)
+			next.Graph = fanOut.Config.Graph // preserve contextgraph wired after init
 			fanOut.ApplyConfig(next)
+			return nil
+		},
+	})
+
+	hoopsDir := cfg.Orchestration.HoopsDir
+	if hoopsDir == "" {
+		hoopsDir = swarm.DefaultTemplatesDir()
+	}
+	tplStore := swarm.NewTemplateStore(hoopsDir)
+	swarmRunner := &swarm.Runner{
+		Opts:         swarm.OptionsFromConfig(cfg.Orchestration),
+		Episodes:     episodeStore,
+		Templates:    tplStore,
+		SessionID:    sessionID,
+		DefaultModel: "codellama:7b",
+		Graph:        nil, // set after ctxGraph
+	}
+	swarmRunner.SetEnabled(cfg.Orchestration.Swarm.Enabled || cfg.Orchestration.FanOut.Enabled)
+	_ = hotSwap.Register(&swarm.Module{
+		Name: "swarm",
+		Kind: swarm.ModuleSwarm,
+		Hot:  true,
+		Apply: func(c *config.Config) error {
+			swarmRunner.ApplyOpts(swarm.OptionsFromConfig(c.Orchestration))
+			swarmRunner.SetEnabled(c.Orchestration.Swarm.Enabled || c.Orchestration.FanOut.Enabled)
+			return nil
+		},
+	})
+	_ = hotSwap.Register(&swarm.Module{
+		Name: "swarm_templates",
+		Kind: swarm.ModuleSwarmTemplate,
+		Hot:  true,
+		Apply: func(c *config.Config) error {
+			dir := c.Orchestration.HoopsDir
+			if dir == "" {
+				dir = swarm.DefaultTemplatesDir()
+			}
+			swarmRunner.Templates = swarm.NewTemplateStore(dir)
+			return nil
+		},
+	})
+	_ = hotSwap.Register(&swarm.Module{
+		Name: "classifier",
+		Kind: swarm.ModuleClassifier,
+		Hot:  true,
+		Apply: func(c *config.Config) error {
+			// Router rebuild happens via existing provider.Watch in main; this
+			// module tracks generation for the dashboard enable/disable UI.
 			return nil
 		},
 	})
@@ -150,23 +206,74 @@ func main() {
 
 	transformer := transform.NewTransformer(cfg.Transform, tok)
 	ctxGraph := contextgraph.New(contextgraph.DefaultDir())
+	if cfg.Context.MaxEvents > 0 {
+		ctxGraph.Max = cfg.Context.MaxEvents
+	}
+	warmDays := cfg.Context.WarmLoadDays
+	if warmDays <= 0 {
+		warmDays = 2
+	}
+	if n, err := ctxGraph.LoadWarm(warmDays); err != nil {
+		log.Warn("contextgraph warm load failed", "err", err)
+	} else if n > 0 {
+		log.Info("contextgraph warm-loaded", "events", n, "days", warmDays)
+	}
+	retainDays := cfg.Context.RetainDays
+	if retainDays <= 0 {
+		retainDays = 14
+	}
+	if n, err := ctxGraph.PruneDisk(retainDays); err != nil {
+		log.Warn("contextgraph prune failed", "err", err)
+	} else if n > 0 {
+		log.Info("contextgraph pruned old jsonl", "files", n, "retain_days", retainDays)
+	}
 	contextgraph.SetDefault(ctxGraph)
+	fanCfg.Graph = ctxGraph
+	fanOut.ApplyConfig(fanCfg)
+	swarmRunner.Graph = dashboard.NewGraphSwarmSink(ctxGraph)
 	completer := &orchestrator.PipelineCompleter{
 		Router: &liveRouter{get: func() router.Router {
 			return enginePtr.Load()
 		}},
-		Executor:     executor,
-		Tokenizer:    tok,
-		Transformer:  transformer,
-		MaxContext:   cfg.Thresholds.MaxLocalContextTokens,
-		Metrics:      collector,
-		ModelAliases: cfg.ModelAliases,
-		Graph:        ctxGraph,
+		Executor:       executor,
+		Tokenizer:      tok,
+		Transformer:    transformer,
+		TransformCfg:   cfg.Transform,
+		MaxContext:     cfg.Thresholds.MaxLocalContextTokens,
+		Metrics:        collector,
+		ModelAliases:   cfg.ModelAliases,
+		Graph:          ctxGraph,
+		Episodes:       episodeStore,
+		EpisodeSession: sessionID,
 	}
 	provider.Watch(func(c *config.Config) {
 		completer.ModelAliases = c.ModelAliases
 		completer.MaxContext = c.Thresholds.MaxLocalContextTokens
+		completer.TransformCfg = c.Transform
+		completer.Transformer = transform.NewTransformer(c.Transform, tok)
 	})
+
+	swarmRunner.WorkerFn = swarm.CompleterWorkerFn(func(ctx context.Context, r *http.Request, prompt, model string) (string, error) {
+		req := &backend.CompletionRequest{
+			Model:  model,
+			Stream: true,
+			Messages: []backend.Message{
+				{Role: "user", Content: prompt},
+			},
+		}
+		ch, err := completer.Complete(r, req)
+		if err != nil {
+			return "", err
+		}
+		var b strings.Builder
+		for chunk := range ch {
+			b.WriteString(chunk.Content)
+			if ctx.Err() != nil {
+				return b.String(), ctx.Err()
+			}
+		}
+		return b.String(), nil
+	}, true)
 
 	handlers := &api.Handlers{
 		Completer: completer,
@@ -203,7 +310,25 @@ func main() {
 			AgentRPCFulfill:   cfg.MITM.AgentRPCFulfill,
 			CannedOnError:     cfg.MITM.AgentRPCCannedOnError,
 			CannedText:        cfg.MITM.AgentRPCCannedText,
+			SurfaceLocalError: !cfg.MITM.OriginOnLocalErrorOrDefault(),
 			FulfillHub:        fulfillHub,
+		}
+		if cfg.MITM.RequireLocalHealthy {
+			interceptor.LocalHealthy = func() bool {
+				b, err := reg.Get("ollama")
+				if err != nil {
+					return false
+				}
+				hc, ok := b.(backend.HealthChecker)
+				if !ok {
+					return true
+				}
+				if hc.IsHealthy() {
+					return true
+				}
+				_ = hc.Ping(context.Background())
+				return hc.IsHealthy()
+			}
 		}
 		interceptor.ApplyRoutingPolicy(cfg.Routing)
 		provider.Watch(func(c *config.Config) {
@@ -251,6 +376,7 @@ func main() {
 	go pollBackendHealth(stopVRAM, reg, log)
 
 	var dash *dashboard.Server
+	var loopMgr *loop.Manager
 	if cfg.Dashboard.Enabled {
 		dashAddr := fmt.Sprintf(":%d", cfg.Server.DashboardPort)
 		store := &dashboard.FileConfigStore{Provider: provider, Path: *cfgPath}
@@ -261,10 +387,58 @@ func main() {
 		dash.Metrics = collector
 		dash.MITMDebug = mitmDebug
 		dash.ContextGraph = ctxGraph
+		dash.Episodes = episodeStore
+		dash.ContextRetainDays = retainDays
+
+		// Glider-owned loops: dashboard/API triggered; pure-local needs no Cursor.
+		loopDir := cfg.Orchestration.Loops.Dir
+		if loopDir == "" {
+			loopDir = loop.DefaultDir()
+		}
+		defaultRoute := loop.RoutePref(strings.ToLower(strings.TrimSpace(cfg.Orchestration.Loops.DefaultRoute)))
+		if defaultRoute == "" {
+			defaultRoute = loop.RouteLocal
+		}
+		loopMgr = loop.NewManager(loop.NewStore(loopDir), completer, ctxGraph, loop.RunnerConfig{
+			DefaultRoute: defaultRoute,
+			Hoop: loop.HoopLearningConfig{
+				Enabled:       cfg.Orchestration.Loops.HoopLearning.Enabled,
+				LocalBiasStep: cfg.Orchestration.Loops.HoopLearning.LocalBiasStep,
+				MaxBias:       cfg.Orchestration.Loops.HoopLearning.MaxBias,
+				Window:        cfg.Orchestration.Loops.HoopLearning.Window,
+			},
+			OutcomeRing: 64,
+		})
+		loopMgr.Episodes = episodeStore
+		dash.Loops = loopMgr
+		dash.HotSwap = hotSwap
+		dash.Swarm = swarmRunner
+		dash.Templates = tplStore
+		dash.HoopsDir = hoopsDir
+
+		_ = hotSwap.Register(&swarm.Module{
+			Name: "loop",
+			Kind: swarm.ModuleLoop,
+			Hot:  true,
+			Apply: func(c *config.Config) error {
+				loopMgr.Cfg.Hoop = loop.HoopLearningConfig{
+					Enabled:       c.Orchestration.Loops.HoopLearning.Enabled,
+					LocalBiasStep: c.Orchestration.Loops.HoopLearning.LocalBiasStep,
+					MaxBias:       c.Orchestration.Loops.HoopLearning.MaxBias,
+					Window:        c.Orchestration.Loops.HoopLearning.Window,
+				}
+				if dr := loop.RoutePref(strings.ToLower(strings.TrimSpace(c.Orchestration.Loops.DefaultRoute))); dr != "" {
+					loopMgr.Cfg.DefaultRoute = dr
+				}
+				return nil
+			},
+		})
+
 		if err := dash.Start(); err != nil {
 			log.Warn("dashboard start failed", "err", err)
 		} else {
-			log.Info("glider dashboard listening", "addr", dash.Addr())
+			log.Info("glider dashboard listening", "addr", dash.Addr(),
+				"loops_dir", loopDir, "loops_default_route", string(defaultRoute))
 		}
 	}
 
@@ -278,6 +452,9 @@ func main() {
 	}
 	if dash != nil {
 		_ = dash.Shutdown(context.Background())
+	}
+	if loopMgr != nil {
+		loopMgr.Shutdown()
 	}
 	if history != nil {
 		_ = history.Close()
@@ -373,13 +550,19 @@ func registerBackends(reg *backend.Registry, cfg *config.Config, log *slog.Logge
 			}
 		}
 	}
-	for _, p := range cfg.Cloud.Providers {
-		key := os.Getenv(p.APIKeyEnv)
-		switch p.Name {
-		case "openai":
-			_ = reg.Register(cloud.NewOpenAI(p.BaseURL, key))
-		case "anthropic":
-			_ = reg.Register(cloud.NewAnthropic(p.BaseURL, key))
+	skipCloud := !cfg.Routing.AllowCloudFallbackOrDefault() &&
+		strings.EqualFold(strings.TrimSpace(cfg.Routing.Default), "local")
+	if skipCloud {
+		log.Info("pure-local: skipping cloud provider registration (no API keys required)")
+	} else {
+		for _, p := range cfg.Cloud.Providers {
+			key := os.Getenv(p.APIKeyEnv)
+			switch p.Name {
+			case "openai":
+				_ = reg.Register(cloud.NewOpenAI(p.BaseURL, key))
+			case "anthropic":
+				_ = reg.Register(cloud.NewAnthropic(p.BaseURL, key))
+			}
 		}
 	}
 	if len(reg.List()) == 0 {

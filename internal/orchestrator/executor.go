@@ -21,6 +21,8 @@ type SimpleExecutorConfig struct {
 	BreakerCooldown  time.Duration
 	CloudBackend     string
 	CloudModel       string
+	// DisableCloudFallback skips BYOK cloud after local (pure-local profiles).
+	DisableCloudFallback bool
 	RateLimiter      *CloudRateLimiter
 	Budget           *BudgetTracker
 	IsHealthy        HealthFunc
@@ -43,15 +45,16 @@ func NewSimpleExecutor(cfg SimpleExecutorConfig) *SimpleExecutor {
 	}
 	lifecycle := NewModelLifecycle(cfg.Registry, cfg.VRAM, cfg.IdleUnload)
 	fallback := NewFallbackChain(FallbackConfig{
-		Registry:         cfg.Registry,
-		Lifecycle:        lifecycle,
-		FailureThreshold: cfg.FailureThreshold,
-		Cooldown:         cfg.BreakerCooldown,
-		IsHealthy:        cfg.IsHealthy,
-		RateLimiter:      cfg.RateLimiter,
-		Budget:           cfg.Budget,
-		CloudBackend:     cfg.CloudBackend,
-		CloudModel:       cfg.CloudModel,
+		Registry:             cfg.Registry,
+		Lifecycle:            lifecycle,
+		FailureThreshold:     cfg.FailureThreshold,
+		Cooldown:             cfg.BreakerCooldown,
+		IsHealthy:            cfg.IsHealthy,
+		RateLimiter:          cfg.RateLimiter,
+		Budget:               cfg.Budget,
+		CloudBackend:         cfg.CloudBackend,
+		CloudModel:           cfg.CloudModel,
+		DisableCloudFallback: cfg.DisableCloudFallback,
 	})
 	e := &SimpleExecutor{
 		registry:  cfg.Registry,

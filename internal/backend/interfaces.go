@@ -162,6 +162,21 @@ type RequestMetadata struct {
 	Priority        Priority
 	OriginalModel   string
 	Adapter         string
+	// ComplexityScore is 0–100 after the complexity rule / scorer runs.
+	ComplexityScore int
+	// ComplexitySource is "cursor" | "heuristic" | "" (unset).
+	ComplexitySource string
+	// CursorComplexity is a Cursor-estimated score when extract finds one on the
+	// wire (0–100). HasCursorComplexity distinguishes "missing" from score 0.
+	// Not present in MITM dumps / BidiAppend inspect as of 2026-07-18; plug-in
+	// point for when Cursor exposes complexity / max_mode / tier.
+	CursorComplexity    int
+	HasCursorComplexity bool
+	// Path B sticky / wrap-up signals (MITM → routing engine). Not serialized.
+	StickyCloudLive bool   // StickyCloud TTL map or contextgraph cloud family live
+	LastRouteCloud  bool   // session/turn-family last route was cloud (may be past grace)
+	ExtractSource   string // tiptap_text | printable_hint | section_fallback
+	WrapupScan      string // body/hint chrome scan for composer_wrapup_origin
 }
 
 // ToolCallDelta is one OpenAI-compat streaming tool_call fragment.

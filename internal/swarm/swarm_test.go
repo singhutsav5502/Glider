@@ -140,8 +140,62 @@ func TestHotSwapRegistryApply(t *testing.T) {
 	if applied.Load() != 1 {
 		t.Fatalf("applied=%d", applied.Load())
 	}
+	if err := reg.SetEnabled("router", false); err != nil {
+		t.Fatal(err)
+	}
+	p.Swap(&config.Config{})
+	if applied.Load() != 1 {
+		t.Fatalf("disabled module still applied: %d", applied.Load())
+	}
+	list := reg.List()
+	if len(list) < 2 {
+		t.Fatalf("list=%v", list)
+	}
 	if len(swarm.Docs()) < 3 {
 		t.Fatal("Docs empty")
+	}
+	if len(swarm.BuiltinCatalog()) < 3 {
+		t.Fatal("catalog empty")
+	}
+}
+
+func TestSwarmRunnerMerge(t *testing.T) {
+	r := &swarm.Runner{
+		WorkerFn: func(ctx context.Context, role swarm.Role, model, prompt string) (contextkit.Episode, error) {
+			return contextkit.Episode{Summary: string(role) + "-ok", Model: model, Tokens: 2}, nil
+		},
+	}
+	r.SetEnabled(true)
+	r.ApplyOpts(swarm.Options{MaxWorkers: 2, ResultChanSize: 8})
+	out, err := r.Run(context.Background(), swarm.RunRequest{
+		Prompt: "hello",
+		Roles:  []string{"plan", "exec"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Summary == "" || out.TurnID == "" || len(out.Results) != 2 {
+		t.Fatalf("out=%+v", out)
+	}
+}
+
+func TestTemplateStoreRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store := swarm.NewTemplateStore(dir)
+	tpl := &swarm.Template{
+		ID: "dual", Name: "Dual", Prompt: "do work", Roles: []string{"plan", "exec"},
+		Enabled: true, PreferLocal: true,
+	}
+	if err := store.Save(tpl); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("dual")
+	if err != nil || got.Prompt != "do work" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	list, err := store.List()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list=%v err=%v", list, err)
 	}
 }
 

@@ -28,14 +28,15 @@ Path A (gateway): allowlisted-only `tools[]` skip `tools→cloud` and can route 
 ## Decision layers (priority)
 
 1. **Explicit** `/cloud` `/heavy` or `/local` `/fast` on **current user turn** text (TipTap-safe). Hard-force; `/cloud` never canned.
-2. **Turn-family binding** from the *decision* (explicit **or** `DecideLocal` cloud|local): bind request UUID + short TTL for **correlated reply-summary / same-UUID RunSSE only**.
-3. **Tool-step re-decide** (NEW): child tool loops are **not** blindly stuck on parent cloud. Each step uses:
+2. **`composer_wrapup_origin`** (priority 95, enabled by default) — first-class routing rule + MITM `ArmOrigin` belt. Matches when StickyCloud / graph cloud family is live for a **non-fresh TipTap** follow-on, **or** body/hint is wrap-up chrome (`user_visible_high_level_summary`, `high_level_summary`, title/summary packs, empty TipTap, printable_hint titles like `Friday stock market close`). Beats Small Context Local so expired-grace wrap-ups never `runsse_local`.
+3. **Turn-family binding** from the *decision* (explicit **or** `DecideLocal` cloud|local): bind request UUID + short TTL for **correlated reply-summary / same-UUID RunSSE only**.
+4. **Tool-step re-decide** (NEW): child tool loops are **not** blindly stuck on parent cloud. Each step uses:
    - `parent_route` (cloud|local from live turn family)
    - tool name / risk class (allowlist / denylist)
    - payload size / estimated tokens (reserved signal; size gates can be added later)
    - config allowlist / denylist
-4. Classifier / Starlark / thresholds as today
-5. Default **cloud** for Path B opaque when unsure
+5. Classifier / Starlark / thresholds as today
+6. Default **cloud** for Path B opaque when unsure
 
 ## Explicit flags (always win)
 
@@ -56,15 +57,19 @@ A decision binds only that **turn family**:
 | Inherits family? | Example |
 |------------------|---------|
 | Yes | `summarize the reply…`, `generate a title…`, `final summary`, `one-sentence` / `executive summary`, `completed_subtitle` / wrap-up |
+| Yes | Composer system chrome: `user_visible_*` / `high_level_summary` packs (`IsSystemSummaryChrome` → metric `bidi_sticky_cloud_summary`) — **fail-closed even if StickyCloud TTL expired** (never `runsse_local`) |
 | Yes | Mid-turn tool-result packs with `call-…` ids or short crumbs (`Hi!`) while StickyCloud live |
-| No | Next user msg: `rename foo`, `fix the bug`, anything that looks like a new instruction (≥16 chars, no follow-on/tool shape) |
+| Yes (deny-local default) | **Any** non-TipTap Bidi while StickyCloud live (printable_hint titles, empty extract, system-only envelopes) — only allowlisted fresh `tiptap_text` may re-decide (`IsAllowlistedFreshTipTapUser`; body TipTap history alone does not count) |
+| No | Next TipTap user msg: `rename foo`, `fix the bug` (≥16 chars, `extractSource=tiptap_text`, no chrome/child) |
+
+**StickyCloud deny-local rule (P0):** while a cloud family is live (TTL map **or** context graph), default is **origin**. Dump markers that must stick: title crumbs like `Delhi weather today` / `Refresh planning docs to latest` plus `user_visible_high_level_summary`.
 
 - **Classifier / token decisions DO open a turn family** (`decide_cloud` / `decide_local`) so summaries after a heavy cloud turn are not interrupted.
 - **StickyLocal cannot downgrade a live StickyCloud** family (mid-turn mis-routes used to kill `/cloud` sticky).
 - **Parent RunSSE** calls `BeginParentRun` / `EndParentRun` (`RunSSEOpen`/`RunSSEClose` on the context graph) so family stays live for the full parent stream, then renews TTL for chrome wrap-up.
 - Sticky/summary/subagent inheritance **consults the context graph** (`LiveCloudFamily` / `ResolveCloudSticky`), not only the wall-clock TTL map — fixes final-summary → local leaks when TipTap mis-extracts or TTL expires mid-stream.
-- Next user message **without** a flag → **re-decide** (may go local after a cloud turn).
-- Empty / expired family → classifier (fail-soft; never break origin). Context graph: [context_management.md](./context_management.md).
+- Next TipTap user message **without** a flag → **re-decide** (may go local after a cloud turn).
+- Empty / expired family → classifier (fail-soft; never break origin), except **system chrome** which always ArmOrigin. Context graph: [context_management.md](./context_management.md).
 
 ## Tool-step re-decide (`routing.tool_followup`)
 
@@ -107,13 +112,31 @@ routing:
 
 Path B extract uses **latest user turn only** (`LatestUserTurnText`): prefers the newest slash-command segment; otherwise the last non-assistant node. Do **not** join full Composer history into `CompletionRequest` (avoids local models riffing on prior “Hi — I’m Auto…” / meta-chat).
 
+### How context reaches locals
+
+```
+Path B: BidiAppend context_envelope
+      → ExtractBidiCompletionRequest  (1× user TipTap turn; no tools)
+      → sticky / DecideLocal
+      → ArmLocal(offer.Request) | ArmOrigin
+      → RunSSE Wait → CompleteLocal(offer.Request)   // slim messages only
+
+Path A: POST /v1/chat/completions|responses  (full Cursor history + tools)
+      → Route on full body
+      → if local: BoundLocalContext(latest_turn) then execute
+      → if cloud: full body to BYOK (no BoundLocalContext)
+```
+
+`transform.local_context: latest_turn` (default in `configs/glider.yaml`) bounds Path A / StreamChat locals to leading system (≤ `local_system_max_chars`) + latest user turn (+ tool-loop tail). Path B extract is already single-turn — BoundLocalContext is a no-op. StickyCloud deny-local is unchanged (origin before CompleteLocal).
+
 ## Priority order (Path B BidiAppend)
 
 1. **Explicit** `/cloud` \| `/heavy`
 2. **Explicit** `/local` \| `/fast`
-3. **Turn-family sticky** (follow-on shaped text only)
-4. **Classifier** / Starlark / token rules (`DecideLocal`) → opens turn family
-5. Unknown / error → **origin**
+3. **Turn-family sticky** (StickyCloud / graph live → origin for non-fresh TipTap)
+4. **`composer_wrapup_origin`** (wrap-up chrome / last-cloud crumb → origin; also DecideLocal priority 95)
+5. **Classifier** / Starlark / token rules (`DecideLocal`) → opens turn family
+6. Unknown / error → **origin**
 
 ## Analytics definitions
 
@@ -132,6 +155,8 @@ IncAction (selected):
 |--------|---------|
 | `bidi_cloud_override` / `bidi_local_override` | Explicit flags |
 | `bidi_sticky_cloud` / `bidi_sticky_local` | Turn-family follow-on |
+| `bidi_sticky_cloud_summary` | Composer `user_visible_high_level_summary` / system summary chrome |
+| `bidi_composer_wrapup` | Rule `composer_wrapup_origin` / wrap-up ArmOrigin (incl. post-grace) |
 | `bidi_sticky_cloud_child` | Task/subagent child stayed origin under StickyCloud |
 | `bidi_decide_cloud_family` / `bidi_decide_local_family` | DecideLocal opened family |
 | `tool_followup_would_local` | Child step would be local (Path B still origin) |
@@ -148,10 +173,12 @@ APIs:
 
 ## Operator retest
 
-1. Rebuild / restart with `agent_rpc_fulfill: true` and `routing.tool_followup.enabled: true`.
+1. Rebuild / restart with `agent_rpc_fulfill: true`, `composer_wrapup_origin` enabled, and `routing.tool_followup.enabled: true`.
 2. Heavy prompt **without** `/cloud` → expect `bidi_decide_passthrough` + `bidi_decide_cloud_family`.
 3. Reply-summary / title **without** flag → `bidi_sticky_cloud`; **no** `runsse_local` for that follow-on.
-4. Child tool with allowlisted name in body/header → `tool_followup_would_local` but origin (handled=false).
-5. Next user message `rename foo` → re-decide (often local); **not** `bidi_sticky_cloud`.
-6. `/cloud …` → hard origin; never canned.
-7. `/cloud … through a subagent` → parent `bidi_cloud_override`; child `Say hi via subagent` → `bidi_sticky_cloud_child` + **no** `runsse_local`.
+4. `/cloud hello hows the stock market today` → origin; later `Friday stock market close` / `user_visible_high_level_summary` → `bidi_composer_wrapup` or `bidi_sticky_cloud_summary`; **no** `runsse_local`.
+5. Child tool with allowlisted name in body/header → `tool_followup_would_local` but origin (handled=false).
+6. Next user message `rename foo` (fresh TipTap) → re-decide (often local); **not** sticky wrap-up.
+7. `/cloud …` → hard origin; never canned.
+8. `/cloud … through a subagent` → parent `bidi_cloud_override`; child `Say hi via subagent` → `bidi_sticky_cloud_child` + **no** `runsse_local`.
+9. Dashboard **Rules** shows `composer_wrapup_origin` (priority 95, cloud).

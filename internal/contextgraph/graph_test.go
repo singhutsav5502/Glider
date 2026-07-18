@@ -212,6 +212,28 @@ func TestAllEventKindsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadWarmAndExport(t *testing.T) {
+	dir := t.TempDir()
+	w := contextgraph.New(dir)
+	w.Append(contextgraph.Event{
+		Kind: contextgraph.EventEpisodeMerged, TurnID: "t1", RequestID: "r1",
+		Actor: "orch", Attrs: map[string]string{"episode_id": "e1"},
+	})
+	// New store replays JSONL.
+	s := contextgraph.New(dir)
+	n, err := s.LoadWarm(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("loaded=%d", n)
+	}
+	exp := s.Export("t1", 50)
+	if exp["turn"] == nil {
+		t.Fatalf("export=%v", exp)
+	}
+}
+
 func itoa(i int) string {
 	if i == 0 {
 		return "0"

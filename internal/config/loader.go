@@ -60,6 +60,7 @@ func ApplyMITMDebugEnv(cfg *Config) {
 
 func applyDefaults(cfg *Config) {
 	d := DefaultConfig()
+	cfg.Routing.ApplyDefaultTarget()
 	if cfg.Server.ProxyPort == 0 {
 		cfg.Server.ProxyPort = d.Server.ProxyPort
 	}

@@ -1,5 +1,7 @@
 # Glider Dashboard — UI/UX Design (Whitespace & Top Bar)
 
+> **Archival design reference.** A **functional** embedded dashboard ships (Overview / VRAM / Rules / Config + LOCAL/CLOUD/CANNED %). Pixel-perfect parity with this mock is **not** done — see [README.md](./README.md).
+
 > A hyper-direct, stark, and perfectly spaced interface. No sidebar, no fluff. It uses generous whitespace to frame the raw data, making a complex proxy system immediately readable at a single glance.
 
 ![Glider Top-Bar Minimalist Dashboard](C:/Users/Utsav/.gemini/antigravity/brain/dd367367-3e5e-404e-8f1b-f72391f4cc0e/glider_topbar_dashboard_mockup_1784320102761.png)

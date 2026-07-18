@@ -1,9 +1,10 @@
-# Prior art / related projects
+# Prior art / related projects — archival
 
-> Web research for Glider local routing (2026-07-18).
+> Web research for Glider local routing (2026-07-18). **Archival survey** — not product status.  
 > Companion: [`cursor_intercept_methodology.md`](./cursor_intercept_methodology.md).
+> **Glider status:** see [`cursor_agent_protocol_interception.md`](./cursor_agent_protocol_interception.md) — Path B **text** RunSSE fulfill is shipped in-tree; tool loops still origin.
 >
-> **Honest headline:** Almost everyone who successfully runs Cursor Agent on local/alternate models uses **Override OpenAI Base URL + an unknown model prefix** (`cus-`, `fx-`, `custom-`, …). **MITM of modern Agent gRPC exists for observation/decoding**, but **no public project clearly demonstrates local fulfill / reroute of BidiAppend + ChatService/RunSSE tool loops** the way Glider Path B aspires to. Reverse clients (Cursor-as-upstream) are common; MITM-as-local-LLM is rare.
+> **Honest headline:** Almost everyone who successfully runs Cursor Agent on local/alternate models uses **Override OpenAI Base URL + an unknown model prefix** (`cus-`, `fx-`, `custom-`, …). Public MITM work mostly **observes/decodes** modern Agent gRPC then **forwards to origin**. Glider’s Path B text fulfill (BidiAppend → local RunSSE) is **novel vs public prior art**; Path B **tool-loop** fulfill remains unproven publicly (and unfinished in Glider).
 
 ---
 
@@ -11,10 +12,11 @@
 
 | Question | Answer |
 |----------|--------|
-| Has someone else done this? | **Yes** — dozens of Override Base URL proxies; a handful of MITM decoders; several Cursor→OpenAI reverse gateways. |
-| Does anyone truly MITM modern Agent → local LLM? | **Not publicly proven.** Best MITM work (**cursor-tap**, **LaiKash**) decrypts and **parses** `BidiAppend` / `RunSSE` / Connect frames, then **forwards to origin**. No shipped “replace model with Ollama” path on that plane. |
-| What actually works for Agent+tools? | **Path A:** Override Base URL + prefix + Anthropic→OpenAI tool transforms (copilot-for-cursor lineage). Client still owns tools. |
-| What’s reusable now? | Path A transforms + HTTPS tunnel ops; cursor-tap proto extract / RunSSE↔BidiAppend architecture notes; eisbaw Unified/Bidi schemas for Path B *future*. |
+| Has someone else done Override Base URL proxies? | **Yes** — dozens; Path A patterns are well proven. |
+| Does public MITM **decode** modern Agent? | **Yes** — cursor-tap, LaiKash (observe → origin). |
+| Does anyone public **fulfill** BidiAppend/RunSSE with a local LLM? | **Not found.** Glider now does **text-only** fulfill in-tree; not a published third-party product. |
+| What works for Agent+tools today? | **Path A:** Override Base URL + prefix + Anthropic→OpenAI tool transforms. |
+| What’s reusable from others? | Path A transforms + tunnel ops; cursor-tap proto/frame notes; eisbaw Unified schemas for future Path B tools. |
 
 ---
 
@@ -71,8 +73,8 @@ A. Override OpenAI Base URL + unknown model id
 
 B. MITM TLS on api2 / api5 Connect-RPC
    B1. Observe/decode only  → cursor-tap, LaiKash, re-cursor
-   B2. Local fulfill text   → Glider StreamChat* (rare elsewhere)
-   B3. Local fulfill Agent  → **no public proof**
+   B2. Local fulfill text   → **Glider** (StreamChat* + Bidi/RunSSE text; sticky/contextgraph)
+   B3. Local fulfill tools  → **no public proof**; Glider unfinished (child RunSSE origin)
 
 C. Reverse gateway (other clients → Cursor subscription)
    cursor-rpc, eisbaw demo, ccs CursorExecutor, Cursor-To-OpenAI
@@ -88,17 +90,21 @@ D. Patch Cursor binary / workbench.js
 
 ### Exists (public)
 
-1. **Decrypt + parse** Connect envelopes and protos for `BidiAppend`, `RunSSE`, StreamCpp, Batch, etc. ([cursor-tap](https://github.com/burpheart/cursor-tap) reverse notes: read/write split — RunSSE long poll/stream for model output; BidiAppend short POSTs for user/tool payloads).
-2. **Extract fresher protos** from Cursor’s JS bundle (cursor-tap) or reverse Unified request fields (eisbaw, ccs schema TS).
-3. **Legacy AiService** decode/fulfill patterns (cursor-rpc, Glider Path B StreamChat*).
+1. **Decrypt + parse** Connect envelopes and protos for `BidiAppend`, `RunSSE`, StreamCpp, Batch, etc. ([cursor-tap](https://github.com/burpheart/cursor-tap)).
+2. **Extract fresher protos** from Cursor’s JS bundle (cursor-tap) or reverse Unified fields (eisbaw, ccs).
+3. **Legacy AiService** decode/fulfill patterns (cursor-rpc).
 
-### Does **not** appear to exist (public)
+### Exists (Glider in-tree — not prior art)
 
-1. MITM that **answers** `BidiAppend` / `RunSSE` / `StreamUnifiedChatWithTools` with a **local** model while keeping Cursor’s Agent UI happy.
-2. MITM that **rewrites** subscription Agent traffic to Ollama without Override Base URL.
-3. Stable shared library of modern Agent response codecs with license clarity.
+1. MITM that **answers** root `RunSSE` with local/canned **text** after BidiAppend extract (`agent_rpc_fulfill`).
+2. Turn-family sticky + composer summary chrome (`user_visible_high_level_summary`) so `/cloud` wrap-ups stay origin.
 
-**Implication:** Glider’s bet that Path A is primary and Path B opaque-passthrough for modern Agent is **aligned with the entire public ecosystem**. Path B local Agent would be **novel**, not catching up to a known open implementation.
+### Does **not** appear to exist (public or Glider)
+
+1. MITM that completes full **tool loops** / child RunSSE / `StreamUnifiedChatWithTools` with a local model while keeping Agent UI happy.
+2. Stable shared library of modern Agent response codecs with clear license.
+
+**Implication:** Path A remains the ecosystem-aligned path for Agent+tools. Path B text fulfill is Glider-specific novelty; Path B tools would still be novel if shipped.
 
 ---
 
