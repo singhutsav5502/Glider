@@ -26,9 +26,12 @@ import (
 	"github.com/glider-ai/glider/internal/loop"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
+	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/orchestrator"
+	"github.com/glider-ai/glider/internal/plugin"
 	"github.com/glider-ai/glider/internal/router"
 	"github.com/glider-ai/glider/internal/swarm"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/glider-ai/glider/internal/transform"
 	"github.com/glider-ai/glider/internal/vram"
 	"github.com/google/uuid"
@@ -416,7 +419,22 @@ func main() {
 			bus.Publish(metrics.Event{Type: metrics.EventAgentLog, Data: e})
 		})
 		loopMgr.Logs = agentLogs
+		mcpMgr := mcp.NewManager()
+		mcpMgr.Configure(mcp.DefaultGitHubConfig())
+		if _, err := mcpMgr.Connect(context.Background(), mcp.DefaultGitHubConfig()); err != nil {
+			log.Warn("mcp github connect", "err", err)
+		}
+		plugReg := plugin.NewMemRegistry(&plugin.SimpleHost{Root: "."})
+		toolReg := tools.NewRegistry(tools.Options{
+			Workspace:  ".",
+			AllowShell: false,
+			Context:    contextgraph.ContextQuerier{Store: ctxGraph},
+			MCP:        mcpMgr,
+			Plugins:    plugReg,
+		})
+		loopMgr.Tools = toolReg
 		swarmRunner.Logs = agentLogs
+		swarmRunner.Tools = toolReg
 		dash.Loops = loopMgr
 		dash.HotSwap = hotSwap
 		dash.Swarm = swarmRunner

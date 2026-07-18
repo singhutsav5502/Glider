@@ -10,6 +10,7 @@ import (
 
 	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
 
@@ -65,6 +66,8 @@ type Runner struct {
 	DefaultModel string
 	// Logs is optional per-swarm-run agent activity (keyed by turn/run id).
 	Logs *agentlog.Store
+	// Tools is the shared unified registry (same instance as hoop Manager when wired).
+	Tools *tools.Registry
 }
 
 // ApplyOpts hot-swaps concurrency bounds.
@@ -177,6 +180,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			model = models[0]
 		}
 		rolePrompt := fmt.Sprintf("[%s]\n%s", role, prompt)
+		// Shared context snippet so workers consult the same turn base (AI-first relevancy).
+		if r.Tools != nil {
+			if cq, err := r.Tools.Invoke(ctx, tools.Ref{Name: "context_query", Kind: tools.KindBuiltin}, turnID+" "); err == nil && cq.OK && cq.Output != "" {
+				rolePrompt += "\n\n[shared_context]\n" + truncate(cq.Output, 1200)
+			}
+		}
 		workers[i] = Worker{
 			ID:    fmt.Sprintf("%s-%d", role, i),
 			Role:  role,
