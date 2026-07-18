@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pure local · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a class="active" href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Ollama</div>
+      <h1>Pure local mode</h1>
+      <p>Run the harness with <strong>no cloud API keys</strong> and default route local.</p>
+
+      <h2>Start</h2>
+      <pre>ollama serve
+ollama pull codellama:7b   # or edit models in yaml
+.\glider.exe --config configs\glider.local.yaml</pre>
+
+      <h2>Knobs in glider.local.yaml</h2>
+      <ul>
+        <li><code>routing.default: local</code></li>
+        <li><code>routing.allow_cloud_fallback: false</code></li>
+        <li><code>mitm.agent_rpc_canned_on_error: false</code></li>
+        <li><code>mitm.origin_on_local_error: false</code> — clear Ollama errors vs silent Cursor origin</li>
+        <li><code>mitm.require_local_healthy: true</code></li>
+      </ul>
+
+      <h2>Gateway-only (no MITM)</h2>
+      <p>Set <code>mitm.enabled: false</code>. Cursor Override Base URL → <code>http://127.0.0.1:8080/v1</code>. Hoops use <code>/api/loops</code> with <code>route: local</code>.</p>
+
+      <h2>Sample local hoop</h2>
+      <pre>go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start</pre>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>

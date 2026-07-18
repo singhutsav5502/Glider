@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>C4 Code · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <script type="module">
+    try {
+      const mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+      mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose",
+        themeVariables: { primaryColor: "#1a2330", primaryTextColor: "#e8eef5", lineColor: "#5eead4",
+          secondaryColor: "#243044", tertiaryColor: "#161d27" } });
+    } catch (_) {}
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a class="active" href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">C4 model · Level 4</div>
+      <h1>Code</h1>
+      <p>
+        Key packages, types, and call chains. Source of truth is the Go tree under
+        <code>internal/</code> and <code>cmd/glider/main.go</code>. Companion package table:
+        <a href="modules.html">Modules</a>.
+      </p>
+
+      <div class="c4-strip">
+        <a href="c1-context.html">C1 Context</a>
+        <a href="c2-containers.html">C2 Containers</a>
+        <a href="c3-components.html">C3 Components</a>
+        <a class="active" href="c4-code.html">C4 Code</a>
+      </div>
+
+      <ol class="toc">
+        <li><a href="#types">Key types</a></li>
+        <li><a href="#complete">Chain: PipelineCompleter.Complete / Handle</a></li>
+        <li><a href="#path-b">Chain: Path B BidiAppend → RunSSE</a></li>
+        <li><a href="#sticky">Chain: sticky cloud</a></li>
+        <li><a href="#hoop">Chain: hoop cycle</a></li>
+        <li><a href="#packages">Package → entry symbols</a></li>
+        <li><a href="#links">Cross-links</a></li>
+      </ol>
+
+      <h2 id="types">Key types</h2>
+      <table>
+        <tr><th>Type</th><th>Package</th><th>Role</th></tr>
+        <tr>
+          <td><code>PipelineCompleter</code></td>
+          <td><code>orchestrator</code></td>
+          <td>Harness: Router, Executor, Tokenizer, Transformer, Graph, Episodes, Metrics</td>
+        </tr>
+        <tr>
+          <td><code>CompleteOptions</code></td>
+          <td><code>orchestrator</code></td>
+          <td><code>OriginPassthrough</code> distinguishes gateway vs MITM</td>
+        </tr>
+        <tr>
+          <td><code>CompletionRequest</code> / <code>RoutingDecision</code></td>
+          <td><code>backend</code></td>
+          <td>Normalized request + route result (Target, Model, RuleName, BackendName)</td>
+        </tr>
+        <tr>
+          <td><code>Engine</code> / <code>Rule</code></td>
+          <td><code>router</code></td>
+          <td>Priority-sorted rule list; <code>explicitHardOverride</code></td>
+        </tr>
+        <tr>
+          <td><code>AgentFulfillHub</code> / <code>AgentFulfillOffer</code></td>
+          <td><code>mitm</code></td>
+          <td>Bidi↔RunSSE correlation; StickyMode turn family</td>
+        </tr>
+        <tr>
+          <td><code>Store</code> / <code>Event</code></td>
+          <td><code>contextgraph</code></td>
+          <td>JSONL event log + sticky index under <code>~/.glider/context</code></td>
+        </tr>
+        <tr>
+          <td><code>Manager</code> / <code>LoopSpec</code> / <code>StageSpec</code></td>
+          <td><code>loop</code></td>
+          <td>Hoop runners; planner/actor/critic/memory/router stages</td>
+        </tr>
+        <tr>
+          <td><code>Registry</code> / <code>Module</code></td>
+          <td><code>swarm</code></td>
+          <td>Hot-swap apply functions for fan-out / swarm / templates</td>
+        </tr>
+      </table>
+
+      <h2 id="complete">Chain: <code>PipelineCompleter.Complete</code> / <code>Handle</code></h2>
+      <p>
+        Path A gateway entry. File: <code>internal/orchestrator/pipeline.go</code>.
+      </p>
+      <pre class="mermaid">sequenceDiagram
+  participant API as api.Handlers
+  participant P as PipelineCompleter
+  participant R as router.Engine
+  participant E as Executor
+  participant B as backend.*
+  API->>P: Complete(r, req)
+  P->>P: Handle(opts OriginPassthrough=false)
+  P->>P: ApplyModelAlias
+  P->>P: Tokenizer.EstimateRequestTokens
+  P->>R: Route(ctx, req)
+  R-->>P: RoutingDecision
+  P->>P: emitRouteDecided (contextgraph)
+  alt Target local
+    P->>P: InjectEpisodeContext?
+    P->>P: BoundLocalContext
+  end
+  P->>P: Transformer.Apply (if enabled)
+  P->>E: Execute(ctx, decision, req)
+  E->>B: Complete stream
+  B-->>E: chunks
+  E-->>P: chan CompletionChunk
+  P->>P: metrics wrap goroutine
+  P-->>API: chan chunks</pre>
+
+      <ol class="steps">
+        <li>
+          <strong><code>Complete</code> → <code>Handle(..., CompleteOptions{})</code></strong>
+          <span class="tech">pipeline.go:61-63 · mode label "gateway"</span>
+        </li>
+        <li>
+          <strong><code>ApplyModelAlias(req, ModelAliases)</code></strong>
+          <span class="tech">preserves Metadata.OriginalModel</span>
+        </li>
+        <li>
+          <strong><code>Tokenizer.EstimateRequestTokens</code></strong>
+          <span class="tech">transform · Metadata.EstimatedTokens</span>
+        </li>
+        <li>
+          <strong><code>Router.Route</code> → <code>ResolveBackendName</code></strong>
+          <span class="tech">cloud→openai name default · set Model/Adapter on req</span>
+        </li>
+        <li>
+          <strong>If MITM + non-local: return <code>ErrOriginPassthrough</code></strong>
+          <span class="tech">CompleteLocal sets OriginPassthrough=true · pipeline.go:140-146</span>
+        </li>
+        <li>
+          <strong>Local-only: episodes + <code>BoundLocalContext</code></strong>
+          <span class="tech">transform.InjectEpisodeContext · BoundLocalContext</span>
+        </li>
+        <li>
+          <strong><code>Executor.Execute</code> → chunk channel</strong>
+          <span class="tech">SimpleExecutor / FanOutExecutor · Registry.Get</span>
+        </li>
+        <li>
+          <strong>Wrap: drain chunks, record LOCAL/CLOUD, graph + episode</strong>
+          <span class="tech">buffered chan size 16 · EventFulfilledLocal</span>
+        </li>
+      </ol>
+      <p>
+        <code>DecideLocal</code> stops after route (no execute): used by Path B Bidi to arm the hub.
+        <span class="tech">pipeline.go:72-98</span>
+      </p>
+
+      <h2 id="path-b">Chain: Path B BidiAppend → RunSSE</h2>
+      <p>
+        Split observed in cursor-tap captures: prompt on BidiAppend, answer on RunSSE.
+        Files: <code>internal/mitm/intercept.go</code>, <code>agent_fulfill_hub.go</code>,
+        <code>internal/cursorrpc/*</code>.
+      </p>
+      <pre class="mermaid">sequenceDiagram
+  participant C as Cursor
+  participant I as Interceptor
+  participant RPC as cursorrpc
+  participant H as AgentFulfillHub
+  participant P as PipelineCompleter
+  C->>I: BidiAppend (protobuf envelope)
+  I->>RPC: ExtractBidiCompletionRequest
+  RPC-->>I: CompletionRequest + UserText
+  Note over I,H: sticky / explicit belts
+  I->>P: DecideLocal(r, req)
+  P-->>I: RoutingDecision
+  alt local
+    I->>H: ArmLocal(reqID, offer)
+  else cloud / deny
+    I->>H: ArmOrigin(reqID)
+  end
+  C->>I: RunSSE (root)
+  I->>H: Wait(reqID, 800ms)
+  H-->>I: AgentFulfillOffer
+  alt offer.Local
+    I->>P: CompleteLocal
+    P-->>I: chunks
+    I->>C: RunSSE encode (text)
+  else
+    I->>C: origin dial / tunnel
+  end</pre>
+
+      <ol class="steps">
+        <li>
+          <strong>CONNECT + decrypt allowlisted host</strong>
+          <span class="tech">mitm.Proxy · HostMatcher · CA leaf ~/.glider/mitm</span>
+        </li>
+        <li>
+          <strong>Classify Agent RPC path</strong>
+          <span class="tech">ClassifyPath · agent_rpc_fulfill true</span>
+        </li>
+        <li>
+          <strong>Bidi: <code>ExtractBidiCompletionRequest</code></strong>
+          <span class="tech">cursorrpc · TipTap latest turn · no full tool envelope for local</span>
+        </li>
+        <li>
+          <strong>Belts then <code>DecideLocal</code></strong>
+          <span class="tech">explicit · ShouldStickyCloudOrigin · wrap-up · InheritTurnFollowOn</span>
+        </li>
+        <li>
+          <strong><code>ArmLocal</code> / <code>ArmOrigin</code></strong>
+          <span class="tech">hub.signal → waiting chan or pending map · OpenTurnFamily</span>
+        </li>
+        <li>
+          <strong>RunSSE: <code>Wait</code> then fulfill</strong>
+          <span class="tech">defaultRunSSEFulfillWait=800ms · CompleteLocal · runsse_codec</span>
+          Child / tool RunSSE: origin (metric <code>tool_followup_would_local</code> only).
+        </li>
+      </ol>
+      <p>Sequence ASCII twin: <a href="data-flow.html#path-b-text">data-flow Path B</a>.</p>
+
+      <h2 id="sticky">Chain: sticky cloud</h2>
+      <p>
+        Turn-family sticky lives on <code>AgentFulfillHub</code>, not inside
+        <code>router.Engine</code>. Prevents summary/title chrome from stealing a
+        <code>/cloud</code> parent onto Small Context Local.
+      </p>
+      <pre class="seq">OpenTurnFamily(rootUUID, StickyCloud|StickyLocal, source)
+        │
+        ├── StickyLocal MUST NOT downgrade live StickyCloud
+        │     (ParentActive &gt; 0 OR Until in future)
+        │
+        ├── BeginParentRun / EndParentRun  (root cloud RunSSE)
+        │     ParentActive++ / --
+        │     End: Until = now + max(familyTTL, DefaultCloudPostRunGrace=120s)
+        │
+        └── ShouldStickyCloudOrigin(userText, source, …)
+              ├── allowlisted fresh TipTap user → may re-decide
+              ├── marker chrome user_visible_* → origin
+              └── else ArmOrigin (deny-local while StickyCloud live)
+
+Constants: DefaultTurnFamilyTTL=90s · pending offer TTL=30s · Wait=800ms
+Graph sync: contextgraph.DefaultCloudGrace / LiveCloudFamily</pre>
+
+      <ol class="steps">
+        <li>
+          <strong>Open family on explicit or DecideLocal cloud|local</strong>
+          <span class="tech">OpenTurnFamily · EventTurnOpened · EventStickyBound</span>
+        </li>
+        <li>
+          <strong>Parent RunSSE keeps family alive</strong>
+          <span class="tech">BeginParentRun / EndParentRun · grace 120s</span>
+        </li>
+        <li>
+          <strong>Follow-on Bidi hits sticky belt before classifier</strong>
+          <span class="tech">ShouldStickyCloudOrigin · InheritTurnFollowOn · composer_wrapup</span>
+        </li>
+        <li>
+          <strong>Fresh TipTap user may re-decide</strong>
+          <span class="tech">IsAllowlistedFreshTipTapUser · ≥16 chars · not chrome/child</span>
+        </li>
+      </ol>
+      <p>Detail: <a href="architecture-deep.html#sticky">architecture-deep sticky</a>,
+        <a href="concurrency.html">hub mutex / races</a>.</p>
+
+      <h2 id="hoop">Chain: hoop cycle</h2>
+      <p>
+        Loop Engineering (not Cursor cron <code>/loop</code>). File:
+        <code>internal/loop/cycle.go</code> · <code>stages.go</code> · <code>runner.go</code>.
+      </p>
+      <pre class="mermaid">flowchart LR
+  M["loop.Manager.runCycle"] --> PL["StagePlanner"]
+  PL --> AC["StageActor"]
+  AC --> CR["StageCritic SCORE:"]
+  CR --> MEM["StageMemory"]
+  MEM --> EV{"EvalPass?"}
+  EV -->|fail + budget| PL
+  EV -->|pass| EP["RecordEpisode / graph EventLoopTick"]
+  PL -.->|Complete| P["PipelineCompleter"]
+  AC -.-> P
+  CR -.-> P</pre>
+
+      <ol class="steps">
+        <li>
+          <strong><code>Manager.runCycle</code> starts iteration</strong>
+          <span class="tech">turnID = "loop:"+spec.ID · EventLoopTick</span>
+        </li>
+        <li>
+          <strong>Enabled stages from <code>LoopSpec.Stages</code> (or defaults)</strong>
+          <span class="tech">planner → actor → critic → memory · RoutePref per stage</span>
+        </li>
+        <li>
+          <strong>Each LLM stage calls harness Completer</strong>
+          <span class="tech">same PipelineCompleter as gateway · local-first for pure-local</span>
+        </li>
+        <li>
+          <strong>Critic parses <code>SCORE:</code> vs <code>EvalMin</code> / <code>EvalSpec.MinScore</code></strong>
+          <span class="tech">regexp scoreLine · EvalPass bool</span>
+        </li>
+        <li>
+          <strong>Persist episode / summary; optional human gate (L1-L3)</strong>
+          <span class="tech">contextkit · AutonomyLevel · CycleResult</span>
+        </li>
+      </ol>
+      <p>Operator docs: <a href="loop-engineering.html">Loop Engineering</a>,
+        <a href="samples.html">Sample hoops</a>.</p>
+
+      <h2 id="packages">Package → entry symbols</h2>
+      <table>
+        <tr><th>Package</th><th>Start here</th></tr>
+        <tr><td><code>cmd/glider</code></td><td><code>main</code> -- wire registry, pipeline, listeners</td></tr>
+        <tr><td><code>api</code></td><td><code>Server</code>, chat/responses handlers → <code>Completer.Complete</code></td></tr>
+        <tr><td><code>orchestrator</code></td><td><code>PipelineCompleter.Handle</code>, <code>SimpleExecutor.Execute</code></td></tr>
+        <tr><td><code>router</code></td><td><code>Engine.Route</code>, <code>NewEngineFromConfig</code>, task_class / explicit</td></tr>
+        <tr><td><code>mitm</code></td><td><code>Interceptor</code>, <code>AgentFulfillHub.Arm*</code> / <code>Wait</code></td></tr>
+        <tr><td><code>cursorrpc</code></td><td><code>ExtractBidiCompletionRequest</code>, RunSSE codec, <code>IsRootAgentRunSSE</code></td></tr>
+        <tr><td><code>transform</code></td><td><code>Tokenizer</code>, <code>BoundLocalContext</code>, <code>Transformer.Apply</code></td></tr>
+        <tr><td><code>contextgraph</code></td><td><code>Store.Append</code>, sticky / LiveCloudFamily helpers</td></tr>
+        <tr><td><code>loop</code></td><td><code>Manager.runCycle</code>, <code>StageSpec</code></td></tr>
+        <tr><td><code>swarm</code></td><td><code>Registry.Apply</code>, <code>Runner</code>, <code>FanOut</code></td></tr>
+        <tr><td><code>metrics</code></td><td><code>Collector</code>, <code>Bus</code>, <code>HistoryStore</code></td></tr>
+        <tr><td><code>dashboard</code></td><td><code>Server</code>, <code>/api/*</code>, <code>/ws</code></td></tr>
+        <tr><td><code>vram</code></td><td><code>Manager</code> -- allocate / idle unload</td></tr>
+        <tr><td><code>backend/*</code></td><td><code>Registry</code>, ollama/vllm/cloud <code>Complete</code></td></tr>
+      </table>
+
+      <h2 id="links">Cross-links</h2>
+      <div class="level-map">
+        <a href="c1-context.html">
+          <span class="lvl">C1</span>
+          <span class="ttl">Context</span>
+          <p class="desc">System boundary</p>
+        </a>
+        <a href="c2-containers.html">
+          <span class="lvl">C2</span>
+          <span class="ttl">Containers</span>
+          <p class="desc">Ports and process</p>
+        </a>
+        <a href="c3-components.html">
+          <span class="lvl">C3</span>
+          <span class="ttl">Components</span>
+          <p class="desc">Pipeline and hub</p>
+        </a>
+        <a href="architecture-deep.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Deep dive</span>
+          <p class="desc">Sticky + failures</p>
+        </a>
+        <a href="data-flow.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Data flow</span>
+          <p class="desc">Full sequences</p>
+        </a>
+        <a href="modules.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Modules</span>
+          <p class="desc">Package map</p>
+        </a>
+        <a href="concurrency.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Concurrency</span>
+          <p class="desc">Sync primitives</p>
+        </a>
+      </div>
+    </main>
+    <footer class="foot">
+      <a href="c3-components.html">← C3</a> ·
+      <a href="modules.html">Modules →</a>
+    </footer>
+  </div>
+</body>
+</html>

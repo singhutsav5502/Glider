@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a class="active" href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Memory</div>
+      <h1>Context management</h1>
+      <p>Hybrid MVP: <strong>append-only event log</strong> (source of truth) + <strong>in-memory turn graph</strong> for sticky routing and analytics.</p>
+
+      <h2>Why</h2>
+      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: “is this still part of turn family X?”</p>
+
+      <h2>Storage</h2>
+      <ul>
+        <li><strong>Hot</strong> — <code>internal/contextgraph.Store</code> keyed by turn_family / request_uuid / connect_session</li>
+        <li><strong>Warm</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
+        <li><strong>Episodes</strong> — compact outcomes for local prompts (<code>contextkit</code>)</li>
+      </ul>
+
+      <h2>What locals receive</h2>
+      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>).</p>
+
+      <h2>Inspect</h2>
+      <pre>GET /api/context/recent
+GET /api/context/turns/{id}
+GET /api/context/episodes
+GET /api/context/export</pre>
+      <p>Full write-up: <code>planning/context_management.md</code></p>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>

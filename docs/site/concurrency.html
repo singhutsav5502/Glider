@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Concurrency · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a class="active" href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">Runtime</div>
+      <h1>Concurrency model</h1>
+      <p>
+        Glider is a long-running Go process with many concurrent clients: Cursor CONNECT
+        sessions, gateway SSE streams, dashboard WebSockets, VRAM pollers, and Loop
+        Engineering runners. This page maps mutexes, channels, and goroutine ownership so
+        operators and contributors can reason about races and backpressure.
+      </p>
+
+      <ol class="toc">
+        <li><a href="#process">Process topology</a></li>
+        <li><a href="#mitm">MITM &amp; fulfill hub</a></li>
+        <li><a href="#pipeline">Pipeline &amp; orchestrator</a></li>
+        <li><a href="#loop">Loop runners</a></li>
+        <li><a href="#swarm">Swarm fan-out</a></li>
+        <li><a href="#dashboard">Dashboard WebSocket</a></li>
+        <li><a href="#shared">Shared state</a></li>
+        <li><a href="#hazards">Hazards &amp; invariants</a></li>
+      </ol>
+
+      <h2 id="process">Process topology</h2>
+      <pre>main
+  ├─ gateway HTTP server goroutine(s)     :8080
+  ├─ dashboard HTTP + WS                  :8081
+  ├─ MITM Accept loop                     :8082
+  │    └─ per CONNECT → go handleConn
+  ├─ config.Provider.Watch loop
+  ├─ VRAM poller (≈5s) via stopVRAM chan
+  ├─ backend health poller (≈30s)
+  └─ loop runners (on demand, one per hoop id)</pre>
+      <p>
+        Hot path config is mostly <code>atomic.Pointer</code> swaps (<code>Config</code>,
+        <code>router.Engine</code>) so readers avoid long critical sections.
+      </p>
+
+      <h2 id="mitm">MITM &amp; fulfill hub</h2>
+      <table>
+        <tr><th>Primitive</th><th>Location</th><th>Role</th></tr>
+        <tr>
+          <td><code>Proxy.mu</code></td>
+          <td><code>mitm.Proxy</code></td>
+          <td>Closed / lifecycle; Accept loop exclusivity</td>
+        </tr>
+        <tr>
+          <td><code>go handleConn</code></td>
+          <td>per CONNECT</td>
+          <td>One session per accepted TCP conn</td>
+        </tr>
+        <tr>
+          <td><code>WaitGroup</code> + 2× <code>io.Copy</code></td>
+          <td>blind tunnel</td>
+          <td>Bidirectional byte pump for non-allowlisted hosts</td>
+        </tr>
+        <tr>
+          <td><code>Authority.mu</code></td>
+          <td>CA</td>
+          <td>Leaf cert cache</td>
+        </tr>
+        <tr>
+          <td><code>AgentFulfillHub.mu</code></td>
+          <td>hub</td>
+          <td>Guards <code>waiting</code>, <code>pending</code>, <code>family</code></td>
+        </tr>
+        <tr>
+          <td><code>chan *AgentFulfillOffer</code> (buf 1)</td>
+          <td>per waiter</td>
+          <td>Non-blocking signal from Arm to Wait</td>
+        </tr>
+        <tr>
+          <td><code>go expirePending</code></td>
+          <td>after Arm stores pending</td>
+          <td>30s GC of stale Bidi offers</td>
+        </tr>
+        <tr>
+          <td><code>time.Timer</code> 800ms</td>
+          <td><code>Wait</code></td>
+          <td>Fail-soft to origin on idle RunSSE</td>
+        </tr>
+      </table>
+      <div class="note">
+        <strong>Invariant:</strong> StickyCloud must not be downgraded by a concurrent
+        StickyLocal <code>OpenTurnFamily</code> while <code>ParentActive &gt; 0</code> or
+        <code>Until</code> is in the future. That check runs under hub <code>mu</code>.
+      </div>
+      <p>
+        Parent run accounting (<code>BeginParentRun</code> / <code>EndParentRun</code>) is
+        also under the hub mutex so post-run grace and live-family queries stay consistent
+        with contextgraph grace updates.
+      </p>
+
+      <h2 id="pipeline">Pipeline &amp; orchestrator</h2>
+      <table>
+        <tr><th>Primitive</th><th>Role</th></tr>
+        <tr>
+          <td><code>make(chan CompletionChunk, 16)</code> + goroutine</td>
+          <td>Metrics wrap: drain backend stream, buffer content, record episode, emit graph events without blocking the client write path longer than necessary</td>
+        </tr>
+        <tr>
+          <td><code>PriorityQueue.mu</code> + seq atomic + signal chans</td>
+          <td>Priority enqueue before execute</td>
+        </tr>
+        <tr>
+          <td><code>CircuitBreaker.mu</code></td>
+          <td>Per-backend closed → open → half-open</td>
+        </tr>
+        <tr>
+          <td>Registry / backend health <code>atomic.Bool</code></td>
+          <td>Concurrent Complete + health poller</td>
+        </tr>
+        <tr>
+          <td><code>vram.Manager</code> RWMutex</td>
+          <td>CanFit / eviction under concurrent EnsureWarm</td>
+        </tr>
+      </table>
+      <p>
+        Gateway and MITM may call <code>Handle</code> concurrently for many requests. The
+        completer is designed as mostly immutable wiring + shared dependencies that are
+        themselves synchronized. Do not stash per-request mutable fields on
+        <code>PipelineCompleter</code>.
+      </p>
+
+      <h2 id="loop">Loop runners</h2>
+      <p>
+        <code>loop.Manager</code> holds <code>runners map</code> under <code>mu</code>.
+        Start creates a cancelable context derived with
+        <code>context.WithoutCancel</code> from the HTTP request context so returning
+        the REST response does not abort the hoop. Each hoop id has at most one active
+        runner; Stop cancels and waits on a done channel. Stage Completer calls reuse the
+        shared pipeline — same concurrency rules as gateway traffic.
+      </p>
+
+      <h2 id="swarm">Swarm fan-out</h2>
+      <ul>
+        <li>Semaphore channel sized to <code>MaxInflight</code> (default 4)</li>
+        <li>Worker <code>WaitGroup</code> + result channel (default sizes 16/32)</li>
+        <li>Parent cancel propagates to workers (errgroup-style <code>Group</code>)</li>
+        <li>Hot-swap <code>Registry</code> Apply under module mutex; generation counter for diagnostics</li>
+      </ul>
+
+      <h2 id="dashboard">Dashboard WebSocket</h2>
+      <p>
+        <code>metrics.Bus</code> uses an RWMutex. Subscribers get a buffered channel
+        (<code>Subscribe(32)</code>). Publish is non-blocking: slow WS clients drop events
+        rather than stalling the request path. Each WS connection has a writer goroutine
+        reading from its subscription until disconnect.
+      </p>
+
+      <h2 id="shared">Shared state cheat sheet</h2>
+      <table>
+        <tr><th>State</th><th>Sync</th><th>Writers</th><th>Readers</th></tr>
+        <tr>
+          <td>Live <code>Config</code></td>
+          <td><code>atomic.Pointer</code></td>
+          <td>Watcher</td>
+          <td>Everyone</td>
+        </tr>
+        <tr>
+          <td><code>router.Engine</code></td>
+          <td><code>atomic.Pointer</code> in main</td>
+          <td>Watcher rebuild</td>
+          <td>Pipeline Route</td>
+        </tr>
+        <tr>
+          <td>Turn family sticky</td>
+          <td>Hub <code>mu</code></td>
+          <td>Bidi / RunSSE / EndParentRun</td>
+          <td>ShouldSticky*, Inherit*</td>
+        </tr>
+        <tr>
+          <td>contextgraph Store</td>
+          <td>Store mutex</td>
+          <td>Pipeline, MITM, loop</td>
+          <td>Sticky consult, dashboard API</td>
+        </tr>
+        <tr>
+          <td>Metrics history</td>
+          <td>Collector / HistoryStore locks</td>
+          <td>Pipeline wrap, MITM tags</td>
+          <td>Dashboard REST/WS</td>
+        </tr>
+      </table>
+
+      <h2 id="hazards">Hazards &amp; invariants</h2>
+      <ol>
+        <li>
+          <strong>Partial local RunSSE write:</strong> if encode fails after bytes were
+          written to Cursor, do not dial origin — the client already consumed a response.
+        </li>
+        <li>
+          <strong>Hub timeout vs late Bidi:</strong> Wait re-checks pending after timer to
+          avoid dropping a same-millisecond offer.
+        </li>
+        <li>
+          <strong>StickyCloud vs classifier:</strong> deny-local happens in MITM before
+          CompleteLocal; do not “fix” sticky by routing small_local inside the pipeline.
+        </li>
+        <li>
+          <strong>WS backpressure:</strong> event drops are expected under load; analytics
+          are best-effort, not transactional.
+        </li>
+        <li>
+          <strong>Loop cancel:</strong> always use WithoutCancel for hoop lifetime; HTTP
+          handlers must not share request ctx with multi-minute runners.
+        </li>
+        <li>
+          <strong>Blind tunnel:</strong> two Copy goroutines + WaitGroup; either direction
+          EOF tears down the CONNECT session.
+        </li>
+      </ol>
+
+      <p>
+        Sequence timing for Arm/Wait:
+        <a href="data-flow.html#hub-race">Data flow · hub races</a>. Sticky machine:
+        <a href="architecture-deep.html#sticky">Deep dive · sticky</a>.
+      </p>
+    </main>
+    <footer class="foot">
+      <a href="modules.html">← Modules</a> ·
+      <a href="architecture-deep.html">Deep dive</a>
+    </footer>
+  </div>
+</body>
+</html>

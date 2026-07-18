@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Loop Engineering · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a class="active" href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Hoops</div>
+      <h1>Loop Engineering</h1>
+      <p>
+        Per <a href="https://addyosmani.com/blog/loop-engineering/">Addy Osmani</a> and
+        <a href="https://github.com/cobusgreyling/loop-engineering">cobusgreyling</a>:
+        you design a <strong>system that prompts agents</strong> — observe → plan → act → evaluate → learn —
+        not a one-shot prompt, and <em>not</em> Cursor IDE <code>/loop</code> cron as the product definition.
+      </p>
+
+      <h2>Glider hoop cycle</h2>
+      <pre>Memory → Router → Planner → Actor → Critic (eval 0–1) → Learn → Memory
+         └─ stop on goal / score / max iterations / human gate</pre>
+
+      <h2>Hot-swappable stages</h2>
+      <table>
+        <tr><th>Stage</th><th>Role</th></tr>
+        <tr><td>router</td><td>Pick local / cloud / auto for following stages</td></tr>
+        <tr><td>planner</td><td>Discover / triage / decompose</td></tr>
+        <tr><td>actor</td><td>Produce the artifact</td></tr>
+        <tr><td>critic</td><td>Maker ≠ checker — score “done”</td></tr>
+        <tr><td>memory</td><td>Load/persist (contextgraph + hoop state)</td></tr>
+      </table>
+
+      <h2>UI</h2>
+      <p>Dashboard → <strong>Hoops &amp; Swarm</strong> (<code>http://127.0.0.1:8081</code>): compose goal, stages, self-learning, route=local, Start.</p>
+
+      <h3>Graph-first compose</h3>
+      <p>
+        Dashboard <strong>Graph editor</strong> uses <strong>Cytoscape.js 3.30.4</strong> (MIT, vendored under
+        <code>internal/dashboard/static/vendor/</code>) with <strong>cytoscape-edgehandles 4.0.1</strong>
+        for drawable / reconnectable edges. Stage nodes use Loop API kinds
+        (router / planner / actor / critic / memory); <strong>+ Code stage</strong> opens a dialog for
+        custom id, name, prompt, route, and critic eval_min on those kinds. Swarm is an orchestrator plus
+        worker threads. Edit on the canvas: Link mode + drag to create or reconnect edges, Delete to remove,
+        double-click an edge (or Edge type) to toggle flow vs feedback. Pipeline order for
+        <code>POST/PUT /api/loops</code> is derived from flow edges into <code>#hoop-stages-json</code>;
+        swarm roles sync from linked threads. Hoops &quot;Open graph editor&quot; / Edit graph shares that
+        state with Create / Update / Start / Stop.
+      </p>
+      <p>
+        Run swarm paints live ok/fail on worker nodes. Inspired by Slate's orchestrator/thread model
+        (<a href="https://randomlabs.ai/blog/slate">randomlabs.ai/blog/slate</a>), not a full thread-weaving UI.
+      </p>
+
+      <h2>Sample hoops</h2>
+      <p>Ready-to-run YAML under <code>samples/hoops/</code> — see <a href="samples.html">Sample hoops</a>.</p>
+      <p>Canonical doc: <code>planning/loop_engineering.md</code></p>
+
+      <h2>Architecture links</h2>
+      <ul>
+        <li><a href="architecture-deep.html#loop">Deep dive · Loop Engineering</a> — stages, EvalMin, Completer wiring</li>
+        <li><a href="architecture-deep.html#hotswap">Deep dive · Hot-swap &amp; swarm</a> — Registry Apply vs restart</li>
+        <li><a href="data-flow.html#loop-cycle">Data flow · hoop cycle</a> — Start → runCycle sequence</li>
+        <li><a href="concurrency.html#loop">Concurrency · loop runners</a> — WithoutCancel, one runner per id</li>
+        <li><a href="modules.html#loop-swarm">Modules · loop &amp; swarm</a> — package responsibilities</li>
+      </ul>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>

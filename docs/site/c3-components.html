@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>C3 Components · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <script type="module">
+    try {
+      const mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+      mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose",
+        themeVariables: { primaryColor: "#1a2330", primaryTextColor: "#e8eef5", lineColor: "#5eead4",
+          secondaryColor: "#243044", tertiaryColor: "#161d27" } });
+    } catch (_) {}
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a class="active" href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">C4 model · Level 3</div>
+      <h1>Components</h1>
+      <p>
+        Inside the Glider process: the shared orchestrator pipeline and the MITM fulfill path
+        are the two hot paths. Supporting components: router, transform, contextgraph, metrics,
+        loop/swarm, hot-swap registry, dashboard APIs. Code-level call chains:
+        <a href="c4-code.html">C4 Code</a>.
+      </p>
+
+      <div class="c4-strip">
+        <a href="c1-context.html">C1 Context</a>
+        <a href="c2-containers.html">C2 Containers</a>
+        <a class="active" href="c3-components.html">C3 Components</a>
+        <a href="c4-code.html">C4 Code</a>
+      </div>
+
+      <ol class="toc">
+        <li><a href="#harness">Shared harness components</a></li>
+        <li><a href="#mitm-c">MITM components</a></li>
+        <li><a href="#pipeline-steps">Pipeline step-by-step</a></li>
+        <li><a href="#hub-steps">Fulfill hub step-by-step</a></li>
+        <li><a href="#ops">Ops components</a></li>
+        <li><a href="#links">Drill down</a></li>
+      </ol>
+
+      <h2 id="harness">Shared harness components</h2>
+      <pre class="mermaid">flowchart LR
+  subgraph GW["Gateway handlers"]
+    H1["Handlers / streaming"]
+  end
+  subgraph MITM["MITM interceptor"]
+    IX["Interceptor"]
+    HUB["AgentFulfillHub"]
+  end
+  subgraph PIPE["PipelineCompleter"]
+    AL["ApplyModelAlias"]
+    TK["Tokenizer"]
+    RT["Router.Engine"]
+    TR["Transformer + BoundLocal"]
+    EX["Executor"]
+  end
+  subgraph SIDE["Side channels"]
+    CG["contextgraph.Store"]
+    EP["contextkit episodes"]
+    MT["metrics.Collector"]
+  end
+  H1 --> AL
+  IX --> HUB
+  HUB -->|DecideLocal / CompleteLocal| AL
+  AL --> TK --> RT --> TR --> EX
+  RT --> CG
+  EX --> MT
+  TR --> EP</pre>
+
+      <pre class="seq">Gateway Handlers ──Complete──────────────────────────┐
+MITM Interceptor ──DecideLocal / CompleteLocal───────┤
+Loop Manager ─────Complete (hoop stages)─────────────┤
+                                                     v
+                              PipelineCompleter.Handle
+                     alias → tokenize → route → [origin gate]
+                              → episodes? → BoundLocal → transform
+                              → Executor.Execute → metrics wrap
+                                                     │
+                     ┌───────────────┬───────────────┼──────────────┐
+                     v               v               v              v
+              backend.Registry   contextgraph    metrics.Bus    episodes
+              ollama|vllm|cloud     Store         Collector       Store</pre>
+
+      <table>
+        <tr><th>Component</th><th>Package</th><th>Job</th></tr>
+        <tr>
+          <td>PipelineCompleter</td>
+          <td><code>orchestrator</code></td>
+          <td>Ordered harness; <code>Complete</code> / <code>CompleteLocal</code> / <code>DecideLocal</code></td>
+        </tr>
+        <tr>
+          <td>Router Engine</td>
+          <td><code>router</code></td>
+          <td>Priority rules + explicit hard override + classifier / Starlark / ceiling</td>
+        </tr>
+        <tr>
+          <td>Tokenizer / Transformer</td>
+          <td><code>transform</code></td>
+          <td>Token estimate; opt-in rewrite; <code>BoundLocalContext</code>; episode inject</td>
+        </tr>
+        <tr>
+          <td>Executor</td>
+          <td><code>orchestrator</code></td>
+          <td>Queue, VRAM lifecycle, fallback chain, circuit breaker; optional FanOut</td>
+        </tr>
+        <tr>
+          <td>contextgraph</td>
+          <td><code>contextgraph</code></td>
+          <td>Append-only turn events + sticky / LiveCloudFamily index</td>
+        </tr>
+        <tr>
+          <td>Episodes</td>
+          <td><code>contextkit</code></td>
+          <td>Compressed session rings for local inject / swarm</td>
+        </tr>
+      </table>
+
+      <h2 id="mitm-c">MITM components</h2>
+      <pre class="mermaid">flowchart TB
+  CONNECT["CONNECT handler"] --> MATCH{"HostMatcher"}
+  MATCH -->|no| BLIND["blindTunnel"]
+  MATCH -->|yes| TLS["CA leaf + decrypt"]
+  TLS --> CLASS["ClassifyPath"]
+  CLASS --> OPENAI["OpenAI JSON → CompleteLocal"]
+  CLASS --> BIDI["BidiAppend extract"]
+  CLASS --> RUN["RunSSE Wait / fulfill"]
+  BIDI --> HUB["AgentFulfillHub\nArmLocal / ArmOrigin / sticky"]
+  RUN --> HUB
+  HUB -->|local offer| PIPE["CompleteLocal → RunSSE encode"]
+  HUB -->|origin| ORIG["dial Cursor origin"]</pre>
+
+      <table>
+        <tr><th>Component</th><th>File / type</th><th>Job</th></tr>
+        <tr>
+          <td>Proxy + CA</td>
+          <td><code>mitm.Proxy</code>, <code>ca.go</code></td>
+          <td>Listen :8082; mint leaf certs from <code>~/.glider/mitm</code></td>
+        </tr>
+        <tr>
+          <td>HostMatcher</td>
+          <td><code>hosts.go</code></td>
+          <td>Allowlist exact / <code>*.suffix</code>; else blind tunnel</td>
+        </tr>
+        <tr>
+          <td>Interceptor</td>
+          <td><code>intercept.go</code></td>
+          <td>Classify paths; StreamChat fulfill; Agent RPC fulfill wiring</td>
+        </tr>
+        <tr>
+          <td>AgentFulfillHub</td>
+          <td><code>agent_fulfill_hub.go</code></td>
+          <td>Correlate Bidi↔RunSSE; turn-family StickyCloud / StickyLocal</td>
+        </tr>
+        <tr>
+          <td>cursorrpc</td>
+          <td><code>internal/cursorrpc</code></td>
+          <td>Extract TipTap turn; RunSSE codec; root vs child detection</td>
+        </tr>
+      </table>
+
+      <h2 id="pipeline-steps">Pipeline step-by-step (tech per stage)</h2>
+      <ol class="steps">
+        <li>
+          <strong>Alias</strong>
+          <span class="tech">orchestrator.ApplyModelAlias · ModelAliases map · Metadata.OriginalModel</span>
+        </li>
+        <li>
+          <strong>Tokenize</strong>
+          <span class="tech">transform.Tokenizer.EstimateRequestTokens → Metadata.EstimatedTokens</span>
+        </li>
+        <li>
+          <strong>Route</strong>
+          <span class="tech">router.Engine.Route · ResolveBackendName · EventRouteDecided</span>
+          Priority: explicit → (MITM sticky outside engine) → tool_followup → classifier →
+          Starlark → ceiling → default. See <a href="routing.html">Routing</a>.
+        </li>
+        <li>
+          <strong>Origin gate (MITM only)</strong>
+          <span class="tech">CompleteOptions.OriginPassthrough · ErrOriginPassthrough</span>
+          Non-local → metrics <code>origin_passthrough</code>; interceptor tunnels to Cursor.
+        </li>
+        <li>
+          <strong>Local context bind</strong>
+          <span class="tech">InjectEpisodeContext · BoundLocalContext (latest_turn policy)</span>
+          Only when Target=local. Sticky origin never reaches here.
+        </li>
+        <li>
+          <strong>Transform (opt-in)</strong>
+          <span class="tech">Transformer.Apply · transform.enabled default false</span>
+        </li>
+        <li>
+          <strong>Execute</strong>
+          <span class="tech">Executor.Execute · Registry backend · VRAM warm · fallback / breaker</span>
+        </li>
+        <li>
+          <strong>Metrics + graph wrap</strong>
+          <span class="tech">goroutine drain chunks · LOCAL/CLOUD · EventFulfilledLocal · episodes</span>
+        </li>
+      </ol>
+
+      <h2 id="hub-steps">Fulfill hub step-by-step</h2>
+      <ol class="steps">
+        <li>
+          <strong>BidiAppend arrives</strong>
+          <span class="tech">cursorrpc.ExtractBidiCompletionRequest · TipTap latest turn</span>
+        </li>
+        <li>
+          <strong>Pre-DecideLocal belts</strong>
+          <span class="tech">explicit /cloud|/local · ShouldStickyCloudOrigin · wrap-up · InheritTurnFollowOn</span>
+          StickyCloud deny-local except allowlisted fresh TipTap user. See
+          <a href="architecture-deep.html#sticky">sticky state machine</a>.
+        </li>
+        <li>
+          <strong>DecideLocal (route only)</strong>
+          <span class="tech">PipelineCompleter.DecideLocal · no backend execute yet</span>
+        </li>
+        <li>
+          <strong>Arm hub</strong>
+          <span class="tech">ArmLocal(offer) or ArmOrigin · OpenTurnFamily · pending or signal waiter</span>
+        </li>
+        <li>
+          <strong>RunSSE Wait</strong>
+          <span class="tech">Wait(reqID, 800ms) · root only for text local · child → origin / would_local</span>
+        </li>
+        <li>
+          <strong>Fulfill or origin</strong>
+          <span class="tech">CompleteLocal + RunSSE encode · or dial api*.cursor.sh</span>
+        </li>
+      </ol>
+      <div class="note">
+        Full sequences: <a href="data-flow.html#path-b-text">data-flow Path B</a>.
+        Hub races / locks: <a href="concurrency.html">concurrency</a>.
+      </div>
+
+      <h2 id="ops">Ops components (loop, swarm, hotswap, metrics, dashboard)</h2>
+      <table>
+        <tr><th>Component</th><th>Package</th><th>Notes</th></tr>
+        <tr>
+          <td>Loop Manager</td>
+          <td><code>loop</code></td>
+          <td>Hoops: observe→plan→act→critique→learn via <code>runCycle</code>; stages hot-swappable</td>
+        </tr>
+        <tr>
+          <td>Swarm Runner</td>
+          <td><code>swarm</code></td>
+          <td>Fan-out workers + templates; flag-gated (stubs / partial productization)</td>
+        </tr>
+        <tr>
+          <td>Hot-swap Registry</td>
+          <td><code>swarm.Registry</code></td>
+          <td>Modules: fan_out, swarm, templates, classifier, loop stages</td>
+        </tr>
+        <tr>
+          <td>VRAM Manager</td>
+          <td><code>vram</code></td>
+          <td>Allocation strategy, idle unload; adapted into executor</td>
+        </tr>
+        <tr>
+          <td>Metrics Bus</td>
+          <td><code>metrics</code></td>
+          <td>Collector → Bus → WS + HistoryStore</td>
+        </tr>
+        <tr>
+          <td>Dashboard Server</td>
+          <td><code>dashboard</code></td>
+          <td>REST/WS operator surface (UI owned by another agent -- do not change layout here)</td>
+        </tr>
+      </table>
+
+      <h2 id="links">Drill down</h2>
+      <div class="level-map">
+        <a href="c4-code.html">
+          <span class="lvl">C4</span>
+          <span class="ttl">Code</span>
+          <p class="desc">Types, functions, call chains</p>
+        </a>
+        <a href="architecture-deep.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Deep dive</span>
+          <p class="desc">Sticky, hub, failures</p>
+        </a>
+        <a href="data-flow.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Data flow</span>
+          <p class="desc">ASCII sequences</p>
+        </a>
+        <a href="modules.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Modules</span>
+          <p class="desc">Package responsibilities</p>
+        </a>
+        <a href="concurrency.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Concurrency</span>
+          <p class="desc">Locks, channels, WS</p>
+        </a>
+        <a href="loop-engineering.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Loop Engineering</span>
+          <p class="desc">Hoop stages and eval</p>
+        </a>
+      </div>
+    </main>
+    <footer class="foot">
+      <a href="c2-containers.html">← C2</a> ·
+      <a href="c4-code.html">C4 Code →</a>
+    </footer>
+  </div>
+</body>
+</html>

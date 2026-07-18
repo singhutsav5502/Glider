@@ -4,6 +4,7 @@
     vram: document.getElementById("panel-vram"),
     rules: document.getElementById("panel-rules"),
     hoops: document.getElementById("panel-hoops"),
+    graphs: document.getElementById("panel-graphs"),
     settings: document.getElementById("panel-settings"),
   };
 
@@ -19,17 +20,44 @@
   let latencySum = 0;
   let gpuAssignmentDraft = {};
 
-  document.querySelectorAll(".tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      Object.values(panels).forEach((p) => p.classList.remove("active"));
-      panels[btn.dataset.tab].classList.add("active");
-      if (btn.dataset.tab === "vram") loadVRAM();
-      if (btn.dataset.tab === "rules") renderRulesEditor(currentCfg);
-      if (btn.dataset.tab === "hoops") refreshHoopsPanel();
-      if (btn.dataset.tab === "overview") loadSessions();
+  function activateTab(tabName, opts) {
+    const prev = document.querySelector(".tab.active")?.dataset?.tab;
+    const name = tabName && panels[tabName] ? tabName : "overview";
+    document.querySelectorAll(".tab").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === name);
     });
+    Object.entries(panels).forEach(([key, p]) => {
+      if (p) p.classList.toggle("active", key === name);
+    });
+    document.body.classList.toggle("graphs-tab-active", name === "graphs");
+    if (name === "vram") loadVRAM();
+    if (name === "rules") renderRulesEditor(currentCfg);
+    if (name === "hoops") {
+      refreshHoopsPanel();
+      startLiveBoardPoll();
+    } else     if (name === "graphs") {
+      refreshStageLiveThenRender();
+      startLiveBoardPoll();
+      const focusGraphs = () => {
+        renderStageGraph();
+        renderSwarmGraph();
+        resizeCyInstances();
+        const focus = opts && opts.focus;
+        if (focus === "swarm") {
+          document.getElementById("graphs-swarm-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else if (focus === "stage") {
+          document.getElementById("graphs-stage-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      };
+      requestAnimationFrame(() => requestAnimationFrame(focusGraphs));
+    } else if (prev === "hoops" || prev === "graphs") {
+      if (name !== "hoops" && name !== "graphs") stopLiveBoardPoll();
+    }
+    if (name === "overview") loadSessions();
+  }
+
+  document.querySelectorAll(".tab").forEach((btn) => {
+    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
   });
 
   const logEl = document.getElementById("request-log");
@@ -70,7 +98,7 @@
     updateDistBar(localPct, cloudPct, cannedPct);
     document.getElementById("m-tokens").textContent = tokenTotal.toLocaleString();
     document.getElementById("m-latency").textContent =
-      requests ? `${(latencySum / requests).toFixed(1)}ms` : "â€”";
+      requests ? `${(latencySum / requests).toFixed(1)}ms` : "--";
   }
 
   function fmtPct(n) {
@@ -171,7 +199,7 @@
   }
 
   function addLog(data, opts) {
-    // Tunnel opens / non-LLM skips are counters only â€” omit from Overview table
+    // Tunnel opens / non-LLM skips are counters only -- omit from Overview table
     // (also filters historical sessions that recorded decrypt/skip before the fix).
     if (!isRequestLogRow(data)) {
       return;
@@ -204,12 +232,12 @@
         : data.original_model;
     }
     if (modelLabel) parts.push(modelLabel);
-    const hostModel = parts.join(" Â· ") || "â€”";
-    const rule = data.rule || "â€”";
+    const hostModel = parts.join(" | ") || "--";
+    const rule = data.rule || "--";
     const hasLatency = data.latency_ms != null && data.latency_ms !== "";
     const hasTokens = data.tokens != null && data.tokens !== "";
-    const latency = hasLatency ? Number(data.latency_ms).toFixed(1) : "â€”";
-    const tokens = hasTokens ? data.tokens : "â€”";
+    const latency = hasLatency ? Number(data.latency_ms).toFixed(1) : "--";
+    const tokens = hasTokens ? data.tokens : "--";
     row.innerHTML = `<span>${time}</span><span>${data.mode || ""}</span><span>${action}</span><span>${hostModel}</span><span>${rule}</span><span>${latency}</span><span>${tokens}</span>`;
     if (prepend) logEl.prepend(row);
     else logEl.appendChild(row);
@@ -445,11 +473,11 @@
     }
     g.innerHTML = gpus.map((gpu) => {
       if (gpu.error) {
-        return `<div class="gauge"><div class="gauge-label">GPU ${gpu.index} â€” ${gpu.error}</div></div>`;
+        return `<div class="gauge"><div class="gauge-label">GPU ${gpu.index} -- ${gpu.error}</div></div>`;
       }
       const usedPct = gpu.total_bytes ? Math.round((gpu.used_bytes / gpu.total_bytes) * 100) : 0;
       return `<div class="gauge">
-        <div class="gauge-label">GPU ${gpu.index} â€” ${usedPct}% used Â· ${gpu.used_mb}/${gpu.total_mb} MB</div>
+        <div class="gauge-label">GPU ${gpu.index} -- ${usedPct}% used | ${gpu.used_mb}/${gpu.total_mb} MB</div>
         <div class="gauge-bar"><div class="gauge-used" style="width:${usedPct}%"></div></div>
       </div>`;
     }).join("");
@@ -461,7 +489,7 @@
     gpuAssignmentDraft = { ...(snap.gpu_assignments || {}) };
     const gpuCount = (snap.gpus || []).filter((g) => !g.error).length;
     const options = [];
-    options.push(`<option value="">â€”</option>`);
+    options.push(`<option value="">--</option>`);
     const n = Math.max(gpuCount, 1);
     for (let i = 0; i < n; i++) {
       options.push(`<option value="${i}">${i}</option>`);
@@ -555,7 +583,7 @@
           <button type="button" class="linkish rule-del" title="Remove this rule">Remove</button>
         </div>
         <div class="rule-card-grid">
-          <label title="explicit: /local /cloud commands Â· context_size: token threshold Â· script: Starlark file Â· always: default fallback Â· regex: pattern match">Trigger type
+          <label title="explicit: /local /cloud commands | context_size: token threshold | script: Starlark file | always: default fallback | regex: pattern match">Trigger type
             <select data-f="trigger.type">
               ${opt("explicit", trig.type)}
               ${opt("context_size", trig.type)}
@@ -569,7 +597,7 @@
           <label title="Starlark script path relative to process cwd">Script file<input data-f="trigger.file" value="${esc(trig.file || "")}" /></label>
           <label title="Comparison operator for context_size (>, >=, <, <=, ==)">Operator<input data-f="trigger.operator" value="${esc(trig.operator || "")}" /></label>
           <label title="Token count threshold for context_size rules">Value<input data-f="trigger.value" type="number" value="${trig.value ?? 0}" /></label>
-          <label title="local = Ollama/vLLM Â· cloud = BYOK (gateway) or origin passthrough (MITM)">Action target
+          <label title="local = Ollama/vLLM | cloud = BYOK (gateway) or origin passthrough (MITM)">Action target
             <select data-f="action.target">
               ${opt("local", act.target)}
               ${opt("cloud", act.target)}
@@ -702,7 +730,7 @@
     (sessions || []).forEach((s) => {
       const optEl = document.createElement("option");
       optEl.value = s.id;
-      const label = s.current ? `Current Â· ${s.id.slice(0, 12)}â€¦` : `${new Date(s.started_at).toLocaleString()} Â· ${s.request_count} req`;
+      const label = s.current ? `Current | ${s.id.slice(0, 12)}...` : `${new Date(s.started_at).toLocaleString()} | ${s.request_count} req`;
       optEl.textContent = label;
       if (s.current) optEl.selected = true;
       sel.appendChild(optEl);
@@ -724,7 +752,7 @@
     if (aggRes.ok) {
       const agg = await aggRes.json();
       const s = agg.session || {};
-      meta.textContent = `${s.request_count || 0} requests Â· ${s.token_total || 0} tokens Â· avg ${Number(agg.avg_latency_ms || 0).toFixed(1)}ms`;
+      meta.textContent = `${s.request_count || 0} requests | ${s.token_total || 0} tokens | avg ${Number(agg.avg_latency_ms || 0).toFixed(1)}ms`;
       if (!isLive) {
         tokenTotal = s.token_total || 0;
         latencySum = s.latency_sum_ms || 0;
@@ -744,7 +772,7 @@
       const reqRes = await fetch(`/api/sessions/${encodeURIComponent(id)}/requests?limit=200`);
       if (reqRes.ok) {
         const reqs = await reqRes.json();
-        // API returns newest first; append in reverse so newest ends on top via prepend... already newest first, prepend each would reverse â€” append in order
+        // API returns newest first; append in reverse so newest ends on top via prepend... already newest first, prepend each would reverse -- append in order
         reqs.forEach((r) => addLog(r, { live: false, prepend: false }));
       }
     } else if (logEl.children.length === 0) {
@@ -832,9 +860,1573 @@
     loadYamlEditor();
   });
 
-  async function refreshHoopsPanel() {
-    await Promise.all([loadHoops(), loadHotSwap(), loadSwarmTemplates()]);
+
+  /* ===== Hoops & Swarm + Graph editor (shared stage/swarm state) ===== */
+  const DEFAULT_STAGES = ["router", "planner", "actor", "critic", "memory"];
+  const SAMPLE_STAGES = ["router", "planner", "actor", "critic", "memory"];
+  /** Loop API StageKind values only (see internal/loop/stages.go). */
+  const STAGE_KINDS = ["router", "planner", "actor", "critic", "memory"];
+  let liveBoardTimer = null;
+  let liveWsConnected = false;
+  let hotswapGenCache = {};
+  let stageDnd = { kind: null, from: null, index: -1, uid: null };
+  let lastHoopsSnap = "";
+  let lastHotswapSnap = "";
+  let stageNodes = [];
+  /** @type {{id:string,source:string,target:string,kind:string}[]} */
+  let stageEdges = [];
+  let stageSelectedUid = null;
+  let stageSelectedEdgeId = null;
+  let stageLiveStatus = {};
+  let stageUidSeq = 0;
+  let swarmThreads = [];
+  /** thread uids linked from orchestrator */
+  let swarmLinks = [];
+  let swarmSelectedUid = null;
+  let swarmUidSeq = 0;
+  let suppressRolesSync = false;
+  let stageCy = null;
+  let swarmCy = null;
+  let stageCyBound = false;
+  let swarmCyBound = false;
+  let suppressCySelect = false;
+  let stageEh = null;
+  let swarmEh = null;
+  let suppressEdgeSync = false;
+  let stageLinkMode = false;
+  let swarmLinkMode = false;
+  let stageEditUid = null;
+
+  const CY_BASE_STYLE = [
+    {
+      selector: "node",
+      style: {
+        shape: "round-rectangle",
+        width: 96,
+        height: 44,
+        "background-color": "#ffffff",
+        "border-width": 1.5,
+        "border-color": "#e5e7eb",
+        label: "data(label)",
+        "font-family": "IBM Plex Mono, ui-monospace, monospace",
+        "font-size": 11,
+        color: "#000000",
+        "text-valign": "center",
+        "text-halign": "center",
+        "text-wrap": "wrap",
+        "text-max-width": 88,
+        "overlay-padding": 4,
+      },
+    },
+    {
+      selector: "node.orch",
+      style: {
+        width: 108,
+        height: 52,
+        "background-color": "#f8fafc",
+        "border-color": "#2563eb",
+        "font-size": 10,
+      },
+    },
+    {
+      selector: "node:selected",
+      style: {
+        "border-width": 2.5,
+        "border-color": "#2563eb",
+        "background-color": "#eff6ff",
+      },
+    },
+    {
+      selector: "node.status-ok",
+      style: { "border-color": "#16a34a" },
+    },
+    {
+      selector: "node.status-fail",
+      style: { "border-color": "#b91c1c" },
+    },
+    {
+      selector: "node.status-running",
+      style: { "border-color": "#2563eb", "border-width": 2.5 },
+    },
+    {
+      selector: "node.eh-handle",
+      style: {
+        height: 12,
+        width: 12,
+        shape: "ellipse",
+        "background-color": "#64748b",
+        "border-width": 0,
+        label: "",
+      },
+    },
+    {
+      selector: "node.eh-hover",
+      style: {
+        "background-color": "#2563eb",
+      },
+    },
+    {
+      selector: "edge",
+      style: {
+        width: 1.5,
+        "curve-style": "bezier",
+        "line-color": "#e5e7eb",
+        "target-arrow-shape": "triangle",
+        "target-arrow-color": "#e5e7eb",
+        "arrow-scale": 0.9,
+      },
+    },
+    {
+      selector: "edge:selected",
+      style: {
+        width: 2.5,
+        "line-color": "#2563eb",
+        "target-arrow-color": "#2563eb",
+      },
+    },
+    {
+      selector: "edge.feedback",
+      style: {
+        "curve-style": "unbundled-bezier",
+        "control-point-distances": [60],
+        "control-point-weights": [0.5],
+        "line-style": "dashed",
+        "line-color": "#b45309",
+        "target-arrow-color": "#b45309",
+      },
+    },
+    {
+      selector: "edge.feedback:selected",
+      style: {
+        "line-color": "#92400e",
+        "target-arrow-color": "#92400e",
+        width: 2.5,
+      },
+    },
+    {
+      selector: "edge.status-ok",
+      style: { "line-color": "#16a34a", "target-arrow-color": "#16a34a" },
+    },
+    {
+      selector: "edge.status-fail",
+      style: { "line-color": "#b91c1c", "target-arrow-color": "#b91c1c" },
+    },
+    {
+      selector: "edge.status-running",
+      style: { "line-color": "#2563eb", "target-arrow-color": "#2563eb" },
+    },
+    {
+      selector: ".eh-preview, .eh-ghost-edge",
+      style: {
+        "line-color": "#2563eb",
+        "target-arrow-color": "#2563eb",
+        "line-style": "dashed",
+      },
+    },
+  ];
+
+  function cyAvailable() {
+    return typeof window.cytoscape === "function";
   }
+
+  function ehAvailable() {
+    return cyAvailable() && stageCy && typeof stageCy.edgehandles === "function";
+  }
+
+  function resizeCyInstances() {
+    if (stageCy) {
+      stageCy.resize();
+      stageCy.fit(undefined, 48);
+    }
+    if (swarmCy) {
+      swarmCy.resize();
+      swarmCy.fit(undefined, 40);
+    }
+  }
+
+  function isHoopsTabActive() {
+    return panels.hoops && panels.hoops.classList.contains("active");
+  }
+
+  function isGraphsTabActive() {
+    return panels.graphs && panels.graphs.classList.contains("active");
+  }
+
+  function isLiveLoopTabActive() {
+    return isHoopsTabActive() || isGraphsTabActive();
+  }
+
+  function openGraphEditor(focus) {
+    activateTab("graphs", { focus: focus || "stage" });
+  }
+
+  function initGraphEditorNav() {
+    document.querySelectorAll(".open-graph-editor").forEach((btn) => {
+      btn.addEventListener("click", () => openGraphEditor(btn.dataset.graphFocus || "stage"));
+    });
+    document.getElementById("graphs-back-hoops")?.addEventListener("click", () => activateTab("hoops"));
+  }
+
+  async function refreshStageLiveThenRender() {
+    try {
+      const res = await fetch("/api/loops");
+      const list = await res.json();
+      refreshStageLiveFromLoops(Array.isArray(list) ? list : []);
+    } catch (_) {}
+    renderStageGraph();
+    renderSwarmGraph();
+  }
+
+  function nextStageUid(kind) {
+    stageUidSeq += 1;
+    return (kind || "stage") + "_" + stageUidSeq;
+  }
+
+  function nextSwarmUid(role) {
+    swarmUidSeq += 1;
+    return "thread_" + (role || "w") + "_" + swarmUidSeq;
+  }
+
+  function nextEdgeId(prefix, source, target) {
+    return prefix + "_" + source + "_" + target + "_" + Date.now().toString(36);
+  }
+
+  function coerceStageKind(kind) {
+    const k = String(kind || "actor").toLowerCase().replace(/[^a-z0-9_-]+/g, "");
+    if (STAGE_KINDS.includes(k)) return k;
+    return "actor";
+  }
+
+  function normalizeStageNode(raw, idx) {
+    if (typeof raw === "string") {
+      const kind = coerceStageKind(raw);
+      return {
+        uid: nextStageUid(kind),
+        kind,
+        id: kind,
+        name: kind,
+        enabled: true,
+        prompt: "",
+        route: "",
+        eval_min: 0,
+        x: null,
+        y: null,
+      };
+    }
+    const rawKind = String(raw.kind || "actor").toLowerCase();
+    const kind = coerceStageKind(rawKind === "code" ? "actor" : rawKind);
+    const id = String(raw.id || raw.name || kind);
+    const name = String(raw.name || id || kind);
+    return {
+      uid: raw.uid || nextStageUid(kind + (idx != null ? idx : "")),
+      kind,
+      id,
+      name,
+      enabled: raw.enabled !== false && !raw.disabled,
+      prompt: raw.prompt || "",
+      route: raw.route || "",
+      eval_min: typeof raw.eval_min === "number" ? raw.eval_min : 0,
+      x: typeof raw.x === "number" ? raw.x : null,
+      y: typeof raw.y === "number" ? raw.y : null,
+    };
+  }
+
+  function hasFlowPath(from, to) {
+    const adj = {};
+    stageEdges
+      .filter((e) => e.kind !== "feedback")
+      .forEach((e) => {
+        (adj[e.source] = adj[e.source] || []).push(e.target);
+      });
+    const seen = new Set();
+    const stack = [from];
+    while (stack.length) {
+      const u = stack.pop();
+      if (u === to) return true;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      (adj[u] || []).forEach((v) => stack.push(v));
+    }
+    return false;
+  }
+
+  function inferEdgeKind(source, target) {
+    const src = stageNodes.find((n) => n.uid === source);
+    const tgt = stageNodes.find((n) => n.uid === target);
+    if (src && tgt && src.kind === "critic" && tgt.kind === "planner") return "feedback";
+    if (hasFlowPath(target, source)) return "feedback";
+    return "flow";
+  }
+
+  function syncSwarmRolesFromGraph() {
+    const roles = swarmThreads.filter((t) => swarmLinks.includes(t.uid)).map((t) => t.role);
+    writeRolesInput(roles);
+  }
+
+  function defaultEdgesForNodes(nodes) {
+    const edges = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      edges.push({
+        id: "flow_" + nodes[i].uid + "_" + nodes[i + 1].uid,
+        source: nodes[i].uid,
+        target: nodes[i + 1].uid,
+        kind: "flow",
+      });
+    }
+    const critic = nodes.find((s) => s.kind === "critic");
+    const planner = nodes.find((s) => s.kind === "planner");
+    if (critic && planner && critic.uid !== planner.uid) {
+      edges.push({
+        id: "feedback_" + critic.uid + "_" + planner.uid,
+        source: critic.uid,
+        target: planner.uid,
+        kind: "feedback",
+      });
+    }
+    return edges;
+  }
+
+  function reorderStagesFromFlowEdges() {
+    if (!stageNodes.length) return;
+    const byUid = Object.fromEntries(stageNodes.map((n) => [n.uid, n]));
+    const uids = stageNodes.map((n) => n.uid);
+    const flow = stageEdges.filter((e) => e.kind !== "feedback");
+    const indeg = Object.fromEntries(uids.map((u) => [u, 0]));
+    const adj = Object.fromEntries(uids.map((u) => [u, []]));
+    flow.forEach((e) => {
+      if (!byUid[e.source] || !byUid[e.target]) return;
+      adj[e.source].push(e.target);
+      indeg[e.target] = (indeg[e.target] || 0) + 1;
+    });
+    const q = uids.filter((u) => (indeg[u] || 0) === 0);
+    const ordered = [];
+    while (q.length) {
+      const u = q.shift();
+      ordered.push(u);
+      (adj[u] || []).forEach((v) => {
+        indeg[v] -= 1;
+        if (indeg[v] === 0) q.push(v);
+      });
+    }
+    uids.forEach((u) => {
+      if (!ordered.includes(u)) ordered.push(u);
+    });
+    stageNodes = ordered.map((u) => byUid[u]).filter(Boolean);
+  }
+
+  function stagesFromKinds(kinds) {
+    return (kinds || []).map((k, i) => normalizeStageNode(k, i));
+  }
+
+  function setLiveWs(text, ok) {
+    const el = document.getElementById("live-ws");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle("ok", !!ok);
+    el.classList.toggle("bad", ok === false);
+  }
+
+  function startLiveBoardPoll() {
+    stopLiveBoardPoll();
+    tickLiveBoard();
+    liveBoardTimer = setInterval(() => {
+      if (isLiveLoopTabActive()) tickLiveBoard();
+      else stopLiveBoardPoll();
+    }, 2000);
+  }
+
+  function stopLiveBoardPoll() {
+    if (liveBoardTimer) {
+      clearInterval(liveBoardTimer);
+      liveBoardTimer = null;
+    }
+  }
+
+  async function tickLiveBoard() {
+    await refreshLiveBoard();
+    if (isHoopsTabActive()) {
+      await Promise.all([loadHoops(), loadHotSwap()]);
+    }
+  }
+
+  async function refreshLiveBoard() {
+    setLiveWs(liveWsConnected ? "Connected" : "Disconnected", liveWsConnected);
+    const [loopsRes, modsRes, metricsRes, ctxRes] = await Promise.allSettled([
+      fetch("/api/loops").then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/hotswap/modules").then((r) => (r.ok ? r.json() : {})),
+      fetch("/api/metrics").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/context/recent?limit=1").then((r) => (r.ok ? r.json() : null)),
+    ]);
+
+    const loops = loopsRes.status === "fulfilled" && Array.isArray(loopsRes.value) ? loopsRes.value : [];
+    refreshStageLiveFromLoops(loops);
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = v;
+    };
+    set("live-hoops", String(loops.length));
+    const running = loops.filter((st) => String(st.status || "").toLowerCase() === "running").length;
+    set("live-running", String(running));
+
+    if (metricsRes.status === "fulfilled" && metricsRes.value) {
+      const dist = metricsRes.value.distribution || {};
+      if (dist.total > 0 || dist.local_pct != null) {
+        const lp = dist.local_pct != null ? Number(dist.local_pct) : 0;
+        const cp = dist.cloud_pct != null ? Number(dist.cloud_pct) : 0;
+        set("live-route", fmtPct(lp) + "% / " + fmtPct(cp) + "%");
+      } else if (metricsRes.value.context_routes) {
+        const cr = metricsRes.value.context_routes;
+        set("live-route", (cr.local || 0) + " / " + (cr.cloud || 0));
+      } else {
+        set("live-route", "--");
+      }
+    } else {
+      set("live-route", "--");
+    }
+
+    if (modsRes.status === "fulfilled" && modsRes.value) {
+      const data = modsRes.value;
+      let mods = data.modules?.length ? data.modules : (data.catalog || []);
+      const on = mods.filter((m) => m.enabled !== false).length;
+      set("live-modules", on + "/" + (mods.length || 0));
+    } else {
+      set("live-modules", "--");
+    }
+
+    if (ctxRes.status === "fulfilled" && ctxRes.value?.stats?.turns != null) {
+      set("live-ctx", String(ctxRes.value.stats.turns));
+    } else if (ctxRes.status === "fulfilled" && Array.isArray(ctxRes.value?.turns)) {
+      set("live-ctx", String(ctxRes.value.turns.length));
+    } else {
+      set("live-ctx", "--");
+    }
+  }
+
+  function statusBadgeClass(status) {
+    const s = String(status || "idle").toLowerCase();
+    if (s === "running") return "running";
+    if (s === "failed") return "failed";
+    if (s === "completed") return "completed";
+    if (s === "stopped") return "stopped";
+    return "idle";
+  }
+
+  function syncStagesJSON() {
+    const hidden = document.getElementById("hoop-stages-json");
+    if (!hidden) return stageNodes.slice();
+    reorderStagesFromFlowEdges();
+    const payload = stageNodes.map((n) => {
+      const kind = coerceStageKind(n.kind);
+      const row = {
+        kind,
+        id: n.id || kind,
+        name: n.name || kind,
+        enabled: n.enabled !== false,
+      };
+      if (n.prompt) row.prompt = n.prompt;
+      if (n.route) row.route = n.route;
+      if (kind === "critic" && n.eval_min > 0) row.eval_min = n.eval_min;
+      return row;
+    });
+    hidden.value = JSON.stringify(payload);
+    const empty = document.getElementById("stage-graph-empty");
+    const host = document.getElementById("stage-graph-host");
+    if (empty) empty.hidden = stageNodes.length > 0;
+    if (host) host.classList.toggle("has-nodes", stageNodes.length > 0);
+    const pipeEmpty = document.getElementById("stage-pipeline-empty");
+    if (pipeEmpty) pipeEmpty.hidden = stageNodes.length > 0;
+    const pipe = document.getElementById("stage-pipeline");
+    if (pipe) pipe.classList.toggle("has-chips", stageNodes.length > 0);
+    return payload;
+  }
+
+  function readStagesFromJSON() {
+    const hidden = document.getElementById("hoop-stages-json");
+    if (!hidden) return stageNodes.slice();
+    try {
+      const v = JSON.parse(hidden.value || "[]");
+      if (!Array.isArray(v)) return [];
+      return v.map((x, i) => normalizeStageNode(x, i));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function updateStageToolbar() {
+    const has = !!stageSelectedUid && stageNodes.some((n) => n.uid === stageSelectedUid);
+    const hasEdge = !!stageSelectedEdgeId && stageEdges.some((e) => e.id === stageSelectedEdgeId);
+    ["stage-node-edit", "stage-node-up", "stage-node-down"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !has;
+    });
+    const rem = document.getElementById("stage-node-remove");
+    if (rem) rem.disabled = !has && !hasEdge;
+    const edgeBtn = document.getElementById("stage-edge-toggle");
+    if (edgeBtn) edgeBtn.disabled = !hasEdge;
+  }
+
+  function setStageLinkMode(on) {
+    stageLinkMode = !!on;
+    const btn = document.getElementById("stage-link-mode");
+    const host = document.getElementById("stage-graph-host");
+    if (btn) {
+      btn.setAttribute("aria-pressed", stageLinkMode ? "true" : "false");
+      btn.textContent = stageLinkMode ? "Link mode: on" : "Link mode";
+    }
+    if (host) host.classList.toggle("link-mode-on", stageLinkMode);
+    if (stageEh) {
+      if (stageLinkMode) stageEh.enableDrawMode();
+      else stageEh.disableDrawMode();
+    }
+  }
+
+  function setSwarmLinkMode(on) {
+    swarmLinkMode = !!on;
+    const btn = document.getElementById("swarm-link-mode");
+    const host = document.getElementById("swarm-graph-host");
+    if (btn) {
+      btn.setAttribute("aria-pressed", swarmLinkMode ? "true" : "false");
+      btn.textContent = swarmLinkMode ? "Link mode: on" : "Link mode";
+    }
+    if (host) host.classList.toggle("link-mode-on", swarmLinkMode);
+    if (swarmEh) {
+      if (swarmLinkMode) swarmEh.enableDrawMode();
+      else swarmEh.disableDrawMode();
+    }
+  }
+
+  function selectStageNode(uid) {
+    stageSelectedUid = uid;
+    if (uid) stageSelectedEdgeId = null;
+    updateStageToolbar();
+    if (stageCy) {
+      suppressCySelect = true;
+      stageCy.elements().unselect();
+      if (uid) {
+        const el = stageCy.getElementById(uid);
+        if (el && el.nonempty()) el.select();
+      }
+      suppressCySelect = false;
+    }
+  }
+
+  function selectStageEdge(eid) {
+    stageSelectedEdgeId = eid;
+    if (eid) stageSelectedUid = null;
+    updateStageToolbar();
+    if (stageCy) {
+      suppressCySelect = true;
+      stageCy.elements().unselect();
+      if (eid) {
+        const el = stageCy.getElementById(eid);
+        if (el && el.nonempty()) el.select();
+      }
+      suppressCySelect = false;
+    }
+  }
+
+  function defaultStagePosition(i, n, hostW, hostH) {
+    const w = Math.max(hostW || 640, 320);
+    const h = Math.max(hostH || 420, 280);
+    const padX = 80;
+    const padY = Math.min(h * 0.35, 120);
+    const usable = Math.max(w - padX * 2, 80);
+    const t = n <= 1 ? 0.5 : i / (n - 1);
+    return {
+      x: padX + usable * t,
+      y: padY + Math.sin(t * Math.PI) * 36,
+    };
+  }
+
+  function buildStageCyElements() {
+    const host = document.getElementById("stage-graph-host");
+    const w = host?.clientWidth || 640;
+    const h = host?.clientHeight || 420;
+    const n = stageNodes.length;
+    const nodes = stageNodes.map((node, i) => {
+      const live = stageLiveStatus[node.kind] || "idle";
+      let x = typeof node.x === "number" ? node.x : null;
+      let y = typeof node.y === "number" ? node.y : null;
+      if (x == null || y == null) {
+        const p = defaultStagePosition(i, n, w, h);
+        x = p.x;
+        y = p.y;
+        node.x = x;
+        node.y = y;
+      }
+      return {
+        group: "nodes",
+        data: {
+          id: node.uid,
+          label: (node.name || node.kind).slice(0, 14) + "\n" + node.kind,
+          kind: node.kind,
+          status: live,
+        },
+        position: { x, y },
+        classes: "status-" + live,
+      };
+    });
+    const uidSet = new Set(stageNodes.map((n) => n.uid));
+    const edges = stageEdges
+      .filter((e) => uidSet.has(e.source) && uidSet.has(e.target))
+      .map((e) => {
+        const tgt = stageNodes.find((n) => n.uid === e.target);
+        const st = stageLiveStatus[tgt?.kind] || "idle";
+        const classes = [e.kind === "feedback" ? "feedback" : "", "status-" + st].filter(Boolean).join(" ");
+        return {
+          group: "edges",
+          data: {
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            kind: e.kind || "flow",
+          },
+          classes,
+        };
+      });
+    return nodes.concat(edges);
+  }
+
+  function upsertStageEdge(source, target, kind) {
+    const k = kind === "feedback" ? "feedback" : "flow";
+    if (!source || !target || source === target) return;
+    if (!stageNodes.some((n) => n.uid === source) || !stageNodes.some((n) => n.uid === target)) return;
+    if (k === "flow") {
+      stageEdges = stageEdges.filter((e) => !(e.kind !== "feedback" && e.source === source));
+    } else {
+      stageEdges = stageEdges.filter((e) => !(e.kind === "feedback" && e.source === source && e.target === target));
+    }
+    stageEdges.push({
+      id: nextEdgeId(k, source, target),
+      source,
+      target,
+      kind: k,
+    });
+    if (k === "flow") reorderStagesFromFlowEdges();
+  }
+
+  function removeStageEdgeById(eid) {
+    stageEdges = stageEdges.filter((e) => e.id !== eid);
+    if (stageSelectedEdgeId === eid) stageSelectedEdgeId = null;
+  }
+
+  function toggleSelectedStageEdgeKind() {
+    const e = stageEdges.find((x) => x.id === stageSelectedEdgeId);
+    if (!e) return;
+    e.kind = e.kind === "feedback" ? "flow" : "feedback";
+    if (e.kind === "flow") reorderStagesFromFlowEdges();
+    renderStageGraph();
+    showHoopsOk("Edge is now " + e.kind);
+  }
+
+  function makeEdgehandles(cy, onComplete) {
+    if (!cy || typeof cy.edgehandles !== "function") return null;
+    const eh = cy.edgehandles({
+      canConnect: (source, target) => source && target && !source.same(target),
+      edgeParams: () => ({ data: { kind: "flow" }, classes: "eh-ghost" }),
+      hoverDelay: 80,
+      snap: true,
+      snapThreshold: 36,
+      snapFrequency: 15,
+      noEdgeEventsInDraw: true,
+      disableBrowserGestures: true,
+    });
+    cy.on("ehcomplete", (_ev, sourceNode, targetNode, added) => {
+      if (suppressEdgeSync) return;
+      const source = sourceNode.id();
+      const target = targetNode.id();
+      if (added && added.length) added.remove();
+      onComplete(source, target);
+    });
+    return eh;
+  }
+
+  function ensureStageCy() {
+    if (stageCy || !cyAvailable()) return stageCy;
+    const host = document.getElementById("stage-graph-host");
+    if (!host) return null;
+    stageCy = window.cytoscape({
+      container: host,
+      elements: [],
+      style: CY_BASE_STYLE,
+      layout: { name: "preset" },
+      minZoom: 0.35,
+      maxZoom: 2.5,
+      wheelSensitivity: 0.25,
+      boxSelectionEnabled: false,
+      selectionType: "single",
+    });
+    if (!stageCyBound) {
+      stageCyBound = true;
+      stageCy.on("tap", "node", (ev) => {
+        if (suppressCySelect) return;
+        if (ev.target.hasClass("eh-handle")) return;
+        selectStageNode(ev.target.id());
+      });
+      stageCy.on("tap", "edge", (ev) => {
+        if (suppressCySelect) return;
+        selectStageEdge(ev.target.id());
+      });
+      stageCy.on("tap", (ev) => {
+        if (ev.target === stageCy) {
+          selectStageNode(null);
+          selectStageEdge(null);
+        }
+      });
+      stageCy.on("dbltap", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle")) return;
+        selectStageNode(ev.target.id());
+        editSelectedStageNode();
+      });
+      stageCy.on("dbltap", "edge", (ev) => {
+        selectStageEdge(ev.target.id());
+        toggleSelectedStageEdgeKind();
+      });
+      stageCy.on("dragfree", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle")) return;
+        const node = stageNodes.find((n) => n.uid === ev.target.id());
+        if (!node) return;
+        const p = ev.target.position();
+        node.x = p.x;
+        node.y = p.y;
+        syncStagesJSON();
+      });
+      stageCy.on("mouseover", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle")) return;
+        const node = stageNodes.find((n) => n.uid === ev.target.id());
+        if (!node) return;
+        const live = stageLiveStatus[node.kind] || "idle";
+        host.title =
+          (node.name || node.kind) +
+          " | kind: " +
+          node.kind +
+          " | status: " +
+          live +
+          (node.prompt ? " | prompt set" : "");
+      });
+      stageCy.on("mouseout", "node", () => {
+        host.title = "";
+      });
+      stageEh = makeEdgehandles(stageCy, (source, target) => {
+        const kind = inferEdgeKind(source, target);
+        upsertStageEdge(source, target, kind);
+        renderStageGraph();
+        showHoopsOk((kind === "feedback" ? "Feedback " : "Linked ") + source + " -> " + target);
+      });
+      if (stageLinkMode) stageEh?.enableDrawMode();
+    }
+    return stageCy;
+  }
+
+  function renderStageGraph() {
+    syncStagesJSON();
+    syncPipelineChipsFromNodes();
+    updateStageToolbar();
+    const empty = document.getElementById("stage-graph-empty");
+    const host = document.getElementById("stage-graph-host");
+    if (empty) empty.hidden = stageNodes.length > 0;
+    if (host) host.classList.toggle("has-nodes", stageNodes.length > 0);
+    if (!cyAvailable()) return;
+    if (!isGraphsTabActive() && !stageCy) return;
+    ensureStageCy();
+    if (!stageCy) return;
+    const els = buildStageCyElements();
+    suppressEdgeSync = true;
+    stageCy.batch(() => {
+      stageCy.elements().remove();
+      if (els.length) stageCy.add(els);
+      stageCy.elements().unselect();
+      if (stageSelectedUid) {
+        const sel = stageCy.getElementById(stageSelectedUid);
+        if (sel.nonempty()) sel.select();
+      } else if (stageSelectedEdgeId) {
+        const sel = stageCy.getElementById(stageSelectedEdgeId);
+        if (sel.nonempty()) sel.select();
+      }
+    });
+    suppressEdgeSync = false;
+    stageCy.resize();
+  }
+
+  function syncPipelineChipsFromNodes() {
+    const pipe = document.getElementById("stage-pipeline");
+    if (!pipe) return;
+    const existing = [...pipe.querySelectorAll(".stage-chip.in-pipeline")];
+    const kinds = stageNodes.map((n) => n.kind);
+    const same =
+      existing.length === kinds.length &&
+      existing.every((c, i) => c.dataset.kind === kinds[i] && c.dataset.uid === stageNodes[i].uid);
+    if (same) {
+      syncStagesJSON();
+      return;
+    }
+    existing.forEach((c) => c.remove());
+    stageNodes.forEach((n) => pipe.appendChild(makePipelineChip(n)));
+    syncStagesJSON();
+  }
+
+  function makePipelineChip(nodeOrKind) {
+    const node = typeof nodeOrKind === "string"
+      ? normalizeStageNode(nodeOrKind)
+      : nodeOrKind;
+    const chip = document.createElement("div");
+    chip.className = "stage-chip in-pipeline";
+    chip.draggable = true;
+    chip.dataset.kind = node.kind;
+    chip.dataset.uid = node.uid;
+    chip.innerHTML =
+      `<span class="stage-chip-label">${esc(node.name || node.kind)}</span>` +
+      `<button type="button" class="stage-chip-x" aria-label="Remove ${esc(node.kind)}" title="Remove">x</button>`;
+    chip.addEventListener("dragstart", (ev) => {
+      const chips = [...chip.parentElement.querySelectorAll(".stage-chip.in-pipeline")];
+      stageDnd = { kind: node.kind, from: "pipeline", index: chips.indexOf(chip), uid: node.uid };
+      chip.classList.add("dragging");
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", node.kind);
+    });
+    chip.addEventListener("dragend", () => {
+      chip.classList.remove("dragging");
+      stageDnd = { kind: null, from: null, index: -1 };
+      document.getElementById("stage-pipeline")?.classList.remove("drag-over");
+      document.getElementById("stage-graph-host")?.classList.remove("drag-over");
+    });
+    chip.addEventListener("dblclick", () => {
+      removeStageByUid(node.uid);
+    });
+    chip.querySelector(".stage-chip-x").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      removeStageByUid(node.uid);
+    });
+    return chip;
+  }
+
+  function openStageEditDialog(uid) {
+    const dlg = document.getElementById("stage-edit-dialog");
+    if (!dlg) {
+      if (uid) {
+        stageSelectedUid = uid;
+        editSelectedStageNodePrompts();
+      }
+      return;
+    }
+    stageEditUid = uid || null;
+    const node = uid ? stageNodes.find((n) => n.uid === uid) : null;
+    const title = document.getElementById("stage-edit-title");
+    if (title) title.textContent = node ? "Edit stage" : "Code stage";
+    const kindEl = document.getElementById("stage-edit-kind");
+    const idEl = document.getElementById("stage-edit-id");
+    const nameEl = document.getElementById("stage-edit-name");
+    const enEl = document.getElementById("stage-edit-enabled");
+    const promptEl = document.getElementById("stage-edit-prompt");
+    const routeEl = document.getElementById("stage-edit-route");
+    const evalEl = document.getElementById("stage-edit-eval-min");
+    if (kindEl) kindEl.value = coerceStageKind(node?.kind || "actor");
+    if (idEl) idEl.value = node?.id || "";
+    if (nameEl) nameEl.value = node?.name || "";
+    if (enEl) enEl.checked = node ? node.enabled !== false : true;
+    if (promptEl) promptEl.value = node?.prompt || "";
+    if (routeEl) routeEl.value = node?.route || "";
+    if (evalEl) evalEl.value = node?.eval_min > 0 ? String(node.eval_min) : "";
+    if (typeof dlg.showModal === "function") dlg.showModal();
+    else dlg.setAttribute("open", "");
+  }
+
+  function applyStageEditForm() {
+    const kind = coerceStageKind(document.getElementById("stage-edit-kind")?.value || "actor");
+    let id = String(document.getElementById("stage-edit-id")?.value || "").trim();
+    let name = String(document.getElementById("stage-edit-name")?.value || "").trim();
+    if (!id) id = name || kind;
+    if (!name) name = id;
+    const enabled = !!document.getElementById("stage-edit-enabled")?.checked;
+    const prompt = String(document.getElementById("stage-edit-prompt")?.value || "");
+    const route = String(document.getElementById("stage-edit-route")?.value || "");
+    const evalRaw = Number(document.getElementById("stage-edit-eval-min")?.value);
+    const eval_min = Number.isFinite(evalRaw) && evalRaw > 0 ? evalRaw : 0;
+    if (stageEditUid) {
+      const node = stageNodes.find((n) => n.uid === stageEditUid);
+      if (!node) return;
+      node.kind = kind;
+      node.id = id;
+      node.name = name;
+      node.enabled = enabled;
+      node.prompt = prompt;
+      node.route = route;
+      node.eval_min = eval_min;
+      selectStageNode(node.uid);
+      renderStageGraph();
+      showHoopsOk("Updated stage: " + node.id);
+    } else {
+      addStageNode(kind, stageNodes.length, {
+        id,
+        name,
+        enabled,
+        prompt,
+        route,
+        eval_min,
+      });
+      showHoopsOk("Added stage: " + id);
+    }
+    stageEditUid = null;
+  }
+
+  function initStageEditDialog() {
+    const form = document.getElementById("stage-edit-form");
+    if (!form || form.dataset.bound) return;
+    form.dataset.bound = "1";
+    const closeDlg = () => {
+      const dlg = document.getElementById("stage-edit-dialog");
+      if (dlg && typeof dlg.close === "function") dlg.close();
+      else if (dlg) dlg.removeAttribute("open");
+    };
+    document.getElementById("stage-edit-save")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      applyStageEditForm();
+      closeDlg();
+    });
+    document.getElementById("stage-edit-cancel")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      stageEditUid = null;
+      closeDlg();
+    });
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      applyStageEditForm();
+      closeDlg();
+    });
+    document.getElementById("stage-node-add-code")?.addEventListener("click", () => openStageEditDialog(null));
+  }
+
+  function addStageNode(kind, insertAt, fields) {
+    const raw = String(kind || "").toLowerCase();
+    if (!raw || raw === "__code__" || raw === "code") {
+      openStageEditDialog(null);
+      return;
+    }
+    const k = coerceStageKind(raw);
+    const node = normalizeStageNode({
+      kind: k,
+      id: (fields && fields.id) || k,
+      name: (fields && fields.name) || k,
+      enabled: fields && fields.enabled === false ? false : true,
+      prompt: (fields && fields.prompt) || "",
+      route: (fields && fields.route) || "",
+      eval_min: (fields && fields.eval_min) || 0,
+    });
+    const at =
+      insertAt == null || insertAt < 0 || insertAt >= stageNodes.length
+        ? stageNodes.length
+        : insertAt;
+    if (at === 0) {
+      stageNodes.unshift(node);
+    } else {
+      stageNodes.splice(at, 0, node);
+    }
+    const prev = stageNodes[at - 1];
+    const next = stageNodes[at + 1];
+    if (prev) {
+      stageEdges = stageEdges.filter((e) => !(e.kind !== "feedback" && e.source === prev.uid && next && e.target === next.uid));
+      upsertStageEdge(prev.uid, node.uid, "flow");
+    }
+    if (next) upsertStageEdge(node.uid, next.uid, "flow");
+    selectStageNode(node.uid);
+    renderStageGraph();
+  }
+
+  function removeStageByUid(uid) {
+    const idx = stageNodes.findIndex((n) => n.uid === uid);
+    if (idx < 0) return;
+    const prev = stageNodes[idx - 1];
+    const next = stageNodes[idx + 1];
+    stageNodes.splice(idx, 1);
+    stageEdges = stageEdges.filter((e) => e.source !== uid && e.target !== uid);
+    if (prev && next) upsertStageEdge(prev.uid, next.uid, "flow");
+    if (stageSelectedUid === uid) stageSelectedUid = null;
+    renderStageGraph();
+  }
+
+  function moveSelectedStage(delta) {
+    const idx = stageNodes.findIndex((n) => n.uid === stageSelectedUid);
+    if (idx < 0) return;
+    const j = idx + delta;
+    if (j < 0 || j >= stageNodes.length) return;
+    const tmp = stageNodes[idx];
+    stageNodes[idx] = stageNodes[j];
+    stageNodes[j] = tmp;
+    const keepFb = stageEdges.filter((e) => e.kind === "feedback");
+    stageEdges = defaultEdgesForNodes(stageNodes).filter((e) => e.kind !== "feedback").concat(keepFb);
+    renderStageGraph();
+  }
+
+  function editSelectedStageNode() {
+    const node = stageNodes.find((n) => n.uid === stageSelectedUid);
+    if (!node) return;
+    openStageEditDialog(node.uid);
+  }
+
+  function editSelectedStageNodePrompts() {
+    const node = stageNodes.find((n) => n.uid === stageSelectedUid);
+    if (!node) return;
+    const kind = window.prompt("Stage kind (" + STAGE_KINDS.join("|") + "):", node.kind);
+    if (kind == null) return;
+    const nextKind = coerceStageKind(kind);
+    const name = window.prompt("Display name:", node.name || nextKind);
+    if (name == null) return;
+    const id = window.prompt("Stage id:", node.id || name || nextKind);
+    if (id == null) return;
+    const enabledRaw = window.prompt("Enabled? (y/n):", node.enabled !== false ? "y" : "n");
+    if (enabledRaw == null) return;
+    const promptText = window.prompt("Stage prompt (optional):", node.prompt || "");
+    if (promptText == null) return;
+    node.kind = nextKind;
+    node.name = String(name).trim() || nextKind;
+    node.id = String(id).trim() || node.name;
+    node.enabled = !/^n/i.test(String(enabledRaw).trim());
+    node.prompt = String(promptText);
+    renderStageGraph();
+    showHoopsOk("Updated node: " + node.id);
+  }
+
+  function setPipelineStages(kindsOrNodes) {
+    stageNodes = (kindsOrNodes || []).map((x, i) => normalizeStageNode(x, i));
+    stageEdges = defaultEdgesForNodes(stageNodes);
+    stageSelectedUid = null;
+    stageSelectedEdgeId = null;
+    renderStageGraph();
+  }
+
+  function pipelineDropIndex(pipe, clientX, clientY) {
+    const chips = [...pipe.querySelectorAll(".stage-chip.in-pipeline:not(.dragging)")];
+    for (let i = 0; i < chips.length; i++) {
+      const r = chips[i].getBoundingClientRect();
+      const midX = r.left + r.width / 2;
+      const midY = r.top + r.height / 2;
+      if (clientY < midY || (Math.abs(clientY - midY) < r.height && clientX < midX)) {
+        return i;
+      }
+    }
+    return chips.length;
+  }
+
+  function applyStageDrop(kind, insertAt, moveUid) {
+    if (moveUid) {
+      const from = stageNodes.findIndex((n) => n.uid === moveUid);
+      if (from < 0) return;
+      const [node] = stageNodes.splice(from, 1);
+      stageEdges = stageEdges.filter((e) => e.source !== moveUid && e.target !== moveUid);
+      let at = insertAt == null ? stageNodes.length : insertAt;
+      if (from < at) at -= 1;
+      if (at < 0) at = 0;
+      if (at > stageNodes.length) at = stageNodes.length;
+      stageNodes.splice(at, 0, node);
+      const prev = stageNodes[at - 1];
+      const next = stageNodes[at + 1];
+      if (prev) upsertStageEdge(prev.uid, node.uid, "flow");
+      if (next) upsertStageEdge(node.uid, next.uid, "flow");
+      selectStageNode(node.uid);
+    } else {
+      addStageNode(kind, insertAt);
+      return;
+    }
+    renderStageGraph();
+  }
+
+  function initStageCyControls() {
+    initStageEditDialog();
+    document.getElementById("stage-link-mode")?.addEventListener("click", () => {
+      setStageLinkMode(!stageLinkMode);
+      showHoopsOk(stageLinkMode ? "Link mode on -- drag from a node onto another" : "Link mode off");
+    });
+    document.getElementById("stage-node-edit")?.addEventListener("click", () => editSelectedStageNode());
+    document.getElementById("stage-node-remove")?.addEventListener("click", () => {
+      if (stageSelectedUid) removeStageByUid(stageSelectedUid);
+      else if (stageSelectedEdgeId) {
+        removeStageEdgeById(stageSelectedEdgeId);
+        renderStageGraph();
+      }
+    });
+    document.getElementById("stage-edge-toggle")?.addEventListener("click", () => toggleSelectedStageEdgeKind());
+    document.getElementById("stage-node-up")?.addEventListener("click", () => moveSelectedStage(-1));
+    document.getElementById("stage-node-down")?.addEventListener("click", () => moveSelectedStage(1));
+    document.getElementById("stage-zoom-reset")?.addEventListener("click", () => {
+      if (stageCy) stageCy.fit(undefined, 48);
+    });
+    document.getElementById("stage-zoom-in")?.addEventListener("click", () => {
+      if (!stageCy) return;
+      stageCy.zoom({
+        level: Math.min(2.5, stageCy.zoom() * 1.15),
+        renderedPosition: { x: stageCy.width() / 2, y: stageCy.height() / 2 },
+      });
+    });
+    document.getElementById("stage-zoom-out")?.addEventListener("click", () => {
+      if (!stageCy) return;
+      stageCy.zoom({
+        level: Math.max(0.35, stageCy.zoom() / 1.15),
+        renderedPosition: { x: stageCy.width() / 2, y: stageCy.height() / 2 },
+      });
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (!isGraphsTabActive()) return;
+      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      const t = ev.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+        return;
+      }
+      ev.preventDefault();
+      if (stageSelectedEdgeId) {
+        removeStageEdgeById(stageSelectedEdgeId);
+        renderStageGraph();
+      } else if (stageSelectedUid) {
+        removeStageByUid(stageSelectedUid);
+      } else if (swarmSelectedUid) {
+        swarmThreads = swarmThreads.filter((x) => x.uid !== swarmSelectedUid);
+        swarmLinks = swarmLinks.filter((id) => id !== swarmSelectedUid);
+        swarmSelectedUid = null;
+        syncSwarmRolesFromGraph();
+        renderSwarmGraph();
+        updateSwarmToolbar();
+      }
+    });
+  }
+
+  function initStageDnD() {
+    const palettes = [
+      document.getElementById("stage-palette"),
+      document.getElementById("stage-palette-hoops"),
+    ].filter(Boolean);
+    const pipe = document.getElementById("stage-pipeline");
+    const host = document.getElementById("stage-graph-host");
+    if (!palettes.length || !pipe) return;
+
+    function bindPalette(palette) {
+      palette.querySelectorAll(".stage-chip").forEach((chip) => {
+        chip.addEventListener("dragstart", (ev) => {
+          const kind = chip.dataset.kind;
+          stageDnd = { kind, from: "palette", index: -1 };
+          chip.classList.add("dragging");
+          ev.dataTransfer.effectAllowed = "copy";
+          ev.dataTransfer.setData("text/plain", kind);
+        });
+        chip.addEventListener("dragend", () => {
+          chip.classList.remove("dragging");
+          stageDnd = { kind: null, from: null, index: -1 };
+          pipe.classList.remove("drag-over");
+          host?.classList.remove("drag-over");
+        });
+        chip.addEventListener("click", () => {
+          if (chip.dataset.kind === "__code__" || chip.dataset.kind === "code") {
+            openStageEditDialog(null);
+            return;
+          }
+          addStageNode(chip.dataset.kind);
+          showHoopsOk("Added " + chip.dataset.kind);
+        });
+      });
+    }
+    palettes.forEach(bindPalette);
+
+    const bindDropTarget = (el, getInsertAt) => {
+      el.addEventListener("dragover", (ev) => {
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = stageDnd.from === "pipeline" ? "move" : "copy";
+        el.classList.add("drag-over");
+      });
+      el.addEventListener("dragleave", (ev) => {
+        if (!el.contains(ev.relatedTarget)) el.classList.remove("drag-over");
+      });
+      el.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        el.classList.remove("drag-over");
+        const kind = stageDnd.kind || ev.dataTransfer.getData("text/plain");
+        if (!kind) return;
+        const insertAt = getInsertAt(ev);
+        if (stageDnd.from === "pipeline" && stageDnd.uid) {
+          applyStageDrop(kind, insertAt, stageDnd.uid);
+        } else if (stageDnd.from === "pipeline" && stageDnd.index >= 0) {
+          const uid = stageNodes[stageDnd.index]?.uid;
+          applyStageDrop(kind, insertAt, uid);
+        } else {
+          applyStageDrop(kind, insertAt, null);
+        }
+        stageDnd = { kind: null, from: null, index: -1 };
+      });
+    };
+
+    bindDropTarget(pipe, (ev) => pipelineDropIndex(pipe, ev.clientX, ev.clientY));
+    if (host) {
+      bindDropTarget(host, () => stageNodes.length);
+    }
+
+    initStageCyControls();
+    setPipelineStages(DEFAULT_STAGES);
+    initSwarmGraph();
+  }
+
+  function setHoopEditMode(id, name) {
+    const editId = document.getElementById("hoop-edit-id");
+    const btn = document.getElementById("hoop-submit-btn");
+    const cancel = document.getElementById("hoop-cancel-edit");
+    const banner = document.getElementById("stage-edit-banner");
+    if (editId) editId.value = id || "";
+    if (btn) btn.textContent = id ? "Update hoop" : "Create hoop";
+    if (cancel) cancel.hidden = !id;
+    if (banner) {
+      banner.hidden = !id;
+      banner.textContent = id ? "Editing " + (name || id) : "";
+    }
+  }
+
+  function clearHoopEditMode() {
+    setHoopEditMode("", "");
+  }
+
+  function loadHoopIntoComposer(st, opts) {
+    const spec = st.spec || st;
+    document.getElementById("hoop-name").value = spec.name || spec.id || "";
+    document.getElementById("hoop-interval").value = spec.interval || "";
+    document.getElementById("hoop-prompt").value = spec.goal || spec.prompt || "";
+    document.getElementById("hoop-eval-goal").value = spec.eval?.goal || "";
+    document.getElementById("hoop-route").value = spec.route || "local";
+    document.getElementById("hoop-learning").checked = !!spec.learning;
+    document.getElementById("hoop-max-iter").value = String(spec.max_iterations || 3);
+    const stages = (spec.stages || []).filter((s) => s.enabled !== false && !s.disabled);
+    setPipelineStages(stages.length ? stages : DEFAULT_STAGES);
+    setHoopEditMode(spec.id, spec.name || spec.id);
+    applyStageLiveFromHoop(st);
+    showHoopsOk("Loaded " + (spec.name || spec.id) + " -- edit graph then Update");
+    if (opts && opts.openGraph) {
+      openGraphEditor("stage");
+    } else {
+      document.getElementById("hoop-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function applyStageLiveFromHoop(st) {
+    stageLiveStatus = {};
+    const status = String(st.status || "").toLowerCase();
+    const last = (st.outcomes || []).length ? st.outcomes[st.outcomes.length - 1] : null;
+    if (status === "running") {
+      (st.spec?.stages || []).forEach((s) => {
+        if (s.enabled === false || s.disabled) return;
+        stageLiveStatus[s.kind] = "running";
+      });
+    } else if (last?.stages?.length) {
+      last.stages.forEach((s) => {
+        stageLiveStatus[s.kind] = s.success ? "ok" : "fail";
+      });
+    } else if (status === "completed") {
+      (st.spec?.stages || []).forEach((s) => {
+        stageLiveStatus[s.kind] = "ok";
+      });
+    } else if (status === "failed") {
+      (st.spec?.stages || []).forEach((s) => {
+        stageLiveStatus[s.kind] = "fail";
+      });
+    }
+  }
+
+  function refreshStageLiveFromLoops(list) {
+    const editId = document.getElementById("hoop-edit-id")?.value;
+    if (!editId || !Array.isArray(list)) return;
+    const st = list.find((x) => x.spec?.id === editId);
+    if (!st) return;
+    const before = JSON.stringify(stageLiveStatus);
+    applyStageLiveFromHoop(st);
+    if (JSON.stringify(stageLiveStatus) !== before) renderStageGraph();
+  }
+
+  /* ---- Swarm thread graph (Cytoscape) ---- */
+  function rolesFromInput() {
+    const el = document.getElementById("swarm-roles");
+    if (!el) return ["plan", "exec"];
+    return el.value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
+  function writeRolesInput(roles) {
+    const el = document.getElementById("swarm-roles");
+    if (!el) return;
+    suppressRolesSync = true;
+    el.value = roles.join(",");
+    suppressRolesSync = false;
+  }
+
+  function setSwarmThreadsFromRoles(roles, preserveStatus) {
+    const prev = preserveStatus ? Object.fromEntries(swarmThreads.map((t) => [t.role, t])) : {};
+    swarmThreads = (roles || []).slice(0, 4).map((role) => {
+      const old = prev[role];
+      return {
+        uid: old?.uid || nextSwarmUid(role),
+        role,
+        status: old?.status || "idle",
+        summary: old?.summary || "",
+        err: old?.err || "",
+      };
+    });
+    swarmLinks = swarmThreads.map((t) => t.uid);
+    if (!swarmThreads.some((t) => t.uid === swarmSelectedUid)) swarmSelectedUid = null;
+    renderSwarmGraph();
+    updateSwarmToolbar();
+  }
+
+  function updateSwarmToolbar() {
+    const has = !!swarmSelectedUid && swarmThreads.some((t) => t.uid === swarmSelectedUid);
+    const rem = document.getElementById("swarm-thread-remove");
+    const edit = document.getElementById("swarm-thread-edit");
+    if (rem) rem.disabled = !has;
+    if (edit) edit.disabled = !has;
+  }
+
+  function selectSwarmThread(uid) {
+    swarmSelectedUid = uid;
+    updateSwarmToolbar();
+    if (swarmCy) {
+      suppressCySelect = true;
+      swarmCy.nodes().unselect();
+      if (uid) {
+        const el = swarmCy.getElementById(uid);
+        if (el && el.nonempty()) el.select();
+      }
+      suppressCySelect = false;
+    }
+  }
+
+  function buildSwarmCyElements() {
+    const host = document.getElementById("swarm-graph-host");
+    const w = Math.max(host?.clientWidth || 560, 320);
+    const h = Math.max(host?.clientHeight || 280, 240);
+    const ox = 100;
+    const oy = h / 2;
+    const els = [
+      {
+        group: "nodes",
+        data: { id: "orch", label: "orchestrator\nweave" },
+        position: { x: ox, y: oy },
+        classes: "orch",
+        grabbable: true,
+        selectable: false,
+      },
+    ];
+    const n = swarmThreads.length || 1;
+    const top = 48;
+    const bot = h - 48;
+    const linkSet = new Set(swarmLinks);
+    swarmThreads.forEach((th, i) => {
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const y = top + (bot - top) * t;
+      const x = w - 120;
+      const st = th.status || "idle";
+      els.push({
+        group: "nodes",
+        data: {
+          id: th.uid,
+          label: th.role.slice(0, 12) + "\n" + st,
+          role: th.role,
+          status: st,
+        },
+        position: { x: typeof th.x === "number" ? th.x : x, y: typeof th.y === "number" ? th.y : y },
+        classes: "status-" + st,
+      });
+      if (linkSet.has(th.uid)) {
+        els.push({
+          group: "edges",
+          data: { id: "se-" + th.uid, source: "orch", target: th.uid, kind: "flow" },
+          classes: "status-" + st,
+        });
+      }
+    });
+    if (swarmThreads.length && swarmLinks.length) {
+      const lastLinked = swarmThreads.filter((t) => linkSet.has(t.uid)).slice(-1)[0];
+      if (lastLinked) {
+        els.push({
+          group: "edges",
+          data: { id: "merge-" + lastLinked.uid, source: lastLinked.uid, target: "orch", kind: "feedback" },
+          classes: "feedback",
+        });
+      }
+    }
+    return els;
+  }
+
+  function ensureSwarmCy() {
+    if (swarmCy || !cyAvailable()) return swarmCy;
+    const host = document.getElementById("swarm-graph-host");
+    if (!host) return null;
+    swarmCy = window.cytoscape({
+      container: host,
+      elements: [],
+      style: CY_BASE_STYLE,
+      layout: { name: "preset" },
+      minZoom: 0.35,
+      maxZoom: 2.5,
+      wheelSensitivity: 0.25,
+      boxSelectionEnabled: false,
+      selectionType: "single",
+    });
+    if (!swarmCyBound) {
+      swarmCyBound = true;
+      swarmCy.on("tap", "node", (ev) => {
+        if (suppressCySelect) return;
+        if (ev.target.hasClass("eh-handle")) return;
+        const id = ev.target.id();
+        if (id === "orch") return;
+        selectSwarmThread(id);
+      });
+      swarmCy.on("tap", (ev) => {
+        if (ev.target === swarmCy) selectSwarmThread(null);
+      });
+      swarmCy.on("dbltap", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle")) return;
+        const id = ev.target.id();
+        if (id === "orch") return;
+        selectSwarmThread(id);
+        editSelectedSwarmThread();
+      });
+      swarmCy.on("dragfree", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle") || ev.target.id() === "orch") return;
+        const th = swarmThreads.find((t) => t.uid === ev.target.id());
+        if (!th) return;
+        const p = ev.target.position();
+        th.x = p.x;
+        th.y = p.y;
+      });
+      swarmCy.on("mouseover", "node", (ev) => {
+        if (ev.target.hasClass("eh-handle")) return;
+        const id = ev.target.id();
+        if (id === "orch") {
+          host.title = "orchestrator (weave)";
+          return;
+        }
+        const th = swarmThreads.find((t) => t.uid === id);
+        if (!th) return;
+        host.title =
+          th.role +
+          " | status: " +
+          (th.status || "idle") +
+          (th.summary ? " | " + th.summary.slice(0, 80) : "");
+      });
+      swarmCy.on("mouseout", "node", () => {
+        host.title = "";
+      });
+      swarmEh = makeEdgehandles(swarmCy, (source, target) => {
+        let threadId = null;
+        if (source === "orch" && target !== "orch") threadId = target;
+        else if (target === "orch" && source !== "orch") threadId = source;
+        else if (source !== "orch" && target !== "orch") {
+          if (!swarmLinks.includes(source)) swarmLinks.push(source);
+          if (!swarmLinks.includes(target)) swarmLinks.push(target);
+          syncSwarmRolesFromGraph();
+          renderSwarmGraph();
+          showHoopsOk("Linked threads via orchestrator");
+          return;
+        }
+        if (!threadId || !swarmThreads.some((t) => t.uid === threadId)) return;
+        if (!swarmLinks.includes(threadId)) swarmLinks.push(threadId);
+        syncSwarmRolesFromGraph();
+        renderSwarmGraph();
+        showHoopsOk("Linked thread to orchestrator");
+      });
+      if (swarmLinkMode) swarmEh?.enableDrawMode();
+      swarmCy.on("tap", "edge", (ev) => {
+        const id = ev.target.id();
+        if (id.startsWith("se-")) {
+          const uid = id.slice(3);
+          swarmLinks = swarmLinks.filter((x) => x !== uid);
+          syncSwarmRolesFromGraph();
+          renderSwarmGraph();
+          showHoopsOk("Unlinked thread (Link mode + drag to relink)");
+        }
+      });
+    }
+    return swarmCy;
+  }
+
+  function renderSwarmGraph() {
+    const host = document.getElementById("swarm-graph-host");
+    if (host) host.classList.toggle("has-nodes", swarmThreads.length > 0);
+    if (!cyAvailable()) return;
+    if (!isGraphsTabActive() && !swarmCy) return;
+    ensureSwarmCy();
+    if (!swarmCy) return;
+    const els = buildSwarmCyElements();
+    suppressEdgeSync = true;
+    swarmCy.batch(() => {
+      swarmCy.elements().remove();
+      swarmCy.add(els);
+      swarmCy.nodes().unselect();
+      if (swarmSelectedUid) {
+        const sel = swarmCy.getElementById(swarmSelectedUid);
+        if (sel.nonempty()) sel.select();
+      }
+    });
+    suppressEdgeSync = false;
+    swarmCy.resize();
+  }
+
+  function editSelectedSwarmThread() {
+    const th = swarmThreads.find((t) => t.uid === swarmSelectedUid);
+    if (!th) return;
+    const role = window.prompt("Thread role:", th.role);
+    if (role == null) return;
+    const next = String(role).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "") || th.role;
+    th.role = next;
+    syncSwarmRolesFromGraph();
+    renderSwarmGraph();
+  }
+
+  function initSwarmGraph() {
+    setSwarmThreadsFromRoles(rolesFromInput());
+    const rolesEl = document.getElementById("swarm-roles");
+    rolesEl?.addEventListener("input", () => {
+      if (suppressRolesSync) return;
+      setSwarmThreadsFromRoles(rolesFromInput(), true);
+    });
+    document.getElementById("swarm-link-mode")?.addEventListener("click", () => {
+      setSwarmLinkMode(!swarmLinkMode);
+      showHoopsOk(swarmLinkMode ? "Swarm link mode on -- drag orch <-> worker" : "Swarm link mode off");
+    });
+    document.getElementById("swarm-thread-add")?.addEventListener("click", () => {
+      if (swarmThreads.length >= 4) {
+        showHoopsError("Max 4 swarm workers");
+        return;
+      }
+      const role = window.prompt("New thread role:", "worker" + (swarmThreads.length + 1));
+      if (!role) return;
+      const r = String(role).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "") || ("w" + (swarmThreads.length + 1));
+      const uid = nextSwarmUid(r);
+      swarmThreads.push({ uid, role: r, status: "idle", summary: "", err: "" });
+      if (!swarmLinks.includes(uid)) swarmLinks.push(uid);
+      syncSwarmRolesFromGraph();
+      const workers = document.getElementById("swarm-workers");
+      if (workers) workers.value = String(Math.min(4, Math.max(Number(workers.value) || 1, swarmThreads.length)));
+      renderSwarmGraph();
+      updateSwarmToolbar();
+      showHoopsOk("Added thread " + r);
+    });
+    document.getElementById("swarm-thread-remove")?.addEventListener("click", () => {
+      if (!swarmSelectedUid) return;
+      swarmThreads = swarmThreads.filter((t) => t.uid !== swarmSelectedUid);
+      swarmLinks = swarmLinks.filter((id) => id !== swarmSelectedUid);
+      swarmSelectedUid = null;
+      syncSwarmRolesFromGraph();
+      renderSwarmGraph();
+      updateSwarmToolbar();
+    });
+    document.getElementById("swarm-thread-edit")?.addEventListener("click", () => editSelectedSwarmThread());
+    document.getElementById("swarm-zoom-reset")?.addEventListener("click", () => {
+      if (swarmCy) swarmCy.fit(undefined, 40);
+    });
+    window.addEventListener("resize", () => {
+      if (isGraphsTabActive()) resizeCyInstances();
+    });
+  }
+
+  async function refreshHoopsPanel() {
+    lastHoopsSnap = "";
+    lastHotswapSnap = "";
+    await Promise.all([loadHoops(), loadHotSwap(), loadSwarmTemplates(), refreshLiveBoard()]);
+    renderStageGraph();
+    renderSwarmGraph();
+  }
+
 
   async function loadHoops() {
     const el = document.getElementById("hoops-list");
@@ -842,12 +2434,19 @@
     try {
       const res = await fetch("/api/loops");
       const list = await res.json();
+      refreshStageLiveFromLoops(Array.isArray(list) ? list : []);
+      const snap = JSON.stringify(list);
+      if (snap === lastHoopsSnap && el.querySelector(".hoop-card, .hint, .cfg-error")) return;
+      lastHoopsSnap = snap;
       if (!Array.isArray(list) || list.length === 0) {
-        el.innerHTML = `<p class="hint">No hoops yet. Compose stages + eval above.</p>`;
+        el.innerHTML = `<p class="hint">No hoops yet. Build a stage graph and create one.</p>`;
         return;
       }
       el.innerHTML = list.map((st) => {
         const outcomes = (st.outcomes || []).slice(-8).reverse();
+        const last = (st.outcomes || []).length
+          ? (st.outcomes)[(st.outcomes).length - 1]
+          : null;
         const rows = outcomes.map((o) => {
           const pills = (o.stages || []).map((s) =>
             `<span class="stage-pill ${s.success ? "ok" : "fail"}">${esc(s.kind)}</span>`
@@ -859,55 +2458,75 @@
         }).join("");
         const name = esc(st.spec?.name || st.spec?.id || "");
         const id = esc(st.spec?.id || "");
-        const status = esc(st.status || "");
-        const bias = st.hoop?.local_bias != null ? Number(st.hoop.local_bias).toFixed(2) : "—";
-        const stageTags = (st.spec?.stages || []).filter((s) => s.enabled !== false)
-          .map((s) => `<span class="tag">${esc(s.kind)}</span>`).join(" ");
-        const evalGoal = esc(st.spec?.eval?.goal || st.spec?.goal || "");
-        const score = st.last_eval_score != null ? Number(st.last_eval_score).toFixed(2) : "—";
-        return `<div class="hoop-card" data-id="${id}">
+        const status = String(st.status || "idle");
+        const badge = statusBadgeClass(status);
+        const isRunning = badge === "running";
+        const bias = st.hoop?.local_bias != null ? Number(st.hoop.local_bias).toFixed(2) : "--";
+        const stageTags = (st.spec?.stages || [])
+          .filter((s) => s.enabled !== false && !s.disabled)
+          .map((s) => `<span class="stage-pill">${esc(s.kind)}</span>`).join(" ");
+        const evalGoal = esc(st.spec?.eval?.goal || "");
+        const score = st.last_eval_score != null ? Number(st.last_eval_score).toFixed(2) : "--";
+        let lastOut = "No cycles yet";
+        if (last) {
+          const bit = (last.summary || last.err || (last.success ? "ok" : "fail") || "").slice(0, 80);
+          lastOut = `#${last.iteration} ${last.success ? "ok" : "fail"} * ${bit}`;
+        }
+        return `<div class="hoop-card ${isRunning ? "is-running" : ""}" data-id="${id}" data-status="${esc(status)}">
           <div class="hoop-card-head">
             <strong>${name}</strong>
-            <span class="tag">${status}</span>
+            <span class="status-badge ${badge}">${esc(status)}</span>
             <span class="muted">bias ${bias}</span>
             <span class="muted">score ${score}</span>
             <span class="hoop-actions">
+              <button type="button" class="linkish hoop-edit-graph hoop-load-graph" data-id="${id}">Edit graph</button>
               <button type="button" class="linkish hoop-start" data-id="${id}">Start</button>
               <button type="button" class="linkish hoop-stop" data-id="${id}">Stop</button>
               <button type="button" class="linkish hoop-del" data-id="${id}">Delete</button>
             </span>
           </div>
+          <p class="hoop-last-outcome" title="Last outcome">${esc(lastOut)}</p>
           <p class="hint" style="margin:8px 0">Goal: ${esc((st.spec?.goal || st.spec?.prompt || "").slice(0, 160))}</p>
           ${evalGoal ? `<p class="hint" style="margin:0 0 8px">Eval: ${evalGoal}</p>` : ""}
-          <div>${stageTags}</div>
-          <div class="hoop-outcomes">${rows || `<span class="muted">No cycles yet — start to run planner→actor→critic</span>`}</div>
+          <div class="hoop-stage-pills">${stageTags}</div>
+          <div class="hoop-outcomes">${rows || `<span class="muted">No cycles yet -- start to run the pipeline</span>`}</div>
         </div>`;
       }).join("");
       el.querySelectorAll(".hoop-start").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "start")));
       el.querySelectorAll(".hoop-stop").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "stop")));
       el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", () => deleteHoop(b.dataset.id)));
+      el.querySelectorAll(".hoop-edit-graph").forEach((b) => b.addEventListener("click", async () => {
+        const res = await fetch(`/api/loops/${encodeURIComponent(b.dataset.id)}`);
+        if (!res.ok) {
+          showHoopsError(await res.text());
+          return;
+        }
+        loadHoopIntoComposer(await res.json(), { openGraph: true });
+      }));
     } catch (e) {
       el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
     }
   }
-
   async function hoopAction(id, action) {
-    const res = await fetch(`/api/loops/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    const res = await fetch("/api/loops/" + encodeURIComponent(id) + "/" + action, { method: "POST" });
     if (!res.ok) {
       showHoopsError(await res.text());
       return;
     }
-    showHoopsOk(`${action} ${id}`);
+    showHoopsOk(action + " " + id);
+    lastHoopsSnap = "";
     await loadHoops();
+    if (isLiveLoopTabActive()) refreshLiveBoard();
   }
 
   async function deleteHoop(id) {
-    const res = await fetch(`/api/loops/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const res = await fetch("/api/loops/" + encodeURIComponent(id), { method: "DELETE" });
     if (!res.ok && res.status !== 204) {
       showHoopsError(await res.text());
       return;
     }
-    showHoopsOk(`deleted ${id}`);
+    showHoopsOk("deleted " + id);
+    lastHoopsSnap = "";
     await loadHoops();
   }
 
@@ -930,14 +2549,6 @@
     o.textContent = msg || "OK";
   }
 
-  function esc(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
   const hoopForm = document.getElementById("hoop-form");
   if (hoopForm) {
     hoopForm.addEventListener("submit", async (ev) => {
@@ -945,15 +2556,33 @@
       showHoopsError("");
       const route = document.getElementById("hoop-route").value || "local";
       const name = document.getElementById("hoop-name").value.trim();
-      const stages = [];
-      document.querySelectorAll("#hoop-stages input[data-stage]").forEach((inp) => {
-        stages.push({ kind: inp.dataset.stage, enabled: inp.checked, id: inp.dataset.stage, name: inp.dataset.stage });
+      const stagesPayload = syncStagesJSON();
+      if (!stagesPayload.length) {
+        showHoopsError("Add at least one stage to the graph (click or drag from palette).");
+        return;
+      }
+      const stages = stagesPayload.map((s) => {
+        const row = {
+          kind: coerceStageKind(s.kind),
+          id: s.id || s.kind,
+          name: s.name || s.kind,
+          enabled: s.enabled !== false,
+        };
+        if (s.prompt) row.prompt = s.prompt;
+        if (s.route) row.route = s.route;
+        if (row.kind === "critic" && s.eval_min > 0) row.eval_min = s.eval_min;
+        return row;
       });
       const evalGoal = (document.getElementById("hoop-eval-goal") || {}).value?.trim() || "";
       const maxIter = Number(document.getElementById("hoop-max-iter")?.value) || 0;
       const goal = document.getElementById("hoop-prompt").value.trim();
+      const editId = (document.getElementById("hoop-edit-id")?.value || "").trim();
+      const id =
+        editId ||
+        name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") ||
+        undefined;
       const body = {
-        id: name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || undefined,
+        id,
         name,
         goal,
         prompt: goal,
@@ -965,8 +2594,10 @@
         max_iterations: maxIter || 3,
         autonomy: "L1",
       };
-      const res = await fetch("/api/loops", {
-        method: "POST",
+      const url = editId ? `/api/loops/${encodeURIComponent(editId)}` : "/api/loops";
+      const method = editId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -974,18 +2605,55 @@
         showHoopsError(await res.text());
         return;
       }
-      showHoopsOk("Hoop created");
-      hoopForm.reset();
-      document.querySelectorAll("#hoop-stages input[data-stage]").forEach((inp) => { inp.checked = true; });
-      document.getElementById("hoop-interval").value = "5m";
-      document.getElementById("hoop-max-iter").value = "3";
-      document.getElementById("hoop-route").value = "local";
+      showHoopsOk(editId ? `Hoop updated (${editId})` : "Hoop created");
+      if (!editId) {
+        hoopForm.reset();
+        setPipelineStages(DEFAULT_STAGES);
+        document.getElementById("hoop-interval").value = "";
+        document.getElementById("hoop-max-iter").value = "3";
+        document.getElementById("hoop-route").value = "local";
+      }
+      clearHoopEditMode();
+      if (editId) {
+        // keep shared stageNodes in sync after update
+        setPipelineStages(stages);
+      }
+      lastHoopsSnap = "";
       await loadHoops();
+      if (isLiveLoopTabActive()) refreshLiveBoard();
     });
   }
 
+  document.getElementById("hoop-cancel-edit")?.addEventListener("click", () => {
+    clearHoopEditMode();
+    setPipelineStages(DEFAULT_STAGES);
+    stageLiveStatus = {};
+    renderStageGraph();
+    showHoopsOk("Edit cancelled");
+  });
   const hoopsRefresh = document.getElementById("hoops-refresh");
   if (hoopsRefresh) hoopsRefresh.addEventListener("click", () => refreshHoopsPanel());
+
+  const loadSampleBtn = document.getElementById("hoops-load-sample");
+  if (loadSampleBtn) {
+    loadSampleBtn.addEventListener("click", () => {
+      setPipelineStages(SAMPLE_STAGES);
+      const nameEl = document.getElementById("hoop-name");
+      const promptEl = document.getElementById("hoop-prompt");
+      const evalEl = document.getElementById("hoop-eval-goal");
+      if (nameEl && !nameEl.value.trim()) nameEl.value = "hello-critic";
+      if (promptEl && !promptEl.value.trim()) {
+        promptEl.value =
+          "Write exactly one friendly sentence that greets the user and includes the lowercase word glider. No markdown, no bullet list.";
+      }
+      if (evalEl && !evalEl.value.trim()) {
+        evalEl.value = 'Greeting must be one sentence and contain "glider".';
+      }
+      document.getElementById("hoop-route").value = "local";
+      document.getElementById("hoop-max-iter").value = "2";
+      showHoopsOk("Loaded hello-critic sample stages");
+    });
+  }
 
   async function loadHotSwap() {
     const el = document.getElementById("hotswap-list");
@@ -994,36 +2662,47 @@
       const res = await fetch("/api/hotswap/modules");
       const data = await res.json();
       let mods = data.modules?.length ? data.modules : (data.catalog || []);
-      // Prefer stage modules first for Loop Engineering framing.
       mods = [...mods].sort((a, b) => {
         const as = a.stage ? 0 : 1;
         const bs = b.stage ? 0 : 1;
         if (as !== bs) return as - bs;
         return String(a.name).localeCompare(String(b.name));
       });
+      const snap = JSON.stringify(mods.map((m) => [m.name, m.enabled, m.generation]));
+      if (snap === lastHotswapSnap && el.querySelector(".hotswap-row, .hint, .cfg-error")) return;
+      lastHotswapSnap = snap;
       el.innerHTML = mods.map((m) => {
         const en = m.enabled !== false;
-        return `<div class="hotswap-row ${m.stage ? "stage" : ""}">
-          <span class="hotswap-name">${esc(m.name)}</span>
-          <span class="tag">${esc(m.kind || "")}</span>
-          <span class="tag">${esc(m.reload || (m.hot ? "hot" : "restart"))}</span>
-          <span class="muted" title="${esc(m.description || "")}">gen ${m.generation || 0}</span>
-          <label class="check"><input type="checkbox" data-mod="${esc(m.name)}" ${en ? "checked" : ""} ${m.hot ? "" : "disabled"} /> enabled</label>
-        </div>`;
-      }).join("") || `<p class="hint">No modules registered.</p>`;
+        const gen = Number(m.generation) || 0;
+        const prev = hotswapGenCache[m.name];
+        const bumped = prev != null && gen > prev;
+        hotswapGenCache[m.name] = gen;
+        return '<div class="hotswap-row ' + (m.stage ? "stage" : "") + (bumped ? " gen-bump" : "") + '">' +
+          '<span class="hotswap-name">' + esc(m.name) + '</span>' +
+          '<span class="tag">' + esc(m.kind || "") + '</span>' +
+          '<span class="tag">' + esc(m.reload || (m.hot ? "hot" : "restart")) + '</span>' +
+          '<span class="hotswap-gen ' + (bumped ? "live" : "") + '" title="' + esc(m.description || "") + '">gen ' + gen + '</span>' +
+          '<label class="check"><input type="checkbox" data-mod="' + esc(m.name) + '" ' + (en ? "checked" : "") + " " + (m.hot ? "" : "disabled") + ' /> enabled</label>' +
+          '</div>';
+      }).join("") || '<p class="hint">No modules registered.</p>';
       el.querySelectorAll("input[data-mod]").forEach((inp) => {
         inp.addEventListener("change", async () => {
-          const res = await fetch(`/api/hotswap/modules/${encodeURIComponent(inp.dataset.mod)}`, {
+          const res = await fetch("/api/hotswap/modules/" + encodeURIComponent(inp.dataset.mod), {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled: inp.checked }),
           });
           if (!res.ok) showHoopsError(await res.text());
-          else showHoopsOk(`${inp.dataset.mod} ${inp.checked ? "enabled" : "disabled"}`);
+          else {
+            showHoopsOk(inp.dataset.mod + " " + (inp.checked ? "enabled" : "disabled"));
+            lastHotswapSnap = "";
+            await loadHotSwap();
+            if (isLiveLoopTabActive()) refreshLiveBoard();
+          }
         });
       });
     } catch (e) {
-      el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
+      el.innerHTML = '<p class="cfg-error">' + esc(String(e)) + '</p>';
     }
   }
 
@@ -1038,10 +2717,28 @@
         return;
       }
       el.innerHTML = list.map((t) =>
-        `<div class="hoop-card"><strong>${esc(t.name || t.id)}</strong> ` +
+        `<div class="hoop-card" data-tpl="${esc(t.id)}">` +
+        `<div class="hoop-card-head"><strong>${esc(t.name || t.id)}</strong> ` +
         `<span class="tag">${t.enabled ? "on" : "off"}</span>` +
-        `<p class="hint">${esc((t.prompt || "").slice(0, 120))}</p></div>`
+        `<span class="hoop-actions">` +
+        `<button type="button" class="linkish tpl-load-graph" data-id="${esc(t.id)}">Load threads</button>` +
+        `</span></div>` +
+        `<p class="hint">${esc((t.prompt || "").slice(0, 120))}</p>` +
+        `<p class="muted">roles: ${esc((t.roles || []).join(", ") || "--")}</p></div>`
       ).join("");
+      el.querySelectorAll(".tpl-load-graph").forEach((b) => {
+        b.addEventListener("click", () => {
+          const tpl = list.find((x) => x.id === b.dataset.id);
+          if (!tpl) return;
+          const roles = (tpl.roles || []).length ? tpl.roles : ["plan", "exec"];
+          writeRolesInput(roles);
+          setSwarmThreadsFromRoles(roles);
+          if (tpl.prompt) document.getElementById("swarm-prompt").value = tpl.prompt;
+          const workers = document.getElementById("swarm-workers");
+          if (workers) workers.value = String(tpl.max_workers || Math.min(4, roles.length) || 2);
+          showHoopsOk(`Loaded template ${tpl.name || tpl.id} into thread graph`);
+        });
+      });
     } catch (e) {
       el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
     }
@@ -1052,7 +2749,14 @@
     swarmForm.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const out = document.getElementById("swarm-result");
-      const roles = document.getElementById("swarm-roles").value.split(",").map((s) => s.trim()).filter(Boolean);
+      const roles = rolesFromInput();
+      setSwarmThreadsFromRoles(roles);
+      swarmThreads.forEach((t) => {
+        t.status = "running";
+        t.summary = "";
+        t.err = "";
+      });
+      renderSwarmGraph();
       const body = {
         prompt: document.getElementById("swarm-prompt").value.trim(),
         roles,
@@ -1069,11 +2773,32 @@
         out.hidden = false;
         out.textContent = text;
       }
-      if (!res.ok) showHoopsError(text);
-      else showHoopsOk("Swarm finished");
+      if (!res.ok) {
+        swarmThreads.forEach((t) => { t.status = "fail"; t.err = text.slice(0, 120); });
+        renderSwarmGraph();
+        showHoopsError(text);
+        return;
+      }
+      try {
+        const data = JSON.parse(text);
+        const results = data.results || [];
+        swarmThreads.forEach((t, i) => {
+          const r = results.find((x) => String(x.role || "").toLowerCase() === t.role) || results[i];
+          if (!r) {
+            t.status = "ok";
+            return;
+          }
+          t.status = r.err ? "fail" : "ok";
+          t.summary = r.summary || r.episode?.summary || "";
+          t.err = r.err || "";
+        });
+      } catch (_) {
+        swarmThreads.forEach((t) => { t.status = "ok"; });
+      }
+      renderSwarmGraph();
+      showHoopsOk("Swarm finished");
     });
   }
-
   const tplForm = document.getElementById("tpl-form");
   if (tplForm) {
     tplForm.addEventListener("submit", async (ev) => {
@@ -1104,10 +2829,26 @@
     });
   }
 
-  // Quick log-level change from config still goes through full save; also listen for select blur optional — covered by Save.
+  initGraphEditorNav();
+  initStageDnD();
+
+  // Quick log-level change from config still goes through full save; also listen for select blur optional -- covered by Save.
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  const ws = new WebSocket(proto + "://" + location.host + "/ws");
+  setLiveWs("Connecting...", null);
+  ws.onopen = () => {
+    liveWsConnected = true;
+    setLiveWs("Connected", true);
+  };
+  ws.onclose = () => {
+    liveWsConnected = false;
+    setLiveWs("Disconnected", false);
+  };
+  ws.onerror = () => {
+    liveWsConnected = false;
+    setLiveWs("Disconnected", false);
+  };
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data);
@@ -1116,14 +2857,14 @@
           addLog(msg.data || {}, { live: true, prepend: true });
           refreshMetricsSnapshot();
         }
+        if (isLiveLoopTabActive()) refreshLiveBoard();
       }
       if (msg.type === "vram_update") {
         const g = document.getElementById("gpu-gauges");
         if (g && panels.vram.classList.contains("active") && msg.data) {
           const usedPct = msg.data.total ? Math.round((msg.data.used / msg.data.total) * 100) : 0;
-          // Only update first gauge live if present; full refresh on tab load
           const first = g.querySelector(".gauge-used");
-          if (first) first.style.width = `${usedPct}%`;
+          if (first) first.style.width = usedPct + "%";
         }
       }
     } catch (_) {}

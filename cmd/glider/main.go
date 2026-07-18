@@ -415,6 +415,10 @@ func main() {
 		dash.Swarm = swarmRunner
 		dash.Templates = tplStore
 		dash.HoopsDir = hoopsDir
+		if st, err := os.Stat("docs/site"); err == nil && st.IsDir() {
+			dash.DocsDir = "docs/site"
+			log.Info("docs available", "url", fmt.Sprintf("http://127.0.0.1:%d/docs/", cfg.Server.DashboardPort))
+		}
 
 		_ = hotSwap.Register(&swarm.Module{
 			Name: "loop",

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a class="active" href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <header class="hero">
+      <div class="badge">Hostable docs</div>
+      <h1>Glider</h1>
+      <p>
+        Local-first AI harness for Cursor: shared gateway + MITM pipeline, task-aware routing,
+        context graph, and Loop Engineering hoops that can run purely on Ollama.
+      </p>
+    </header>
+
+    <section class="grid">
+      <a class="card" href="c1-context.html">
+        <h3>C1 Context</h3>
+        <p>Glider vs Cursor, Ollama/vLLM, cloud APIs, user, OS -- system boundary.</p>
+      </a>
+      <a class="card" href="c2-containers.html">
+        <h3>C2 Containers</h3>
+        <p>Gateway :8080, Dashboard :8081, MITM :8082, backends, ~/.glider.</p>
+      </a>
+      <a class="card" href="c3-components.html">
+        <h3>C3 Components</h3>
+        <p>Pipeline, router, transform, fulfill hub, loop/swarm, metrics.</p>
+      </a>
+      <a class="card" href="c4-code.html">
+        <h3>C4 Code</h3>
+        <p>Complete, BidiAppend to RunSSE, sticky cloud, hoop cycle call chains.</p>
+      </a>
+      <a class="card" href="architecture-deep.html">
+        <h3>Architecture deep dive</h3>
+        <p>Ports, Path A/B lifecycles, sticky cloud, fulfill hub, routing, failures.</p>
+      </a>
+      <a class="card" href="data-flow.html">
+        <h3>Data flow</h3>
+        <p>Sequence diagrams for gateway, BidiAppend/RunSSE, sticky, loops.</p>
+      </a>
+      <a class="card" href="modules.html">
+        <h3>Modules</h3>
+        <p>Full internal/* package map with responsibilities and key types.</p>
+      </a>
+      <a class="card" href="concurrency.html">
+        <h3>Concurrency</h3>
+        <p>Goroutines, locks, channels, WS, loop runners, MITM hub races.</p>
+      </a>
+      <a class="card" href="architecture.html">
+        <h3>Architecture</h3>
+        <p>Gateway, MITM, orchestrator, dashboard, and how they share one harness.</p>
+      </a>
+      <a class="card" href="routing.html">
+        <h3>Routing</h3>
+        <p>Explicit flags, sticky turn families, classifier, Starlark, token ceiling.</p>
+      </a>
+      <a class="card" href="context.html">
+        <h3>Context</h3>
+        <p>Event log + turn graph, episodes, and what locals actually receive.</p>
+      </a>
+      <a class="card" href="path-a-b.html">
+        <h3>Path A / B</h3>
+        <p>Override Base URL vs MITM Agent RPC; when to use which.</p>
+      </a>
+      <a class="card" href="loop-engineering.html">
+        <h3>Loop Engineering</h3>
+        <p>Observe &rarr; plan &rarr; act &rarr; critique &rarr; learn -- not Cursor /loop cron.</p>
+      </a>
+      <a class="card" href="pure-local.html">
+        <h3>Pure local</h3>
+        <p>glider.local.yaml, Ollama-only, no cloud keys required.</p>
+      </a>
+      <a class="card" href="api.html">
+        <h3>HTTP API</h3>
+        <p>Config, VRAM, context, loops, swarm, hot-swap endpoints.</p>
+      </a>
+      <a class="card" href="samples.html">
+        <h3>Sample hoops</h3>
+        <p>Runnable Loop Engineering samples for explain, rename, review, smoke.</p>
+      </a>
+    </section>
+
+    <main class="prose">
+      <h2>Quick start</h2>
+      <pre>ollama serve
+.\glider.exe --config configs\glider.local.yaml
+# Dashboard: http://127.0.0.1:8081
+# Docs (this site): open docs/site/index.html or scripts\serve-docs.ps1</pre>
+      <h2>Reference depth</h2>
+      <p>
+        Start with the C4 model:
+        <a href="c1-context.html">C1</a> &rarr;
+        <a href="c2-containers.html">C2</a> &rarr;
+        <a href="c3-components.html">C3</a> &rarr;
+        <a href="c4-code.html">C4</a>,
+        then go deep:
+        <a href="architecture-deep.html">architecture-deep</a> for sticky/hub,
+        <a href="data-flow.html">data-flow</a> for sequences,
+        <a href="modules.html">modules</a> for <code>internal/*</code>,
+        <a href="concurrency.html">concurrency</a> for runtime sync.
+      </p>
+      <h2>Host this site</h2>
+      <p>
+        Everything under <code>docs/site/</code> is static HTML/CSS -- drop on GitHub Pages,
+        Netlify, nginx, or run locally:
+      </p>
+      <pre>powershell -File scripts\serve-docs.ps1
+# → http://127.0.0.1:8090</pre>
+    </main>
+
+    <footer class="foot">Glider documentation · synced with planning/ as of Jul 2026</footer>
+  </div>
+</body>
+</html>

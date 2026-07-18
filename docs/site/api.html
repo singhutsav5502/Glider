@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a class="active" href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">HTTP</div>
+      <h1>Dashboard API</h1>
+      <p>Base: <code>http://127.0.0.1:8081</code> (unless reconfigured).</p>
+
+      <h2>Config &amp; models</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Full config JSON; <code>?format=yaml</code></td></tr>
+        <tr><td>GET</td><td><code>/api/vram</code></td><td>GPUs + discovered models</td></tr>
+        <tr><td>GET</td><td><code>/api/metrics</code></td><td>Route counts, local/cloud %</td></tr>
+      </table>
+
+      <h2>Context</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th></tr>
+        <tr><td>GET</td><td><code>/api/context/recent</code></td></tr>
+        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/api/context/turns/{id}</code></td></tr>
+        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/api/context/export</code></td></tr>
+        <tr><td>POST</td><td><code>/api/context/prune</code></td></tr>
+      </table>
+
+      <h2>Loops / hoops</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th></tr>
+        <tr><td>GET/POST</td><td><code>/api/loops</code></td></tr>
+        <tr><td>GET</td><td><code>/api/loops/modules</code></td></tr>
+        <tr><td>GET/PUT/DELETE</td><td><code>/api/loops/{id}</code></td></tr>
+        <tr><td>POST</td><td><code>/api/loops/{id}/start</code> · <code>.../stop</code></td></tr>
+      </table>
+
+      <h2>Swarm &amp; hot-swap</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th></tr>
+        <tr><td>POST</td><td><code>/api/swarm/run</code></td></tr>
+        <tr><td>GET/POST</td><td><code>/api/swarm/templates</code></td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td></tr>
+      </table>
+
+      <h2>Gateway OpenAI surface</h2>
+      <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code></p>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>

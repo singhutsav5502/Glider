@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Architecture · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a class="active" href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Core</div>
+      <h1>Architecture</h1>
+      <p>Glider is a <strong>shared harness</strong>: every completion (gateway or MITM) goes through alias → tokenize → route → transform → execute.</p>
+      <p class="note">
+        For Path A/B lifecycles, sticky cloud, fulfill hub, and failure modes, see the
+        <a href="architecture-deep.html">architecture deep dive</a>,
+        <a href="data-flow.html">data-flow sequences</a>,
+        <a href="modules.html">module map</a>, and
+        <a href="concurrency.html">concurrency model</a>.
+      </p>
+
+      <h2>Surfaces</h2>
+      <table>
+        <tr><th>Surface</th><th>Port</th><th>Role</th></tr>
+        <tr><td>Gateway</td><td><code>:8080/v1</code></td><td>OpenAI-compatible API; Cursor Override Base URL (Path A)</td></tr>
+        <tr><td>MITM</td><td><code>:8082</code></td><td>HTTPS forward proxy; decrypt allowlisted Cursor Agent hosts (Path B)</td></tr>
+        <tr><td>Dashboard</td><td><code>:8081</code></td><td>Config, VRAM, Rules, Hoops &amp; Swarm, live metrics</td></tr>
+      </table>
+
+      <h2>Pipeline</h2>
+      <pre>CompletionRequest
+  → model_aliases
+  → tokenizer (token estimate)
+  → router.Engine (rules + classifier)
+  → transform (local context / Anthropic normalize)
+  → executor (Ollama | vLLM | OpenAI | Anthropic)
+  → metrics + contextgraph events</pre>
+
+      <h2>Key packages</h2>
+      <table>
+        <tr><th>Package</th><th>Responsibility</th></tr>
+        <tr><td><code>internal/orchestrator</code></td><td>PipelineCompleter, fallback, fan-out</td></tr>
+        <tr><td><code>internal/router</code></td><td>Priority rules, classifier, wrap-up, complexity</td></tr>
+        <tr><td><code>internal/mitm</code></td><td>CONNECT decrypt, Agent RPC fulfill hub</td></tr>
+        <tr><td><code>internal/contextgraph</code></td><td>Event log + turn family index</td></tr>
+        <tr><td><code>internal/loop</code></td><td>Loop Engineering hoops (stages + eval)</td></tr>
+        <tr><td><code>internal/swarm</code></td><td>Fan-out workers + hot-swap registry</td></tr>
+      </table>
+
+      <h2>Config profiles</h2>
+      <ul>
+        <li><code>configs/glider.yaml</code> — dual-mode intro (gateway + MITM)</li>
+        <li><code>configs/glider.local.yaml</code> — Ollama-only pure local</li>
+        <li><code>configs/glider.cloud.yaml</code> — cloud-leaning profile</li>
+      </ul>
+
+      <h2>Go deeper</h2>
+      <ul>
+        <li><a href="c1-context.html">C1 Context</a> / <a href="c2-containers.html">C2</a> / <a href="c3-components.html">C3</a> / <a href="c4-code.html">C4 Code</a> -- C4 model with step-by-step tech</li>
+        <li><a href="architecture-deep.html">Architecture deep dive</a> -- sticky state machine, hub, failures</li>
+        <li><a href="data-flow.html">Data flow</a> -- ASCII sequence diagrams</li>
+        <li><a href="modules.html">Modules</a> -- <code>internal/*</code> package map</li>
+        <li><a href="concurrency.html">Concurrency</a> -- goroutines, locks, channels</li>
+      </ul>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a> · <a href="architecture-deep.html">Deep dive →</a></footer>
+  </div>
+</body>
+</html>

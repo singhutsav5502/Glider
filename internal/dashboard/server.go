@@ -18,7 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//go:embed static/*
+//go:embed all:static
 var staticFS embed.FS
 
 type Server struct {
@@ -48,6 +48,8 @@ type Server struct {
 	Templates *swarm.TemplateStore
 	// HoopsDir is where hoop YAML mirrors are written.
 	HoopsDir string
+	// DocsDir optional static docs root (e.g. docs/site). Served at /docs/.
+	DocsDir string
 	upgrader websocket.Upgrader
 }
 
@@ -244,12 +246,24 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/ws", s.handleWS)
 
+	if dir := strings.TrimSpace(s.DocsDir); dir != "" {
+		docs := http.FileServer(http.Dir(dir))
+		mux.Handle("/docs/", http.StripPrefix("/docs/", docs))
+		mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/docs/", http.StatusFound)
+		})
+	}
+
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err)
 	}
 	fileServer := http.FileServer(http.FS(sub))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/docs") {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		} else if strings.HasSuffix(r.URL.Path, ".js") {

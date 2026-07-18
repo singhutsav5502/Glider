@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Glider</title>
   <link rel="stylesheet" href="/style.css" />
+  <!-- Cytoscape.js 3.30.4 + edgehandles 4.0.1 (MIT) -- vendored; see /VENDOR.md -->
+  <script src="/vendor/lodash-shim.js"></script>
+  <script src="/vendor/cytoscape.min.js"></script>
+  <script src="/vendor/cytoscape-edgehandles.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -18,7 +22,9 @@
         <button class="tab" data-tab="vram">VRAM & Models</button>
         <button class="tab" data-tab="rules">Rules Engine</button>
         <button class="tab" data-tab="hoops">Hoops & Swarm</button>
+        <button class="tab" data-tab="graphs">Graph editor</button>
         <button class="tab" data-tab="settings">Config</button>
+        <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
       </nav>
       <div class="status" id="status">Status: OK</div>
     </header>
@@ -93,41 +99,98 @@
       </section>
 
       <section id="panel-hoops" class="panel">
-        <p class="hint">
-          <strong>Loop Engineering</strong> hoops: compose stages (planner → actor → critic + memory/router) with eval feedback.
-          Not Cursor <code>/loop</code> cron — Glider owns the control system. Pure-local default (Ollama/vLLM only).
-          See <code>planning/loop_engineering.md</code>.
-        </p>
+        <div class="hoops-panel-head">
+          <p class="hint">
+            <strong>Loop Engineering</strong> hoops: compose fields here, edit stage and swarm
+            graphs on the <button type="button" class="linkish open-graph-editor" data-graph-focus="stage">Graph editor</button> tab.
+            Pure-local default (Ollama/vLLM).
+            See <a href="/docs/loop-engineering.html" target="_blank">docs</a>
+            · <a href="/docs/architecture-deep.html" target="_blank">deep architecture</a>.
+          </p>
+        </div>
+
+        <div id="live-status-board" class="live-board" aria-live="polite">
+          <div class="live-card" data-live="ws">
+            <span class="live-label">WebSocket</span>
+            <span class="live-value" id="live-ws">...</span>
+          </div>
+          <div class="live-card" data-live="hoops">
+            <span class="live-label">Hoops</span>
+            <span class="live-value" id="live-hoops">--</span>
+          </div>
+          <div class="live-card" data-live="running">
+            <span class="live-label">Running</span>
+            <span class="live-value" id="live-running">0</span>
+          </div>
+          <div class="live-card" data-live="route">
+            <span class="live-label">Local / Cloud</span>
+            <span class="live-value" id="live-route">--</span>
+          </div>
+          <div class="live-card" data-live="modules">
+            <span class="live-label">Modules on</span>
+            <span class="live-value" id="live-modules">--</span>
+          </div>
+          <div class="live-card" data-live="ctx">
+            <span class="live-label">Context turns</span>
+            <span class="live-value" id="live-ctx">--</span>
+          </div>
+        </div>
 
         <div class="hoops-layout">
           <fieldset class="cfg-section">
             <legend>Compose hoop</legend>
             <form id="hoop-form" class="cfg-grid">
-              <label>Name<input type="text" id="hoop-name" placeholder="daily-triage" required /></label>
-              <label title="Optional heartbeat between waves">Heartbeat<input type="text" id="hoop-interval" placeholder="5m" value="5m" /></label>
-              <label class="span2">Goal / purpose<textarea id="hoop-prompt" class="cfg-mono" rows="3" placeholder="Triage open issues and summarize blockers" required></textarea></label>
-              <label class="span2">Eval goal (critic stop condition)<input type="text" id="hoop-eval-goal" placeholder="Summary written; no critical failures" /></label>
-              <label class="span2">Stages
-                <div class="stage-checks" id="hoop-stages">
-                  <label class="check"><input type="checkbox" data-stage="router" checked /> router</label>
-                  <label class="check"><input type="checkbox" data-stage="planner" checked /> planner</label>
-                  <label class="check"><input type="checkbox" data-stage="actor" checked /> actor</label>
-                  <label class="check"><input type="checkbox" data-stage="critic" checked /> critic</label>
-                  <label class="check"><input type="checkbox" data-stage="memory" checked /> memory</label>
+              <div class="span2 compose-meta cfg-grid">
+                <label>Name<input type="text" id="hoop-name" placeholder="daily-triage" required /></label>
+                <label title="Optional heartbeat between waves">Heartbeat<input type="text" id="hoop-interval" placeholder="5m" value="" /></label>
+                <label class="span2">Goal / purpose<textarea id="hoop-prompt" class="cfg-mono" rows="3" placeholder="Triage open issues and summarize blockers" required></textarea></label>
+              </div>
+
+              <div class="span2 graph-cta-block">
+                <div class="dnd-label">Stage pipeline</div>
+                <p class="graph-cta-copy">Build and edit the stage graph (pan / zoom / drag) on the Graph editor tab. Changes sync here for Create / Update.</p>
+                <div class="graph-cta-row">
+                  <button type="button" class="graph-cta-btn open-graph-editor" data-graph-focus="stage">Open graph editor</button>
+                  <span id="stage-edit-banner" class="muted" hidden></span>
                 </div>
-              </label>
-              <label>Route
-                <select id="hoop-route">
-                  <option value="local" selected>local (pure)</option>
-                  <option value="cloud">cloud</option>
-                  <option value="auto">auto</option>
-                </select>
-              </label>
-              <label class="check"><input type="checkbox" id="hoop-learning" /> Self-learning</label>
-              <label>Max iterations<input type="number" id="hoop-max-iter" min="0" value="3" /></label>
+                <details class="stage-pipeline-details" open>
+                  <summary>Pipeline chips (reorder / drop)</summary>
+                  <div class="stage-palette-wrap" style="margin-bottom:12px">
+                    <div class="dnd-label">Palette -- click or drag onto pipeline</div>
+                    <div id="stage-palette-hoops" class="stage-palette" aria-label="Stage palette (form)">
+                      <div class="stage-chip" draggable="true" data-kind="router" title="Add router">router</div>
+                      <div class="stage-chip" draggable="true" data-kind="planner" title="Add planner">planner</div>
+                      <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
+                      <div class="stage-chip" draggable="true" data-kind="critic" title="Add critic">critic</div>
+                      <div class="stage-chip" draggable="true" data-kind="memory" title="Add memory">memory</div>
+                      <div class="stage-chip stage-chip-code" data-kind="__code__" title="Add code stage">+ code</div>
+                    </div>
+                  </div>
+                  <div id="stage-pipeline" class="stage-pipeline" aria-label="Stage pipeline">
+                    <p class="dnd-empty" id="stage-pipeline-empty">Drop stages here -- order = cycle order</p>
+                  </div>
+                </details>
+              </div>
+              <input type="hidden" id="hoop-stages-json" value="[]" />
+              <input type="hidden" id="hoop-edit-id" value="" />
+
+              <div class="span2 compose-form-fields cfg-grid">
+                <label class="span2">Eval goal (critic)<input type="text" id="hoop-eval-goal" placeholder="Summary written; no critical failures" /></label>
+                <label>Route
+                  <select id="hoop-route">
+                    <option value="local" selected>local (pure)</option>
+                    <option value="cloud">cloud</option>
+                    <option value="auto">auto</option>
+                  </select>
+                </label>
+                <label class="check"><input type="checkbox" id="hoop-learning" /> Self-learning</label>
+                <label>Max iterations<input type="number" id="hoop-max-iter" min="0" value="3" /></label>
+              </div>
               <div class="span2 cfg-actions">
-                <button type="submit">Create hoop</button>
-                <button type="button" id="hoops-refresh" class="linkish">Refresh</button>
+                <button type="submit" id="hoop-submit-btn">Create hoop</button>
+                <button type="button" id="hoop-cancel-edit" class="linkish" hidden>Cancel edit</button>
+                <button type="button" id="hoops-refresh" class="linkish">Refresh managers</button>
+                <button type="button" id="hoops-load-sample" class="linkish" title="Load hello-critic sample stages">Load sample stages</button>
               </div>
             </form>
             <p id="hoops-error" class="cfg-error" hidden></p>
@@ -135,19 +198,25 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend>Hot-swap stages</legend>
-            <p class="hint" style="margin:0 0 12px">Loop Engineering stages are hot-swappable. Infra (backends, MITM, ports) needs restart.</p>
+            <legend>Module manager (hot-swap)</legend>
+            <p class="hint" style="margin:0 0 12px">Enable/disable Loop Engineering stages and infra modules. Live generation counters update while this tab is open.</p>
             <div id="hotswap-list" class="hotswap-list"></div>
           </fieldset>
         </div>
 
         <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Active hoops + eval feedback</legend>
+          <legend>Hoop manager -- live status</legend>
           <div id="hoops-list" class="hoops-list"></div>
         </fieldset>
 
         <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Swarm wave (planner/actor fan-out)</legend>
+          <legend>Swarm wave</legend>
+          <div class="graph-cta-block">
+            <p class="graph-cta-copy">Edit the thread graph (orchestrator fan-out) on the Graph editor tab. Roles sync with the field below.</p>
+            <div class="graph-cta-row">
+              <button type="button" class="graph-cta-btn open-graph-editor" data-graph-focus="swarm">Open graph editor</button>
+            </div>
+          </div>
           <form id="swarm-form" class="cfg-grid">
             <label class="span2">Prompt<textarea id="swarm-prompt" class="cfg-mono" rows="2" placeholder="Plan then execute a short summary of this repo"></textarea></label>
             <label>Roles (comma)<input type="text" id="swarm-roles" value="plan,exec" /></label>
@@ -173,6 +242,113 @@
             </div>
           </form>
         </fieldset>
+      </section>
+
+      <section id="panel-graphs" class="panel">
+        <div class="graphs-panel-head">
+          <div>
+            <h2 class="graphs-title">Graph editor</h2>
+            <p class="hint" style="margin:0">
+              <strong>Cytoscape.js</strong> + edgehandles (MIT, vendored). Turn on <em>Link mode</em>, then
+              drag node-to-node to draw or reconnect edges. Del removes. Syncs to Hoops
+              (<code>#hoop-stages-json</code> / swarm roles) for Create / Update / Run.
+            </p>
+          </div>
+          <button type="button" class="linkish" id="graphs-back-hoops">Back to Hoops</button>
+        </div>
+
+        <div class="graphs-workspace">
+          <section class="graphs-stage" id="graphs-stage-section" aria-labelledby="graphs-stage-label">
+            <div class="graphs-section-bar">
+              <div class="dnd-label" id="graphs-stage-label">
+                Stage graph
+                <span class="graph-hint">Link mode = draw/reconnect * Del removes * dbl-click edge = flow/feedback</span>
+              </div>
+              <div class="graph-toolbar" id="stage-graph-toolbar">
+                <button type="button" id="stage-link-mode" class="linkish" aria-pressed="false" title="Drag from a node onto another to draw or reconnect">Link mode</button>
+                <button type="button" id="stage-node-add-code" class="linkish" title="Add stage with id / name / prompt">+ Code stage</button>
+                <button type="button" id="stage-node-edit" class="linkish" disabled>Edit</button>
+                <button type="button" id="stage-node-remove" class="linkish" disabled>Remove</button>
+                <button type="button" id="stage-edge-toggle" class="linkish" disabled title="Toggle flow / feedback on selected edge">Edge type</button>
+                <button type="button" id="stage-node-up" class="linkish" disabled title="Move earlier in cycle">Up</button>
+                <button type="button" id="stage-node-down" class="linkish" disabled title="Move later in cycle">Down</button>
+                <button type="button" id="stage-zoom-out" class="linkish" title="Zoom out">-</button>
+                <button type="button" id="stage-zoom-in" class="linkish" title="Zoom in">+</button>
+                <button type="button" id="stage-zoom-reset" class="linkish" title="Fit graph">Fit</button>
+              </div>
+            </div>
+            <div class="graphs-stage-body">
+              <div class="stage-palette-wrap graphs-palette">
+                <div class="dnd-label">Palette</div>
+                <div id="stage-palette" class="stage-palette" aria-label="Stage palette">
+                  <div class="stage-chip" draggable="true" data-kind="router" title="Add router">router</div>
+                  <div class="stage-chip" draggable="true" data-kind="planner" title="Add planner">planner</div>
+                  <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
+                  <div class="stage-chip" draggable="true" data-kind="critic" title="Add critic">critic</div>
+                  <div class="stage-chip" draggable="true" data-kind="memory" title="Add memory">memory</div>
+                  <div class="stage-chip stage-chip-code" data-kind="__code__" title="Add code stage (custom id/prompt)">+ code</div>
+                </div>
+              </div>
+              <div class="stage-graph-wrap graphs-canvas-wrap">
+                <div id="stage-graph-host" class="cy-host graphs-canvas" aria-label="Stage graph">
+                  <p class="dnd-empty" id="stage-graph-empty">Add stages from the palette</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="graphs-swarm" id="graphs-swarm-section" aria-labelledby="graphs-swarm-label">
+            <div class="graphs-section-bar">
+              <div class="dnd-label" id="graphs-swarm-label">
+                Swarm thread graph
+                <span class="graph-hint">Link mode: orch &lt;-&gt; workers * click fan-out edge to unlink * only linked roles run</span>
+              </div>
+              <div class="graph-toolbar">
+                <button type="button" id="swarm-link-mode" class="linkish" aria-pressed="false" title="Drag between orchestrator and workers">Link mode</button>
+                <button type="button" id="swarm-thread-add" class="linkish">Add thread</button>
+                <button type="button" id="swarm-thread-remove" class="linkish" disabled>Remove selected</button>
+                <button type="button" id="swarm-thread-edit" class="linkish" disabled>Edit role</button>
+                <button type="button" id="swarm-zoom-reset" class="linkish" title="Fit graph">Fit</button>
+              </div>
+            </div>
+            <div id="swarm-graph-host" class="cy-host graphs-canvas" aria-label="Swarm thread graph"></div>
+          </section>
+        </div>
+
+        <dialog id="stage-edit-dialog" class="stage-edit-dialog">
+  <form id="stage-edit-form" class="stage-edit-form">
+            <h3 id="stage-edit-title">Code stage</h3>
+            <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router. Id, name, and prompt make each stage concrete.</p>
+            <div class="cfg-grid">
+              <label>Kind
+                <select id="stage-edit-kind" required>
+                  <option value="planner">planner</option>
+                  <option value="actor" selected>actor</option>
+                  <option value="critic">critic</option>
+                  <option value="memory">memory</option>
+                  <option value="router">router</option>
+                </select>
+              </label>
+              <label>Id<input type="text" id="stage-edit-id" placeholder="actor_impl" required /></label>
+              <label class="span2">Name<input type="text" id="stage-edit-name" placeholder="Implementer" /></label>
+              <label class="check span2"><input type="checkbox" id="stage-edit-enabled" checked /> Enabled</label>
+              <label class="span2">Prompt<textarea id="stage-edit-prompt" class="cfg-mono" rows="4" placeholder="Stage instructions for the model"></textarea></label>
+              <label>Route
+                <select id="stage-edit-route">
+                  <option value="">(inherit)</option>
+                  <option value="local">local</option>
+                  <option value="cloud">cloud</option>
+                  <option value="auto">auto</option>
+                </select>
+              </label>
+              <label>Eval min (critic)<input type="number" id="stage-edit-eval-min" min="0" max="1" step="0.05" placeholder="0.7" /></label>
+            </div>
+            <div class="cfg-actions" style="margin-top:14px">
+              <button type="button" id="stage-edit-save">Save</button>
+              <button type="button" id="stage-edit-cancel" class="linkish">Cancel</button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <section id="panel-settings" class="panel">

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>C2 Containers · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <script type="module">
+    try {
+      const mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+      mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose",
+        themeVariables: { primaryColor: "#1a2330", primaryTextColor: "#e8eef5", lineColor: "#5eead4",
+          secondaryColor: "#243044", tertiaryColor: "#161d27" } });
+    } catch (_) {}
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a class="active" href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">C4 model · Level 2</div>
+      <h1>Containers</h1>
+      <p>
+        Zoom into Glider: three listen surfaces in one OS process (<code>cmd/glider</code>),
+        plus external backend processes and on-disk state under <code>~/.glider</code>.
+        Config keys: <code>server.proxy_port</code>, <code>server.dashboard_port</code>,
+        <code>mitm.port</code> (defaults 8080 / 8081 / 8082).
+      </p>
+
+      <div class="c4-strip">
+        <a href="c1-context.html">C1 Context</a>
+        <a class="active" href="c2-containers.html">C2 Containers</a>
+        <a href="c3-components.html">C3 Components</a>
+        <a href="c4-code.html">C4 Code</a>
+      </div>
+
+      <ol class="toc">
+        <li><a href="#diagram">Container diagram</a></li>
+        <li><a href="#table">Container catalog</a></li>
+        <li><a href="#steps">Step-by-step tech (startup)</a></li>
+        <li><a href="#protocols">Protocols between containers</a></li>
+        <li><a href="#hot">Hot-reload vs restart</a></li>
+        <li><a href="#links">Drill down</a></li>
+      </ol>
+
+      <h2 id="diagram">Container diagram</h2>
+      <pre class="mermaid">C4Container
+title Glider containers (C2) -- one process, three listeners
+
+Person(user, "Developer")
+System_Ext(cursor, "Cursor")
+
+Container(gw, "Gateway", "Go · internal/api", "OpenAI-compat /v1/* on :8080")
+Container(mitm, "MITM proxy", "Go · internal/mitm", "CONNECT decrypt + Agent fulfill on :8082")
+Container(dash, "Dashboard", "Go · internal/dashboard", "UI + /api/* + /ws on :8081")
+Container(harness, "Shared harness", "Go · orchestrator+router+…", "PipelineCompleter in-process")
+ContainerDb(disk, "~/.glider", "Filesystem", "mitm CA, history, context graph")
+
+System_Ext(ollama, "Ollama :11434")
+System_Ext(vllm, "vLLM")
+System_Ext(cloud, "OpenAI / Anthropic")
+
+Rel(cursor, gw, "HTTP JSON /v1")
+Rel(cursor, mitm, "HTTP CONNECT + TLS")
+Rel(user, dash, "Browser")
+Rel(gw, harness, "Complete()")
+Rel(mitm, harness, "DecideLocal / CompleteLocal")
+Rel(dash, harness, "metrics, loops, config APIs")
+Rel(harness, ollama, "HTTP")
+Rel(harness, vllm, "HTTP")
+Rel(harness, cloud, "HTTPS BYOK")
+Rel(mitm, cursor, "origin passthrough HTTPS")
+Rel(harness, disk, "R/W")
+Rel(mitm, disk, "CA certs")
+Rel(dash, disk, "history / context APIs")</pre>
+
+      <pre class="seq">┌────────────────────────────────── glider.exe (one process) ──────────────────────────────────┐
+│                                                                                              │
+│  ┌─────────────────┐   Complete()    ┌────────────────────────────┐                          │
+│  │ Gateway :8080   │────────────────▶│   Shared harness           │──▶ Ollama / vLLM / BYOK  │
+│  │ internal/api    │                 │   PipelineCompleter        │                          │
+│  └─────────────────┘                 │   router · transform ·     │                          │
+│                                      │   executor · metrics ·     │                          │
+│  ┌─────────────────┐ DecideLocal /   │   contextgraph             │                          │
+│  │ MITM :8082      │ CompleteLocal ▶│                            │──▶ Cursor origin (MITM)  │
+│  │ internal/mitm   │                 └─────────────▲──────────────┘                          │
+│  └─────────────────┘                               │                                         │
+│                                                    │ REST / WS                               │
+│  ┌─────────────────┐                               │                                         │
+│  │ Dashboard :8081 │───────────────────────────────┘                                         │
+│  │ internal/dashboard │                                                                      │
+│  └─────────────────┘                                                                         │
+│                                                                                              │
+│  Disk: ~/.glider/{mitm,history,context} · configs/*.yaml (watched)                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘</pre>
+
+      <h2 id="table">Container catalog</h2>
+      <table>
+        <tr><th>Container</th><th>Port / path</th><th>Package</th><th>Responsibility</th></tr>
+        <tr>
+          <td>Gateway</td>
+          <td><code>:8080</code></td>
+          <td><code>internal/api</code></td>
+          <td><code>POST /v1/chat/completions</code>, <code>/v1/responses</code>, <code>GET /v1/models</code>, <code>/healthz</code></td>
+        </tr>
+        <tr>
+          <td>MITM proxy</td>
+          <td><code>:8082</code></td>
+          <td><code>internal/mitm</code></td>
+          <td>CONNECT, Glider CA leaf, allowlist decrypt, Agent BidiAppend/RunSSE hub, origin tunnel</td>
+        </tr>
+        <tr>
+          <td>Dashboard</td>
+          <td><code>:8081</code></td>
+          <td><code>internal/dashboard</code></td>
+          <td>Operator UI, <code>/api/*</code>, WebSocket <code>/ws</code>, optional static docs</td>
+        </tr>
+        <tr>
+          <td>Shared harness</td>
+          <td>in-process</td>
+          <td><code>orchestrator</code>, <code>router</code>, …</td>
+          <td>Single <code>PipelineCompleter</code> used by gateway + MITM + loops</td>
+        </tr>
+        <tr>
+          <td>Backend clients</td>
+          <td>out of process</td>
+          <td><code>backend/ollama</code>, <code>vllm</code>, <code>cloud</code></td>
+          <td>Registered in <code>backend.Registry</code>; HTTP to local/cloud providers</td>
+        </tr>
+        <tr>
+          <td><code>~/.glider</code></td>
+          <td>filesystem</td>
+          <td>metrics, contextgraph, mitm CA</td>
+          <td><code>mitm/</code> CA, <code>history/</code>, <code>context/</code> JSONL</td>
+        </tr>
+      </table>
+
+      <h2 id="steps">Step-by-step tech (process startup)</h2>
+      <p>Grounded in <code>cmd/glider/main.go</code>:</p>
+      <ol class="steps">
+        <li>
+          <strong>Load config + watcher</strong>
+          <span class="tech">config.LoadConfig · config.NewProvider · StartWatcher</span>
+          Defaults if load fails. Watch reloads rules/aliases/log without restart.
+        </li>
+        <li>
+          <strong>Register backends + models</strong>
+          <span class="tech">backend.NewRegistry · ollama/vllm/cloud clients · RegisterModel</span>
+          Ping health; VRAM estimates from YAML <code>models:</code>.
+        </li>
+        <li>
+          <strong>Build router + executor + pipeline</strong>
+          <span class="tech">router.NewEngineFromConfig · SimpleExecutor · FanOutExecutor · PipelineCompleter</span>
+          Atomic pointer for hot router swap. Optional fan-out / swarm registry.
+        </li>
+        <li>
+          <strong>Wire context + metrics</strong>
+          <span class="tech">contextgraph.Store · contextkit.Store · metrics.Collector + HistoryStore</span>
+          Session id <code>run-&lt;uuid&gt;</code>; history under <code>~/.glider/history</code>.
+        </li>
+        <li>
+          <strong>Start Gateway</strong>
+          <span class="tech">api.Server.Start · listen server.proxy_port (8080)</span>
+          Handlers call <code>Completer.Complete</code>.
+        </li>
+        <li>
+          <strong>Start MITM (if enabled)</strong>
+          <span class="tech">mitm.Proxy.Start · CA under ~/.glider/mitm · port 8082</span>
+          Interceptor holds same harness; <code>agent_rpc_fulfill</code> arms the fulfill hub.
+        </li>
+        <li>
+          <strong>Start Dashboard</strong>
+          <span class="tech">dashboard.Server.Start · port 8081 · Bus for live WS</span>
+          Config, VRAM, rules, hoops/swarm APIs (UI owned separately; do not restyle here).
+        </li>
+        <li>
+          <strong>Await SIGINT/SIGTERM</strong>
+          <span class="tech">signal.Notify · graceful shutdown of listeners</span>
+        </li>
+      </ol>
+
+      <h2 id="protocols">Protocols between containers</h2>
+      <table>
+        <tr><th>From</th><th>To</th><th>Protocol</th><th>Notes</th></tr>
+        <tr><td>Cursor</td><td>Gateway</td><td>HTTP/1.1 JSON (+ SSE)</td><td>OpenAI/Anthropic-shaped bodies</td></tr>
+        <tr><td>Cursor</td><td>MITM</td><td>HTTP CONNECT → TLS</td><td>Decrypt allowlist; else blind tunnel</td></tr>
+        <tr><td>Gateway / MITM</td><td>Harness</td><td>in-process Go calls</td><td><code>Complete</code> / <code>CompleteLocal</code> / <code>DecideLocal</code></td></tr>
+        <tr><td>Harness</td><td>Ollama/vLLM</td><td>HTTP</td><td>OpenAI-compat chat completions</td></tr>
+        <tr><td>Harness</td><td>Cloud APIs</td><td>HTTPS</td><td>Path A BYOK only</td></tr>
+        <tr><td>MITM</td><td>Cursor origin</td><td>HTTPS</td><td>Passthrough with original Host + auth</td></tr>
+        <tr><td>Browser</td><td>Dashboard</td><td>HTTP + WS</td><td><code>/api/*</code>, <code>/ws</code></td></tr>
+        <tr><td>Any</td><td><code>~/.glider</code></td><td>filesystem</td><td>CA PEM, JSONL events, history</td></tr>
+      </table>
+
+      <h2 id="hot">Hot-reload vs restart</h2>
+      <div class="note">
+        <strong>Hot</strong> (config.Provider.Watch / swarm.Registry): router rules, aliases,
+        transform, log level, classifier, fan-out/swarm opts, hoop templates.
+        <strong>Restart required:</strong> listen ports, MITM CA/hosts, backend client wiring,
+        cloud provider keys at process start. Details:
+        <a href="architecture-deep.html#hotswap">deep dive · hot-swap</a>,
+        <a href="concurrency.html">concurrency</a>.
+      </div>
+
+      <h2 id="links">Drill down</h2>
+      <div class="level-map">
+        <a href="c1-context.html">
+          <span class="lvl">C1</span>
+          <span class="ttl">Context</span>
+          <p class="desc">Glider vs Cursor and externals</p>
+        </a>
+        <a href="c3-components.html">
+          <span class="lvl">C3</span>
+          <span class="ttl">Components</span>
+          <p class="desc">Pipeline, hub, router, loops</p>
+        </a>
+        <a href="modules.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">Modules</span>
+          <p class="desc">Full internal/* package map</p>
+        </a>
+        <a href="api.html">
+          <span class="lvl">Ref</span>
+          <span class="ttl">HTTP API</span>
+          <p class="desc">Dashboard and gateway routes</p>
+        </a>
+      </div>
+    </main>
+    <footer class="foot">
+      <a href="c1-context.html">← C1</a> ·
+      <a href="c3-components.html">C3 Components →</a>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Modules · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a class="active" href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">internal/*</div>
+      <h1>Package map</h1>
+      <p>
+        Every package under <code>internal/</code> with responsibilities, key types, and
+        how it plugs into the shared harness. Entry binary:
+        <code>cmd/glider/main.go</code>.
+      </p>
+
+      <ol class="toc">
+        <li><a href="#map">Package table</a></li>
+        <li><a href="#deps">Dependency sketch</a></li>
+        <li><a href="#api">api</a></li>
+        <li><a href="#orchestrator">orchestrator</a></li>
+        <li><a href="#router">router</a></li>
+        <li><a href="#mitm">mitm</a></li>
+        <li><a href="#cursorrpc">cursorrpc</a></li>
+        <li><a href="#context">contextgraph &amp; contextkit</a></li>
+        <li><a href="#loop-swarm">loop &amp; swarm</a></li>
+        <li><a href="#ops">config, metrics, vram, backend, transform, dashboard</a></li>
+      </ol>
+
+      <h2 id="map">Package table</h2>
+      <table>
+        <tr><th>Package</th><th>Responsibility</th><th>Key types / files</th></tr>
+        <tr>
+          <td><code>api</code></td>
+          <td>OpenAI-compatible gateway HTTP surface</td>
+          <td><code>Server</code>, <code>Handlers</code>, streaming, Responses normalize, Anthropic normalize</td>
+        </tr>
+        <tr>
+          <td><code>backend</code></td>
+          <td>Completion interfaces + registry; provider clients</td>
+          <td><code>CompletionRequest</code>, <code>Registry</code>, <code>ToolsUnsupportedError</code>; subpkgs <code>ollama</code>, <code>vllm</code>, <code>cloud</code></td>
+        </tr>
+        <tr>
+          <td><code>config</code></td>
+          <td>YAML load, validate, watch, defaults</td>
+          <td><code>Config</code>, <code>Provider</code>, routing/MITM/transform/orchestration structs</td>
+        </tr>
+        <tr>
+          <td><code>contextgraph</code></td>
+          <td>Append-only turn event log + sticky index</td>
+          <td><code>Store</code>, <code>Event</code>, <code>TurnView</code>, JSONL under <code>~/.glider/context</code></td>
+        </tr>
+        <tr>
+          <td><code>contextkit</code></td>
+          <td>Episode / session rings for local inject &amp; swarm</td>
+          <td><code>Store</code>, <code>Episode</code>, sticky scope helpers</td>
+        </tr>
+        <tr>
+          <td><code>cursorrpc</code></td>
+          <td>Cursor Connect/protobuf extract &amp; RunSSE encode</td>
+          <td><code>ExtractBidiCompletionRequest</code>, RunSSE codec, root/child detection</td>
+        </tr>
+        <tr>
+          <td><code>dashboard</code></td>
+          <td>Operator UI, REST, WebSocket metrics</td>
+          <td><code>Server</code>, discover, loops/swarm/context APIs</td>
+        </tr>
+        <tr>
+          <td><code>loop</code></td>
+          <td>Loop Engineering hoops (stages + eval)</td>
+          <td><code>Manager</code>, <code>LoopSpec</code>, <code>StageSpec</code>, <code>CycleResult</code></td>
+        </tr>
+        <tr>
+          <td><code>metrics</code></td>
+          <td>Request/VRAM events, bus, on-disk history</td>
+          <td><code>Collector</code>, <code>Bus</code>, <code>HistoryStore</code> (<code>~/.glider/history</code>)</td>
+        </tr>
+        <tr>
+          <td><code>mitm</code></td>
+          <td>HTTPS MITM proxy + Path B Agent fulfill</td>
+          <td><code>Proxy</code>, <code>Interceptor</code>, <code>AgentFulfillHub</code>, hosts, CA, debug dumps</td>
+        </tr>
+        <tr>
+          <td><code>orchestrator</code></td>
+          <td>Shared harness + execute path</td>
+          <td><code>PipelineCompleter</code>, <code>SimpleExecutor</code>, <code>FallbackChain</code>, <code>CircuitBreaker</code>, queue, VRAM adapter, fan-out</td>
+        </tr>
+        <tr>
+          <td><code>router</code></td>
+          <td>Priority rule engine</td>
+          <td><code>Engine</code>, explicit, classifier, Starlark, context_size, composer_wrapup, tool_followup, complexity</td>
+        </tr>
+        <tr>
+          <td><code>swarm</code></td>
+          <td>Fan-out workers + hot-swap registry</td>
+          <td><code>Registry</code>, <code>FanOut</code>, <code>MergeResults</code>, <code>Runner</code>, templates</td>
+        </tr>
+        <tr>
+          <td><code>transform</code></td>
+          <td>Token estimate + opt-in request transforms</td>
+          <td><code>Tokenizer</code>, <code>Transformer</code>, <code>BoundLocalContext</code>, episode inject</td>
+        </tr>
+        <tr>
+          <td><code>vram</code></td>
+          <td>GPU memory accounting / eviction</td>
+          <td><code>Manager</code>, <code>NvidiaSmiMonitor</code>, allocation strategies</td>
+        </tr>
+      </table>
+
+      <h2 id="deps">Dependency sketch</h2>
+      <pre>cmd/glider
+  ├─ config.Provider
+  ├─ backend.Registry ── ollama | vllm | cloud
+  ├─ router.Engine
+  ├─ transform.Tokenizer / Transformer
+  ├─ contextgraph.Store + contextkit.Store
+  ├─ metrics.Collector (+ Bus → dashboard WS)
+  ├─ orchestrator.PipelineCompleter
+  │     ├─ api.Server (:8080)
+  │     ├─ mitm.Proxy (:8082) → Interceptor → AgentFulfillHub
+  │     │                         └─ cursorrpc
+  │     ├─ loop.Manager
+  │     └─ swarm.Runner / FanOut
+  ├─ vram.Manager (poller)
+  └─ dashboard.Server (:8081)</pre>
+
+      <h2 id="api">api</h2>
+      <p>
+        Path A surface. Parses chat completions and Responses bodies into
+        <code>backend.CompletionRequest</code>, calls <code>Completer.Complete</code>, writes
+        SSE or JSON. Anthropic Messages-shaped requests are normalized to OpenAI tool/message
+        layout. Does not own routing policy — that is entirely the orchestrator + router.
+      </p>
+
+      <h2 id="orchestrator">orchestrator</h2>
+      <p>
+        Heart of the harness. <code>PipelineCompleter</code> is the single completion entry
+        used by gateway, MITM, and loops. Surrounding pieces:
+      </p>
+      <ul>
+        <li><code>SimpleExecutor</code> / <code>FallbackChain</code> — health, breaker, warm, rate limit, cloud fallback</li>
+        <li><code>PriorityQueue</code> — optional enqueue before execute</li>
+        <li><code>FanOutExecutor</code> — multi-backend fan-out (partial productization)</li>
+        <li><code>ModelLifecycle</code> / VRAM adapter — EnsureWarm / unload</li>
+        <li><code>ErrOriginPassthrough</code> — MITM signal only</li>
+      </ul>
+
+      <h2 id="router">router</h2>
+      <p>
+        <code>Engine.Route</code>: explicit hard override, then first matching rule by priority.
+        Built from yaml via <code>NewEngineFromConfig</code>, which also injects task classifier
+        and optional complexity rules. Starlark scripts run in a sandboxed executor. Tool
+        followup and composer wrap-up are first-class rule types — see
+        <a href="routing.html">Routing</a>.
+      </p>
+
+      <h2 id="mitm">mitm</h2>
+      <p>
+        CONNECT accept loop, CA leaf minting, host allowlist, blind tunnel vs decrypt,
+        HTTP intercept classification, StreamChat* legacy fulfill, Bidi/RunSSE fulfill hub,
+        sticky turn family, debug RPC dumps when <code>debug_agent_rpc</code> is on. Policy
+        flags: <code>agent_rpc_fulfill</code>, <code>origin_on_local_error</code>,
+        <code>agent_rpc_canned_on_error</code> (R&amp;D only).
+      </p>
+
+      <h2 id="cursorrpc">cursorrpc</h2>
+      <p>
+        Wire-format layer for Cursor Agent RPC: BidiAppend body scan/extract, TipTap text,
+        RunSSE frame encode/decode, helpers like <code>IsRootAgentRunSSE</code>. Keeps protobuf
+        / Connect details out of the orchestrator. Path B text-only local fulfill depends on
+        the text codec; tool codec availability gates any future local tool-loop fulfill.
+      </p>
+
+      <h2 id="context">contextgraph &amp; contextkit</h2>
+      <p>
+        <strong>contextgraph</strong> is the source of truth for route/sticky analytics —
+        append events, index by turn/request/session, answer “is cloud family still live?”.
+        <strong>contextkit</strong> holds compact episode summaries for prompt injection and
+        swarm merge. Locals must not receive raw TipTap mega-dumps; bounded transform owns
+        that contract (<a href="context.html">Context</a>).
+      </p>
+
+      <h2 id="loop-swarm">loop &amp; swarm</h2>
+      <p>
+        <code>loop</code>: hoop CRUD, runner lifecycle, stage prompts, critic SCORE parse,
+        persistence under <code>~/.glider/loops/</code>.
+        <code>swarm</code>: worker fan-out, merge, dashboard runner, and the hot-swap
+        <code>Registry</code> that applies config Watch to named modules (including loop
+        stages). Operator docs: <a href="loop-engineering.html">Loop Engineering</a>,
+        <a href="architecture-deep.html#hotswap">deep dive hot-swap</a>.
+      </p>
+
+      <h2 id="ops">config, metrics, vram, backend, transform, dashboard</h2>
+      <ul>
+        <li><strong>config</strong> — single schema for all profiles; validate catches bad priorities / MITM hosts.</li>
+        <li><strong>metrics</strong> — LOCAL/CLOUD/CANNED distribution, MITM action tags, history for dashboard charts.</li>
+        <li><strong>vram</strong> — nvidia-smi monitor, hybrid allocation, headroom and idle unload.</li>
+        <li><strong>backend</strong> — pluggable Complete stream; cloud providers share OpenAI/Anthropic clients.</li>
+        <li><strong>transform</strong> — estimate tokens; BoundLocalContext; optional rewrite pipeline (off by default).</li>
+        <li><strong>dashboard</strong> — Overview, VRAM, Rules, Config, Hoops &amp; Swarm; serves this docs site when present.</li>
+      </ul>
+
+      <p>
+        Concurrency internals of these packages:
+        <a href="concurrency.html">Concurrency</a>.
+      </p>
+    </main>
+    <footer class="foot">
+      <a href="data-flow.html">← Data flow</a> ·
+      <a href="concurrency.html">Concurrency →</a>
+    </footer>
+  </div>
+</body>
+</html>

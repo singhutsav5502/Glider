@@ -22,6 +22,10 @@ Cloud keys (gateway cloud path): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
 
 Open the dashboard at [http://localhost:8081](http://localhost:8081) → **Config** tab to edit the running config (structured form primary; Edit YAML optional). Save writes the config file and hot-reloads routing, model aliases, context threshold, and log level (GPU assignments persist on the same path). Restart Glider after changing listen ports, MITM, backends, or cloud provider registration.
 
+**Hostable docs:** [docs/site/](docs/site/) (Architecture, Routing, Context, Loop Engineering, Sample hoops). Serve with `powershell -File scripts\serve-docs.ps1` or open `docs/site/index.html`. With Glider running from the repo root, docs are also at [http://127.0.0.1:8081/docs/](http://127.0.0.1:8081/docs/).
+
+**Sample Loop Engineering hoops:** [samples/hoops/](samples/hoops/) — `go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start` (Ollama + Glider required).
+
 ---
 
 ## Shared harness

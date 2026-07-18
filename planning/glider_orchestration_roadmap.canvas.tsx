@@ -102,7 +102,7 @@ const CAPABILITY_STATUS = [
   {
     area: "Loop engineering (eval / babysit / recurring)",
     pct: 15,
-    truth: "IntervalLoop skeleton only — not Cursor /loop",
+    truth: "IntervalLoop skeleton only -- not Cursor /loop",
   },
 ];
 
@@ -188,7 +188,7 @@ const BACKLOG = [
     pri: "P3",
     item: "Thread weaving + planner decomposition",
     status: "Aspirational",
-    depth: "Slate-like orchestrator thread; Glider stays proxy Ã¢â‚¬â€ JSON/Starlark graphs",
+    depth: "Slate-like orchestrator thread; Glider stays proxy -- JSON/Starlark graphs",
     tone: "neutral" as const,
   },
   {
@@ -216,9 +216,9 @@ const CONTEXT_LAYERS = [
   ],
   [
     "Episode (swarm)",
-    "Compressed worker return Ã¢â‚¬â€ not full transcript",
+    "Compressed worker return -- not full transcript",
     "Not implemented",
-    "Episode{Summary, Artifacts, Tokens, Model} Ã¢â€ â€™ orchestrator",
+    "Episode{Summary, Artifacts, Tokens, Model} -> orchestrator",
   ],
   [
     "Shared swarm state",
@@ -244,19 +244,19 @@ const HOT_SWAP_MODULES = [
   ["Module", "Swap today?", "Concurrency note", "Restart needed?"],
   [
     "Router rules / aliases / threshold / log level",
-    "Yes Ã¢â‚¬â€ Provider.Swap + Watch",
+    "Yes -- Provider.Swap + Watch",
     "atomic.Value store; subscribers rebuild Engine",
     "No",
   ],
   [
     "GPU assignments (vram.gpu_assignments)",
-    "Yes Ã¢â‚¬â€ same Swap path",
+    "Yes -- same Swap path",
     "Read by GET /api/vram after Swap",
     "No",
   ],
   [
     "Task classifier config block",
-    "Partial Ã¢â‚¬â€ YAML reload",
+    "Partial -- YAML reload",
     "Must not race mid-Route; snapshot at decision start",
     "No (if wired)",
   ],
@@ -273,7 +273,7 @@ const HOT_SWAP_MODULES = [
     "Yes",
   ],
   [
-    "Executor strategy (single Ã¢â€ â€™ fan_out)",
+    "Executor strategy (single -> fan_out)",
     "Config flag only (stub)",
     "Fan-out needs BatchReserve before spawn",
     "No once built",
@@ -307,7 +307,7 @@ const CONCURRENCY_ROWS = [
     "Single Arm* wins; RunSSE refuses local if /cloud",
   ],
   [
-    "RunSSE hub (Bidi Ã¢â€ â€ RunSSE)",
+    "RunSSE hub (Bidi <-> RunSSE)",
     "pending/waiting maps; 800ms wait; 30s TTL GC",
     "Stale offer / wrong corr_id fulfill",
     "Strict UUID keying; metric on expire + miss",
@@ -331,7 +331,7 @@ const SLATE_MAP = [
   [
     "Orchestrator thread",
     "Programs in action space; not all tactics",
-    "Future local planner or Starlark+LLM Ã¢â€ â€™ SubTasks",
+    "Future local planner or Starlark+LLM -> SubTasks",
     "0%",
   ],
   [
@@ -342,7 +342,7 @@ const SLATE_MAP = [
   ],
   [
     "Episodes",
-    "Compressed step history Ã¢â€ â€™ orchestrator",
+    "Compressed step history -> orchestrator",
     "New Episode type into history/metrics",
     "Design",
   ],
@@ -354,14 +354,14 @@ const SLATE_MAP = [
   ],
   [
     "Model routing by role",
-    "PlanÃ¢â€ â€™frontier; execÃ¢â€ â€™fast coder",
+    "Plan->frontier; exec->fast coder",
     "Aliases + role-tagged classifier",
     "Partial (aliases yes)",
   ],
   [
     "Implicit planning",
     "Research then present plan; no rigid modes",
-    "Adaptive decompose; avoid fixed plannerÃ¢â€ â€™coder pipeline",
+    "Adaptive decompose; avoid fixed planner->coder pipeline",
     "Design",
   ],
   [
@@ -391,7 +391,7 @@ const MILESTONE_2W = [
   { id: "w2", content: "Eval loop MVP: lint/test reflect before Cursor sees stream", status: "pending" as const },
   { id: "w3", content: "Babysit-style CI loop adapter (wake on check fail)", status: "pending" as const },
   { id: "w4", content: "Provider registry hot-reload (no port/MITM yet)", status: "pending" as const },
-  { id: "w5", content: "Path B tools only if Path A bridge proven Ã¢â‚¬â€ else stay origin", status: "pending" as const },
+  { id: "w5", content: "Path B tools only if Path A bridge proven -- else stay origin", status: "pending" as const },
   { id: "w6", content: "go test -race sign-off where CGO toolchain available", status: "pending" as const },
 ];
 
@@ -434,7 +434,7 @@ function StatusSection() {
 
   return (
     <Stack gap={16}>
-      <Callout tone="info" title="Status snapshot — 2026-07-18 late">
+      <Callout tone="info" title="Status snapshot -- 2026-07-18 late">
         Core dual-mode + Path A tools + Path B text/sticky shipped. Swarms are foundation stubs (~40%), not Slate. Authority: planning/README.md.
       </Callout>
 
@@ -487,7 +487,7 @@ function StatusSection() {
       </Text>
       <BarChart
         categories={CAPABILITY_STATUS.map((c) =>
-          c.area.length > 28 ? c.area.slice(0, 26) + "Ã¢â‚¬Â¦" : c.area,
+          c.area.length > 28 ? c.area.slice(0, 26) + "..." : c.area,
         )}
         series={[
           {
@@ -501,7 +501,7 @@ function StatusSection() {
         yMax={100}
       />
       <Text size="small" tone="tertiary">
-        Source: Glider repo STATUS.md + planning/*.md Ã‚Â· as of 2026-07-18 Ã‚Â· not a forecast
+        Source: Glider repo STATUS.md + planning/*.md | as of 2026-07-18 | not a forecast
       </Text>
 
       <div
@@ -561,7 +561,7 @@ function ContextSection() {
     <Stack gap={16}>
       <Callout tone="info" title="For-loop engineering needs checkpoints">
         Cursor-style <Code>/loop</Code> and babysit CI are recurring wakes. Glider must
-        persist goal + last eval + next wake reason Ã¢â‚¬â€ not re-inflate full transcripts each
+        persist goal + last eval + next wake reason -- not re-inflate full transcripts each
         tick. Episodes are the swarm analogue of loop checkpoints.
       </Callout>
       <Table
@@ -591,12 +591,12 @@ function ContextSection() {
           <CardBody>
             <Stack gap={8}>
               <Text size="small">
-                Hub owns scratchpad; workers never peer-message. Returns are Episode only Ã¢â‚¬â€
+                Hub owns scratchpad; workers never peer-message. Returns are Episode only --
                 Slate thread-weaving pattern adapted to Go channel fan-in.
               </Text>
               <Text size="small" tone="secondary">
-                Cancel parent ctx Ã¢â€ â€™ cancel all workers; merge only successful episodes;
-                partial failure Ã¢â€ â€™ origin or degraded single-model fallback.
+                Cancel parent ctx -> cancel all workers; merge only successful episodes;
+                partial failure -> origin or degraded single-model fallback.
               </Text>
             </Stack>
           </CardBody>
@@ -611,7 +611,7 @@ function HotSwapSection() {
     <Stack gap={16}>
       <Text tone="secondary">
         Inspiration: Slate treats skills/models as swappable roles. Glider already has{" "}
-        <Code>Provider.Watch</Code> / <Code>Swap</Code> for the routing surface Ã¢â‚¬â€ extend that
+        <Code>Provider.Watch</Code> / <Code>Swap</Code> for the routing surface -- extend that
         pattern to executors and (carefully) backends.
       </Text>
       <Table
@@ -629,7 +629,7 @@ function HotSwapSection() {
         <CardBody>
           <Stack gap={6}>
             <Text weight="semibold">
-              ConfigProvider Ã¢â€ â€™ RouterEngine Ã¢â€ â€™ Executor Ã¢â€ â€™ Backend
+              ConfigProvider -> RouterEngine -> Executor -> Backend
             </Text>
             <Text size="small" tone="secondary">
               Today: first three partially hot; Backend registry is startup-pinned. Swarm adds
@@ -670,7 +670,7 @@ function ConcurrencySection() {
           <CardBody>
             <Text size="small">
               Existing priority queue is the choke point. Swarm workers must acquire queue slots
-              or a dedicated swarm semaphore Ã¢â‚¬â€ never unbounded goroutines per Cursor turn.
+              or a dedicated swarm semaphore -- never unbounded goroutines per Cursor turn.
             </Text>
           </CardBody>
         </Card>
@@ -678,7 +678,7 @@ function ConcurrencySection() {
           <CardHeader>Cancellation</CardHeader>
           <CardBody>
             <Text size="small">
-              Client disconnect / Cursor abort Ã¢â€ â€™ cancel ctx. Hub waiters should select on ctx
+              Client disconnect / Cursor abort -> cancel ctx. Hub waiters should select on ctx
               as well as offer channel (today: time-bounded Wait).
             </Text>
           </CardBody>
@@ -692,7 +692,7 @@ function LoopsSection() {
   return (
     <Stack gap={16}>
       <Text tone="secondary">
-        Map Cursor product loops onto Glider harness capabilities Ã¢â‚¬â€ Glider is not a coding
+        Map Cursor product loops onto Glider harness capabilities -- Glider is not a coding
         agent UI; it can still host the eval/reflect cycle under the proxy.
       </Text>
       <Table
@@ -707,12 +707,12 @@ function LoopsSection() {
           [
             "Babysit CI",
             "babysit skill / PR checks",
-            "Wake on CI fail Ã¢â€ â€™ local fix loop Ã¢â€ â€™ push policy external",
+            "Wake on CI fail -> local fix loop -> push policy external",
             "0%",
           ],
           [
             "Lint/test reflect",
-            "impl plan Ã‚Â§9.2",
+            "impl plan sec 9.2",
             "Background runner; only final SSE to Cursor",
             "Design",
           ],
@@ -735,8 +735,8 @@ function LoopsSection() {
               </Code>
             </Text>
             <Text size="small" tone="secondary">
-              Persist beside session history. On wake: load checkpoint Ã¢â€ â€™ route Ã¢â€ â€™ execute Ã¢â€ â€™
-              write new episode Ã¢â€ â€™ update checkpoint. Never replay full chat into local context
+              Persist beside session history. On wake: load checkpoint -> route -> execute ->
+              write new episode -> update checkpoint. Never replay full chat into local context
               if episode summary exists.
             </Text>
           </Stack>
@@ -779,14 +779,14 @@ function MilestonesSection() {
     <Stack gap={16}>
       <Grid columns={2} gap={16}>
         <Stack gap={8}>
-          <H3>ASAP Ã¢â‚¬â€ 48 hours</H3>
+          <H3>ASAP -- 48 hours</H3>
           <Text size="small" tone="secondary">
             Reliability first, then swarm foundation. No Path B multi-agent in this window.
           </Text>
           <TodoListCard todos={MILESTONE_48H} defaultExpanded />
         </Stack>
         <Stack gap={8}>
-          <H3>Next Ã¢â‚¬â€ 2 weeks</H3>
+          <H3>Next -- 2 weeks</H3>
           <Text size="small" tone="secondary">
             Context + loops + cautious hot-swap depth. Path B tools gated on Path A proof.
           </Text>
@@ -797,7 +797,7 @@ function MilestonesSection() {
       <Text size="small" tone="tertiary">
         Acceptance for 48h FanOut: config <Code>strategy: fan_out</Code> e2e green on gateway
         only; MITM Path B unchanged. Acceptance for 2w eval loop: failing unit test causes
-        Ã¢â€°Â¥1 silent local retry before Cursor UI shows final text.
+        >=1 silent local retry before Cursor UI shows final text.
       </Text>
     </Stack>
   );
@@ -815,12 +815,12 @@ export default function GliderOrchestrationRoadmap() {
         <Row align="center" gap={10} wrap>
           <H1>Glider orchestration roadmap</H1>
           <Pill tone="warning" size="sm">
-            analytical Ã‚Â· honest
+            analytical | honest
           </Pill>
         </Row>
         <Text tone="secondary">
           Pending depth on Path B, routing, tools, swarms, context management, and
-          Slate-inspired hot-swap concurrency Ã¢â‚¬â€ grounded in repo code, not wishful %.
+          Slate-inspired hot-swap concurrency -- grounded in repo code, not wishful %.
         </Text>
       </Stack>
 
@@ -838,7 +838,7 @@ export default function GliderOrchestrationRoadmap() {
 
       <Spacer />
       <Text size="small" tone="quaternary">
-        Glider @ D:\___repos\Glider Ã‚Â· canvas mirrors planning/swarm_orchestration.md
+        Glider @ D:\___repos\Glider | canvas mirrors planning/swarm_orchestration.md
       </Text>
     </Stack>
   );

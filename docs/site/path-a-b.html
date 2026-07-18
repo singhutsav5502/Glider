@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Path A / B · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a class="active" href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="samples.html">Sample hoops</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Cursor</div>
+      <h1>Path A and Path B</h1>
+
+      <h2>Path A — Gateway (proven for Agent + tools)</h2>
+      <ol>
+        <li>Cursor: Override OpenAI Base URL → <code>http://127.0.0.1:8080/v1</code></li>
+        <li>Use a model with <code>cus-</code> (or <code>glider-</code>) prefix so Cursor does not hijack to api2</li>
+        <li>Traffic is OpenAI/Anthropic-shaped JSON; Glider routes local vs BYOK cloud</li>
+      </ol>
+      <p>Best path for <strong>Agent + tools</strong> today.</p>
+
+      <h2>Path B — MITM</h2>
+      <ol>
+        <li>Cursor <code>http.proxy</code> → <code>http://127.0.0.1:8082</code></li>
+        <li>Trust Glider CA; disable HTTP/2</li>
+        <li>Only allowlisted hosts decrypt (api2/api3/api4/*.api5)</li>
+      </ol>
+      <table>
+        <tr><th>RPC</th><th>Behavior</th></tr>
+        <tr><td>OpenAI <code>/v1/*</code></td><td>Parse → harness</td></tr>
+        <tr><td>AiService StreamChat*</td><td>cursor-rpc decode → local or origin</td></tr>
+        <tr><td>BidiAppend + RunSSE</td><td>Extract prompt → DecideLocal → local text fulfill or origin</td></tr>
+        <tr><td>Tool child RunSSE</td><td>Still origin (would_* metrics); use Path A for tools</td></tr>
+      </table>
+
+      <h2>Flags</h2>
+      <pre>mitm:
+  debug_agent_rpc: true      # dumps under ~/.glider/mitm-debug
+  agent_rpc_fulfill: true    # Path B local fulfill experimental
+  agent_rpc_canned_on_error: false</pre>
+
+      <h2>Deep reference</h2>
+      <ul>
+        <li><a href="architecture-deep.html#path-a">Deep dive · Path A lifecycle</a></li>
+        <li><a href="architecture-deep.html#path-b">Deep dive · Path B lifecycle</a></li>
+        <li><a href="architecture-deep.html#sticky">Deep dive · sticky cloud</a></li>
+        <li><a href="data-flow.html#path-b-text">Data flow · BidiAppend + RunSSE</a></li>
+      </ul>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>
