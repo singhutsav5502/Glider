@@ -71,11 +71,18 @@
         Hoops &quot;Open graph editor&quot; / Edit graph shares that state with Create / Update / Start / Stop.
       </p>
       <p>
+        <strong>Per-instance agent logs:</strong> each hoop id and each swarm run id has its own ring buffer
+        (not a global mixed stream). Click a hoop card or run a swarm to bind the Agent log panel.
+        <code>GET /api/agent-logs?scope=hoop|swarm&amp;id=...</code>; WebSocket <code>type=agent_log</code>
+        carries <code>scope</code> + <code>instance_id</code>. Starting a hoop or swarm resets that instance timeline.
+      </p>
+      <p>
         <strong>Parallel actors:</strong> set <code>parallel: 2+</code> (and optional <code>roles</code>) on an actor
         stage — the runtime fans out via <code>swarm.FanOut</code> and critique-merges workers before the critic.
         Live mid-cycle <code>progress</code> (phase / stage) is polled on hoop cards and paints the graph.
         Gateway sample: include <code>/swarm</code> or <code>[fanout]</code> in a prompt when
-        <code>orchestration.fan_out.enabled</code> is on (see <code>scripts/examples/fanout_dual_view.star</code>).
+        <code>orchestration.fan_out.enabled</code> is on
+        (<code>scripts/examples/fanout_dual_view.star</code> / <code>fan_out_sample.star</code>).
       </p>
       <p>
         Run swarm paints live ok/fail on worker nodes. Inspired by Slate's orchestrator/thread model
@@ -83,9 +90,14 @@
       </p>
 
       <h2>Sample hoops</h2>
-      <p>Ready-to-run YAML under <code>samples/hoops/</code> — including <code>parallel-actor.yaml</code> and
-        <code>swarm-dual-review.yaml</code> — see <a href="samples.html">Sample hoops</a>.</p>
-      <p>Gap plan: <code>planning/loop_swarm_gap_plan.md</code> · Canonical: <code>planning/loop_engineering.md</code></p>
+      <p>Ready-to-run YAML under <code>samples/hoops/</code> (including <code>parallel-actor.yaml</code>,
+        incident-triage, research-synthesize) and swarm templates under <code>samples/swarms/</code> —
+        see <a href="samples.html">Samples</a>.</p>
+      <p>
+        Gap plan: <code>planning/loop_swarm_gap_plan.md</code> ·
+        Analysis: <code>planning/loop_swarm_gap_analysis.md</code> ·
+        Canonical: <code>planning/loop_engineering.md</code>
+      </p>
 
       <h2>Architecture links</h2>
       <ul>
