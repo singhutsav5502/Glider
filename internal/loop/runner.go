@@ -162,7 +162,9 @@ func (m *Manager) Start(parent context.Context, id string) (*LoopState, error) {
 	st.StartedAt = &now
 	st.StoppedAt = nil
 	st.LastError = ""
-	st.Checkpoint.WakeReason = "start"
+	if st.Checkpoint.WakeReason != "resume" {
+		st.Checkpoint.WakeReason = "start"
+	}
 	if err := m.Store.Save(st); err != nil {
 		cancel()
 		m.mu.Lock()
@@ -274,7 +276,7 @@ func (m *Manager) runLoop(ctx context.Context, h *runnerHandle, id string) {
 			now := time.Now().UTC()
 			st.StoppedAt = &now
 			switch stopReason {
-			case "failed", "on_fail_n", "max_latency":
+			case "failed", "on_fail_n", "max_latency", "budget_exceeded":
 				st.Status = StatusFailed
 			case "human_gate", "waiting_human":
 				st.Status = StatusWaitingHuman

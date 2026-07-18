@@ -84,6 +84,8 @@ type LoopSpec struct {
 	GraphVersion string `json:"graph_version,omitempty" yaml:"graph_version,omitempty"`
 	// Topology hints the state-machine shape: graph|tree|loop|swarm (auto-detected when empty).
 	Topology string `json:"topology,omitempty" yaml:"topology,omitempty"`
+	// Governance is soft/hard token/latency/cost budgets + tool denylist (MVP).
+	Governance GovernanceSpec `json:"governance,omitempty" yaml:"governance,omitempty"`
 	// Eval is critic/goal feedback (maker ≠ checker).
 	Eval EvalSpec `json:"eval,omitempty" yaml:"eval,omitempty"`
 	// Learning enables hoop self-learning bias for this loop (overrides process default when true).
@@ -175,6 +177,10 @@ type LoopState struct {
 	Progress      CycleProgress             `json:"progress,omitempty"`
 	// Gate is set when StatusWaitingHuman (durable HITL).
 	Gate          GateRequest               `json:"gate,omitempty"`
+	// Cursor is mid-cycle resume state after human_gate (not a brand-new cycle).
+	Cursor        MachineCursor             `json:"cursor,omitempty"`
+	// Spend tracks governance budget consumption for this hoop.
+	Spend         BudgetSpend               `json:"spend,omitempty"`
 	StartedAt     *time.Time                `json:"started_at,omitempty"`
 	StoppedAt     *time.Time                `json:"stopped_at,omitempty"`
 	UpdatedAt     time.Time                 `json:"updated_at"`

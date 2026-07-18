@@ -47,7 +47,7 @@ type StageSpec struct {
 	Parallel int `json:"parallel,omitempty" yaml:"parallel,omitempty"`
 	// Roles tags parallel workers (plan|exec|research|worker). Empty → worker-0..N.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
-	// Tools declares MCP / plugin capabilities on this node (see nodetools).
+	// Tools declares builtin / MCP / plugin capabilities on this node (internal/tools).
 	Tools []ToolRef `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
 

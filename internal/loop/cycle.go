@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -52,7 +53,15 @@ type CycleResult struct {
 
 // runCycle executes one Loop Engineering cycle for the hoop.
 func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, string, error) {
-	st.Iteration++
+	resuming := st.Cursor.Active && st.Checkpoint.WakeReason == "resume"
+	if resuming {
+		// Continue the same iteration after human_gate — do not bump Iteration.
+		if st.Cursor.Iteration > 0 {
+			st.Iteration = st.Cursor.Iteration
+		}
+	} else {
+		st.Iteration++
+	}
 	iter := st.Iteration
 	turnID := "loop:" + st.Spec.ID
 	start := time.Now()
@@ -60,6 +69,12 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	if goal == "" {
 		goal = st.Spec.Prompt
 	}
+
+	// Governance: hard budget already exceeded → stop immediately.
+	if stop, reason := m.checkGovernance(st, 0, 0); stop {
+		return CycleResult{Iteration: iter, Err: reason, At: time.Now().UTC()}, reason, fmt.Errorf("%s", reason)
+	}
+	m.recordCycleStart(st)
 
 	modules, smRT, smErr := stageOrderFromMachine(st.Spec)
 	if smErr != nil && m.Logs != nil {
@@ -70,10 +85,20 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	}
 	if smRT != nil {
 		smRT.Enter()
+		if resuming && len(st.Cursor.PathTaken) > 0 {
+			smRT.Path = nil
+			for _, id := range st.Cursor.PathTaken {
+				smRT.Path = append(smRT.Path, statemachine.StateID(id))
+			}
+			if len(smRT.Path) > 0 {
+				smRT.Current = smRT.Path[len(smRT.Path)-1]
+			}
+		}
 		smRT.SetContext(statemachine.DecisionContext{
-			BudgetOK:     true,
+			BudgetOK:     m.budgetOK(st),
 			RouterSignal: string(EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))),
 			Relevancy:    relevancyHint(0, false, EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st)), 0),
+			Human:        humanToSM(st),
 		})
 	}
 
@@ -81,6 +106,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		"loop_id":   st.Spec.ID,
 		"iteration": fmt.Sprintf("%d", iter),
 		"kind":      "cycle",
+		"resume":    fmt.Sprintf("%t", resuming),
 	})
 
 	var (
@@ -100,7 +126,35 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	defaultRoute := EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))
 	lastRoute = defaultRoute
 
+	startIdx := 0
+	if resuming {
+		planText = st.Cursor.PlanText
+		actorText = st.Cursor.ActorText
+		criticText = st.Cursor.CriticText
+		evalScore = st.Cursor.EvalScore
+		evalPass = st.Cursor.EvalPass
+		hadCritic = st.Cursor.HadCritic
+		if st.Cursor.LastRoute != "" {
+			lastRoute = RoutePref(st.Cursor.LastRoute)
+		}
+		startIdx = st.Cursor.ResumeIndex + 1
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		// Clear cursor now that we've loaded mid-cycle state.
+		st.Cursor = MachineCursor{}
+		if m.Logs != nil {
+			m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "hitl",
+				fmt.Sprintf("mid-cycle resume from index %d", startIdx), map[string]string{
+					"resume_index": fmt.Sprintf("%d", startIdx),
+				})
+		}
+	}
+
 	for stageIdx, mod := range modules {
+		if stageIdx < startIdx {
+			continue
+		}
 		if ctx.Err() != nil {
 			cycleErr = ctx.Err()
 			break
@@ -108,6 +162,10 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		_ = mod.Normalize()
 		if !mod.IsEnabled() {
 			continue
+		}
+		// Soft budget: prefer local when configured.
+		if st.Spend.SoftHit && st.Spec.Governance.PreferLocalOnSoft {
+			lastRoute = RouteLocal
 		}
 		// Sync state machine current node + live DecisionRoute.
 		if smRT != nil {
@@ -117,7 +175,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			}
 			smRT.Status = statemachine.StatusRunning
 			smRT.SetContext(statemachine.DecisionContext{
-				BudgetOK:     m.budgetOK(st),
+				BudgetOK:     m.budgetOK(st) && !st.Spend.HardHit,
 				EvalScore:    evalScore,
 				EvalPass:     evalPass,
 				RouterSignal: string(lastRoute),
@@ -136,13 +194,31 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 
 		// HITL first-class node: pause cycle until approve/resume.
 		if mod.Kind == StageHumanGate {
+			path := []string{}
+			if smRT != nil {
+				path = stateIDsToStrings(smRT.Path)
+			}
+			st.Cursor = MachineCursor{
+				Active:        true,
+				ResumeStageID: mod.ID,
+				ResumeIndex:   stageIdx,
+				Iteration:     iter,
+				PlanText:      planText,
+				ActorText:     actorText,
+				CriticText:    criticText,
+				PathTaken:     path,
+				EvalScore:     evalScore,
+				EvalPass:      evalPass,
+				HadCritic:     hadCritic,
+				LastRoute:     string(lastRoute),
+			}
 			openGate(st, mod, "human_gate stage")
 			st.Progress = progressFromRoute(smRT, st.Progress)
 			st.Progress.Phase = "waiting_human"
 			_ = m.Store.Save(st)
 			if m.Logs != nil {
 				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "hitl", "paused at human_gate "+mod.ID, map[string]string{
-					"stage_id": mod.ID,
+					"stage_id": mod.ID, "resume_index": fmt.Sprintf("%d", stageIdx),
 				})
 			}
 			waitHuman = true
@@ -150,46 +226,50 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			break
 		}
 
-		// Node tools (MCP/plugin) — invoke before LLM stages when declared.
+		// Node tools — parallel invoke + feed results into the model prompt / agent loop.
+		var toolBlock string
+		var refs []tools.Ref
 		if len(mod.Tools) > 0 && m.Tools != nil {
-			refs := make([]tools.Ref, 0, len(mod.Tools))
-			for _, t := range mod.Tools {
-				refs = append(refs, tools.Ref{Name: t.Name, Kind: tools.Kind(t.Kind), Server: t.Server, Plugin: t.Plugin})
-			}
-			toolResults := m.Tools.InvokeAll(ctx, refs, goal)
-			for _, tr := range toolResults {
-				msg := tr.Name + " ok=" + fmt.Sprintf("%t", tr.OK)
-				if tr.Stubbed {
-					msg += " stub"
-				}
-				if m.Logs != nil {
-					m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "tool", msg, map[string]string{
-						"stage_id": mod.ID, "tool": tr.Name, "kind": string(tr.Kind),
-					})
-				}
-				if m.Graph != nil {
-					m.Graph.Append(contextgraph.Event{
-						Kind:   contextgraph.EventToolFinished,
-						TurnID: turnID,
-						Actor:  "loop",
-						Attrs: map[string]string{
-							"tool": tr.Name, "ok": fmt.Sprintf("%t", tr.OK), "stage": mod.ID,
-							"provenance": string(contextgraph.ProvenanceExtracted),
-						},
-					})
+			refs = m.filterToolRefs(st, mod.Tools)
+			if len(refs) > 0 && !st.Spend.SoftHit {
+				toolResults := m.Tools.InvokeAllParallel(ctx, refs, goal)
+				toolBlock = tools.FormatToolResults(toolResults)
+				for _, tr := range toolResults {
+					msg := tr.Name + " ok=" + fmt.Sprintf("%t", tr.OK)
+					if tr.Stubbed {
+						msg += " stub"
+					}
+					if m.Logs != nil {
+						m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "tool", msg, map[string]string{
+							"stage_id": mod.ID, "tool": tr.Name, "kind": string(tr.Kind),
+						})
+					}
+					if m.Graph != nil {
+						m.Graph.Append(contextgraph.Event{
+							Kind:   contextgraph.EventToolFinished,
+							TurnID: turnID,
+							Actor:  "loop",
+							Attrs: map[string]string{
+								"tool": tr.Name, "ok": fmt.Sprintf("%t", tr.OK), "stage": mod.ID,
+								"provenance": string(contextgraph.ProvenanceExtracted),
+							},
+						})
+					}
 				}
 			}
 		}
 
 		switch mod.Kind {
 		case StageMemory:
-			// Memory is graph/state I/O — no LLM. Load is implicit via checkpoint; persist later.
 			stages = append(stages, StageResult{Kind: StageMemory, ModuleID: mod.ID, Text: "ok"})
 			continue
 		case StageRouter:
 			lastRoute = EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))
 			if mod.Route != "" {
 				lastRoute = mod.Route
+			}
+			if st.Spend.SoftHit && st.Spec.Governance.PreferLocalOnSoft {
+				lastRoute = RouteLocal
 			}
 			stages = append(stages, StageResult{
 				Kind: StageRouter, ModuleID: mod.ID, Route: string(lastRoute),
@@ -206,6 +286,9 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			route = mod.Route
 		}
 		prompt := m.stagePrompt(st, mod, goal, planText, actorText)
+		if toolBlock != "" {
+			prompt = prompt + "\n\n" + toolBlock
+		}
 		reqID := fmt.Sprintf("loop-%s-%d-%s", st.Spec.ID, iter, mod.ID)
 		t0 := time.Now()
 
@@ -217,6 +300,8 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		// Parallel actor (or any LLM stage with Parallel>1) → swarm fan-out + critique merge.
 		if mod.Parallel > 1 && (mod.Kind == StageActor || mod.Kind == StagePlanner) {
 			text, tokens, used, err = m.completeParallel(ctx, st, mod, route, reqID, turnID, prompt)
+		} else if len(refs) > 0 && m.Tools != nil {
+			text, tokens, used, err = m.completeWithTools(ctx, st, route, reqID, turnID, prompt, mod.Model, refs)
 		} else {
 			text, tokens, used, err = m.completeOnce(ctx, st, route, reqID, turnID, prompt, mod.Model)
 		}
@@ -233,7 +318,6 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			sr.Err = err.Error()
 			stages = append(stages, sr)
 			cycleErr = err
-			// Escalate only for actor/planner local failures (single-path; parallel already merged).
 			if mod.Parallel <= 1 && st.Spec.FailPolicy == FailEscalate && route == RouteLocal {
 				text2, tok2, used2, err2 := m.completeOnce(ctx, st, RouteCloud, reqID+"-esc", turnID, prompt, mod.Model)
 				if err2 == nil {
@@ -255,6 +339,13 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			stages = append(stages, sr)
 		}
 		totalTok += tokens
+		m.addSpend(st, tokens)
+		if stop, reason := m.checkGovernance(st, totalTok, time.Since(start).Milliseconds()); stop {
+			cycleErr = fmt.Errorf("%s", reason)
+			sr.Err = reason
+			waitHuman = false
+			break
+		}
 		lastRoute = used
 		if m.Logs != nil {
 			kind := "stage_end"
@@ -308,11 +399,31 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	// Critic-fail auto-gate: durable wait when configured (unless already paused mid-cycle).
 	if !waitHuman && humanGate {
 		gateMod := ModuleSpec{Kind: StageHumanGate, ID: "human_gate", Name: "human_gate"}
-		for _, s := range st.Spec.Stages {
+		gateIdx := len(modules)
+		for i, s := range modules {
 			if s.Kind == StageHumanGate {
 				gateMod = s
+				gateIdx = i
 				break
 			}
+		}
+		path := []string{}
+		if smRT != nil {
+			path = stateIDsToStrings(smRT.Path)
+		}
+		st.Cursor = MachineCursor{
+			Active:        true,
+			ResumeStageID: gateMod.ID,
+			ResumeIndex:   gateIdx,
+			Iteration:     iter,
+			PlanText:      planText,
+			ActorText:     actorText,
+			CriticText:    criticText,
+			PathTaken:     path,
+			EvalScore:     evalScore,
+			EvalPass:      evalPass,
+			HadCritic:     hadCritic,
+			LastRoute:     string(lastRoute),
 		}
 		openGate(st, gateMod, fmt.Sprintf("critic fail score=%.3f", evalScore))
 		waitHuman = true
@@ -447,6 +558,9 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	st.Progress = idleProg
 
 	stopReason := m.evaluateStop(st, outcome, summary)
+	if stopReason == "" && strings.HasPrefix(cr.Err, "budget_exceeded") {
+		stopReason = "budget_exceeded"
+	}
 	if stopReason == "" && hadCritic && evalPass && st.Spec.Stop.OnSuccessN <= 0 && st.Spec.MaxIterations <= 0 {
 		// Goal-style: critic pass ends the recursive goal when no schedule max set.
 		if st.Spec.Interval == "" && st.Spec.Cron == "" {
@@ -719,10 +833,242 @@ func (m *Manager) emitRouteDecision(st *LoopState, rt *statemachine.Runtime, mod
 }
 
 func (m *Manager) budgetOK(st *LoopState) bool {
+	if st != nil && st.Spend.HardHit {
+		return false
+	}
 	if m == nil || m.BudgetCheck == nil {
 		return true
 	}
 	return m.BudgetCheck(st)
+}
+
+func (m *Manager) filterToolRefs(st *LoopState, declared []ToolRef) []tools.Ref {
+	deny := st.Spec.Governance.ToolDenylist
+	var refs []tools.Ref
+	for _, t := range declared {
+		if denylistHit(deny, t.Name) {
+			if m.Logs != nil {
+				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "tool", "denylist skip "+t.Name, nil)
+			}
+			continue
+		}
+		refs = append(refs, tools.Ref{Name: t.Name, Kind: tools.Kind(t.Kind), Server: t.Server, Plugin: t.Plugin})
+	}
+	return refs
+}
+
+func (m *Manager) addSpend(st *LoopState, tokens int) {
+	if st == nil || tokens <= 0 {
+		return
+	}
+	st.Spend.Tokens += tokens
+	st.Spend.CostUSD += st.Spec.Governance.estimateCost(tokens)
+	st.Spend.LastCheck = time.Now().UTC()
+	g := st.Spec.Governance
+	if g.SoftTokens > 0 && st.Spend.Tokens >= g.SoftTokens {
+		st.Spend.SoftHit = true
+	}
+	if g.SoftCostUSD > 0 && st.Spend.CostUSD >= g.SoftCostUSD {
+		st.Spend.SoftHit = true
+	}
+	if g.HardTokens > 0 && st.Spend.Tokens >= g.HardTokens {
+		st.Spend.HardHit = true
+	}
+	if g.HardCostUSD > 0 && st.Spend.CostUSD >= g.HardCostUSD {
+		st.Spend.HardHit = true
+	}
+}
+
+func (m *Manager) recordCycleStart(st *LoopState) {
+	if st == nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	st.Spend.CycleStarts = append(st.Spend.CycleStarts, now)
+	// Keep 2 minutes of window.
+	cut := now - 120_000
+	var kept []int64
+	for _, t := range st.Spend.CycleStarts {
+		if t >= cut {
+			kept = append(kept, t)
+		}
+	}
+	st.Spend.CycleStarts = kept
+}
+
+// checkGovernance returns (stop, reason). Soft hits set SoftHit without stopping.
+func (m *Manager) checkGovernance(st *LoopState, cycleTokens int, cycleLatencyMS int64) (bool, string) {
+	if st == nil {
+		return false, ""
+	}
+	g := st.Spec.Governance
+	if g.HardLatencyMS > 0 && cycleLatencyMS > int64(g.HardLatencyMS) {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_latency"
+	}
+	if g.SoftLatencyMS > 0 && cycleLatencyMS > int64(g.SoftLatencyMS) {
+		st.Spend.SoftHit = true
+	}
+	if g.HardTokens > 0 && st.Spend.Tokens >= g.HardTokens {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_tokens"
+	}
+	if g.HardCostUSD > 0 && st.Spend.CostUSD >= g.HardCostUSD {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_cost"
+	}
+	if g.SoftTokens > 0 && st.Spend.Tokens >= g.SoftTokens {
+		st.Spend.SoftHit = true
+	}
+	if g.SoftCostUSD > 0 && st.Spend.CostUSD >= g.SoftCostUSD {
+		st.Spend.SoftHit = true
+	}
+	if g.MaxRPM > 0 {
+		now := time.Now().UnixMilli()
+		n := 0
+		for _, t := range st.Spend.CycleStarts {
+			if now-t <= 60_000 {
+				n++
+			}
+		}
+		if n > g.MaxRPM {
+			st.Spend.HardHit = true
+			return true, "budget_exceeded:rate_limit"
+		}
+	}
+	_ = cycleTokens
+	return false, ""
+}
+
+// completeWithTools runs an OpenAI-tools agentic loop via the harness Completer.
+func (m *Manager) completeWithTools(ctx context.Context, st *LoopState, route RoutePref, reqID, turnID, prompt, model string, refs []tools.Ref) (string, int, RoutePref, error) {
+	if m.Tools == nil {
+		return m.completeOnce(ctx, st, route, reqID, turnID, prompt, model)
+	}
+	used := route
+	sys := "You are a Glider hoop stage. Use tools when helpful, then answer."
+	loopRes, err := m.Tools.RunAgentLoop(ctx, sys, prompt, tools.AgentLoopOpts{
+		Refs:     refs,
+		MaxSteps: 6,
+		Complete: func(ctx context.Context, messages []map[string]any, toolsJSON json.RawMessage) (string, []tools.ToolCallDelta, error) {
+			// Flatten messages into a single user prompt for backends that strip multi-turn,
+			// while still attaching tools[] for Path A compatible backends.
+			var b strings.Builder
+			for _, msg := range messages {
+				role, _ := msg["role"].(string)
+				content, _ := msg["content"].(string)
+				b.WriteString(strings.ToUpper(role))
+				b.WriteString(":\n")
+				b.WriteString(content)
+				b.WriteString("\n\n")
+				if tcs, ok := msg["tool_calls"]; ok {
+					raw, _ := json.Marshal(tcs)
+					b.WriteString("TOOL_CALLS:\n")
+					b.Write(raw)
+					b.WriteString("\n\n")
+				}
+			}
+			text, tokens, _, cerr := m.completeOnceWithTools(ctx, st, route, reqID, turnID, b.String(), model, toolsJSON)
+			_ = tokens
+			if cerr != nil {
+				return "", nil, cerr
+			}
+			calls := parseToolCallsFromText(text)
+			if len(calls) > 0 {
+				return text, calls, nil
+			}
+			return text, nil, nil
+		},
+	})
+	if err != nil {
+		return "", 0, used, err
+	}
+	tok := len(loopRes.Text) / 4
+	for _, r := range loopRes.Results {
+		tok += len(r.Output) / 8
+	}
+	return loopRes.Text, tok, used, nil
+}
+
+func (m *Manager) completeOnceWithTools(ctx context.Context, st *LoopState, route RoutePref, reqID, turnID, prompt, model string, toolsJSON json.RawMessage) (string, int, RoutePref, error) {
+	used := route
+	switch route {
+	case RouteLocal:
+		prompt = "/local " + prompt
+	case RouteCloud:
+		prompt = "/cloud " + prompt
+	}
+	if model == "" {
+		model = st.Spec.Model
+	}
+	req := &backend.CompletionRequest{
+		Model:  model,
+		Stream: true,
+		Messages: []backend.Message{
+			{Role: "user", Content: prompt},
+		},
+		Tools:    toolsJSON,
+		Metadata: backend.RequestMetadata{RequestID: reqID},
+	}
+	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://glider.loop/v1/chat/completions", nil)
+	httpReq.Header.Set("X-Glider-Loop-ID", st.Spec.ID)
+	httpReq.Header.Set("X-Glider-Turn-ID", turnID)
+	httpReq.Header.Set("X-Glider-Loop-Kind", "engineering_cycle")
+
+	ch, err := m.Complete.Complete(httpReq, req)
+	if err != nil {
+		// Fallback without tools if backend rejects tools[].
+		if backend.IsToolsUnsupported(err) {
+			return m.completeOnce(ctx, st, route, reqID, turnID, prompt, model)
+		}
+		return "", req.Metadata.EstimatedTokens, used, err
+	}
+	var b strings.Builder
+	var toolBuf []backend.ToolCallDelta
+	for chunk := range ch {
+		b.WriteString(chunk.Content)
+		if len(chunk.ToolCalls) > 0 {
+			toolBuf = append(toolBuf, chunk.ToolCalls...)
+		}
+		if ctx.Err() != nil {
+			return b.String(), req.Metadata.EstimatedTokens, used, ctx.Err()
+		}
+	}
+	text := b.String()
+	if len(toolBuf) > 0 {
+		// Serialize tool calls for parseToolCallsFromText / agent loop.
+		raw, _ := json.Marshal(toolBuf)
+		text = text + "\n__TOOL_CALLS__:" + string(raw)
+	}
+	tokens := req.Metadata.EstimatedTokens
+	if tokens == 0 {
+		tokens = len(text) / 4
+	}
+	return text, tokens, used, nil
+}
+
+func parseToolCallsFromText(text string) []tools.ToolCallDelta {
+	const mark = "__TOOL_CALLS__:"
+	if i := strings.Index(text, mark); i >= 0 {
+		raw := strings.TrimSpace(text[i+len(mark):])
+		var deltas []backend.ToolCallDelta
+		if json.Unmarshal([]byte(raw), &deltas) == nil {
+			var out []tools.ToolCallDelta
+			for _, d := range deltas {
+				name, args := "", ""
+				if d.Function != nil {
+					name = d.Function.Name
+					args = d.Function.Arguments
+				}
+				if name == "" {
+					continue
+				}
+				out = append(out, tools.ToolCallDelta{ID: d.ID, Name: name, Arguments: args})
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 func (m *Manager) graphEventCount(turnID string) int {

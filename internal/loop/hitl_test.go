@@ -135,6 +135,8 @@ func TestHITLDecideAndResume(t *testing.T) {
 	if cur.Status != StatusRunning && cur.Status != StatusCompleted && cur.Status != StatusWaitingHuman && cur.Status != StatusFailed && cur.Status != StatusStopped {
 		t.Fatalf("unexpected status after resume: %s", cur.Status)
 	}
+	_ = mgr.Stop(st.Spec.ID)
+	mgr.Shutdown()
 }
 
 func TestPickFeedbackTarget(t *testing.T) {
