@@ -1,5 +1,5 @@
-// Package nodetools is a thin compatibility facade over internal/tools + mcp + plugin.
-// Prefer github.com/glider-ai/glider/internal/tools for new code.
+// Package nodetools is DEPRECATED — use github.com/glider-ai/glider/internal/tools.
+// This package remains as thin type aliases only; StubMCP has been removed.
 package nodetools
 
 import (
@@ -8,7 +8,7 @@ import (
 	"github.com/glider-ai/glider/internal/tools"
 )
 
-// Ref mirrors tools.Ref for older call sites.
+// Ref mirrors tools.Ref.
 type Ref = tools.Ref
 
 // Result mirrors tools.Result.
@@ -21,18 +21,6 @@ type Registry = tools.Registry
 func NewRegistry(workspace string) *Registry {
 	return tools.NewRegistry(tools.Options{Workspace: workspace})
 }
-
-// StubMCP kept for tests that imported nodetools.StubMCP — prefer mcp.Manager.
-type StubMCP struct{}
-
-func (StubMCP) ListTools(context.Context, string) ([]Ref, error) { return nil, nil }
-func (StubMCP) Call(_ context.Context, server, tool, input string) (Result, error) {
-	return Result{Name: tool, Kind: tools.KindMCP, OK: true, Stubbed: true,
-		Output: "mcp stub server=" + server + " tool=" + tool}, nil
-}
-
-// EchoPluginID is the sample plugin id.
-const EchoPluginID = "echo"
 
 // InvokeAll is a package helper.
 func InvokeAll(r *Registry, ctx context.Context, refs []Ref, input string) []Result {

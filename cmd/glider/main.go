@@ -420,19 +420,26 @@ func main() {
 		})
 		loopMgr.Logs = agentLogs
 		mcpMgr := mcp.NewManager()
-		mcpMgr.Configure(mcp.DefaultGitHubConfig())
+		if err := mcpMgr.Configure(mcp.DefaultGitHubConfig()); err != nil {
+			log.Warn("mcp configure", "err", err)
+		}
 		if _, err := mcpMgr.Connect(context.Background(), mcp.DefaultGitHubConfig()); err != nil {
-			log.Warn("mcp github connect", "err", err)
+			log.Warn("mcp github connect (set GITHUB_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN for live tools)", "err", err)
 		}
 		plugReg := plugin.NewMemRegistry(&plugin.SimpleHost{Root: "."})
+		allowShell := cfg.Orchestration.Tools.AllowShell
 		toolReg := tools.NewRegistry(tools.Options{
 			Workspace:  ".",
-			AllowShell: false,
+			AllowShell: allowShell,
+			ShellAllow: cfg.Orchestration.Tools.ShellAllowlist,
 			Context:    contextgraph.ContextQuerier{Store: ctxGraph},
 			MCP:        mcpMgr,
 			Plugins:    plugReg,
 		})
 		loopMgr.Tools = toolReg
+		loopMgr.BudgetCheck = func(st *loop.LoopState) bool {
+			return st == nil || !st.Spend.HardHit
+		}
 		swarmRunner.Logs = agentLogs
 		swarmRunner.Tools = toolReg
 		dash.Loops = loopMgr

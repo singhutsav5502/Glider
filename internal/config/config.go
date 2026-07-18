@@ -40,6 +40,14 @@ type OrchestrationConfig struct {
 	// Loops configures Glider-owned recurring jobs (dashboard /api/loops).
 	// Independent of Cursor IDE /loop; default route local needs no Cursor sub.
 	Loops LoopConfig `yaml:"loops,omitempty" json:"loops,omitempty"`
+	// Tools configures shell_exec allowlist and related agent tool policy.
+	Tools ToolsConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
+}
+
+// ToolsConfig gates dangerous builtins (shell_exec default off).
+type ToolsConfig struct {
+	AllowShell     bool     `yaml:"allow_shell,omitempty" json:"allow_shell,omitempty"`
+	ShellAllowlist []string `yaml:"shell_allowlist,omitempty" json:"shell_allowlist,omitempty"`
 }
 
 // SwarmConfig enables the swarm FanOut API runner.

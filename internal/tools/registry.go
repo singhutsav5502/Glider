@@ -184,20 +184,6 @@ func (r *Registry) Invoke(ctx context.Context, ref Ref, input string) (Result, e
 	}
 }
 
-// InvokeAll runs refs sequentially.
-func (r *Registry) InvokeAll(ctx context.Context, refs []Ref, input string) []Result {
-	var out []Result
-	for _, ref := range refs {
-		res, err := r.Invoke(ctx, ref, input)
-		if err != nil && res.Err == "" {
-			res.Err = err.Error()
-			res.OK = false
-		}
-		out = append(out, res)
-	}
-	return out
-}
-
 func (r *Registry) invokeBuiltin(ctx context.Context, ref Ref, input string) (Result, error) {
 	r.mu.RLock()
 	b := r.builtins[ref.Name]
@@ -252,7 +238,9 @@ func (r *Registry) invokeMCP(ctx context.Context, ref Ref, input string) (Result
 	if err != nil {
 		return Result{Name: ref.Name, Kind: KindMCP, OK: false, Err: err.Error()}, err
 	}
-	return Result{Name: ref.Name, Kind: KindMCP, OK: !cr.IsError, Output: cr.Content, Stubbed: strings.Contains(cr.Content, "stub")}, nil
+	stubbed := strings.Contains(strings.ToLower(cr.Content), "mcp stub") ||
+		strings.Contains(strings.ToLower(cr.Content), "github mcp stub")
+	return Result{Name: ref.Name, Kind: KindMCP, OK: !cr.IsError, Output: cr.Content, Stubbed: stubbed}, nil
 }
 
 // StandardNames lists the core builtin tool names.
