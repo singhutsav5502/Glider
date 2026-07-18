@@ -3,15 +3,34 @@ package mcp
 import "encoding/json"
 
 // GitHubRemoteURL is the hosted GitHub MCP endpoint (Copilot MCP).
-// See https://github.com/github/github-mcp-server and docs/host-integration.md.
+// See https://github.com/github/github-mcp-server
 const GitHubRemoteURL = "https://api.githubcopilot.com/mcp/"
 
 // GitHubDockerImage is the local stdio server image.
 const GitHubDockerImage = "ghcr.io/github/github-mcp-server"
 
-// DefaultGitHubConfig returns a recommended ServerConfig for GitHub MCP.
-// Auth uses GITHUB_PERSONAL_ACCESS_TOKEN (never commit the token).
+// GitHubInstallNotes documents how to run the official GitHub MCP server.
+const GitHubInstallNotes = `
+GitHub MCP (live):
+
+HTTP (hosted):
+  export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN
+  # Glider: mcp.DefaultGitHubConfig() → Manager.Connect
+
+Docker stdio (official image):
+  docker pull ghcr.io/github/github-mcp-server
+  export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+  # Glider: mcp.DefaultGitHubStdioConfig() → Manager.Connect
+  # Equivalent manual:
+  docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+
+Never put the PAT in hoop YAML — use auth.token_env only.
+`
+
+// DefaultGitHubConfig returns a recommended ServerConfig for GitHub MCP HTTP.
+// Token from GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_TOKEN, or GH_TOKEN (never commit).
 func DefaultGitHubConfig() ServerConfig {
+	env := ResolveGitHubTokenEnv()
 	return ServerConfig{
 		ID:        "github",
 		Name:      "GitHub MCP",
@@ -19,7 +38,7 @@ func DefaultGitHubConfig() ServerConfig {
 		URL:       GitHubRemoteURL,
 		Auth: AuthConfig{
 			Kind:     AuthEnv,
-			TokenEnv: "GITHUB_PERSONAL_ACCESS_TOKEN",
+			TokenEnv: env,
 		},
 		Toolsets: []string{"context", "repos", "issues", "pull_requests", "code_security"},
 		Enabled:  true,
@@ -28,15 +47,16 @@ func DefaultGitHubConfig() ServerConfig {
 
 // DefaultGitHubStdioConfig runs the official server via Docker stdio.
 func DefaultGitHubStdioConfig() ServerConfig {
+	env := ResolveGitHubTokenEnv()
 	return ServerConfig{
 		ID:        "github-stdio",
 		Name:      "GitHub MCP (docker stdio)",
 		Transport: TransportStdio,
 		Command:   "docker",
-		Args:      []string{"run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", GitHubDockerImage},
+		Args:      []string{"run", "-i", "--rm", "-e", env, GitHubDockerImage},
 		Auth: AuthConfig{
 			Kind:     AuthEnv,
-			TokenEnv: "GITHUB_PERSONAL_ACCESS_TOKEN",
+			TokenEnv: env,
 		},
 		Toolsets: []string{"context", "repos", "code_security"},
 		Enabled:  true,

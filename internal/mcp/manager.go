@@ -4,61 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 )
 
-// ResolveAuth expands AuthEnv into Token from the process environment.
-func ResolveAuth(a AuthConfig) (AuthConfig, error) {
-	out := a
-	if out.Kind == "" {
-		if out.TokenEnv != "" || out.Token != "" {
-			out.Kind = AuthBearer
-		} else {
-			out.Kind = AuthNone
-		}
-	}
-	if out.Kind == AuthEnv || (out.Token == "" && out.TokenEnv != "") {
-		env := out.TokenEnv
-		if env == "" {
-			return out, fmt.Errorf("auth: token_env required")
-		}
-		v := os.Getenv(env)
-		if v == "" {
-			return out, fmt.Errorf("auth: env %s empty", env)
-		}
-		out.Token = v
-		if out.Kind == AuthEnv {
-			out.Kind = AuthBearer
-		}
-	}
-	if out.HeaderName == "" && out.Kind == AuthBearer {
-		out.HeaderName = "Authorization"
-	}
-	return out, nil
+// liveSession is the internal interface for stdio/http sessions.
+type liveSession interface {
+	Session
+	listTools(ctx context.Context) ([]Tool, error)
+	callTool(ctx context.Context, name string, args json.RawMessage) (CallResult, error)
+	listResources(ctx context.Context) ([]Resource, error)
+	listPrompts(ctx context.Context) ([]Prompt, error)
 }
 
-// AuthorizationHeader returns "Bearer <token>" or empty.
-func AuthorizationHeader(a AuthConfig) string {
-	resolved, err := ResolveAuth(a)
-	if err != nil || resolved.Token == "" {
-		return ""
-	}
-	if strings.HasPrefix(strings.ToLower(resolved.Token), "bearer ") {
-		return resolved.Token
-	}
-	return "Bearer " + resolved.Token
-}
-
-// Manager is a multi-server Client with stub transport until stdio/HTTP land.
-// CallTool returns clear stub payloads when a server is "connected" in-memory only.
+// Manager is a multi-server MCP Client with live stdio and HTTP transports.
 type Manager struct {
 	mu       sync.RWMutex
 	cfgs     map[string]ServerConfig
-	sessions map[string]bool
+	sessions map[string]liveSession
 	notify   func(serverID string, n Notification)
-	// Real is optional concrete client (stdio/http); when set, Connect delegates.
+	// Real is optional override Client (tests / custom transports).
 	Real Client
 }
 
@@ -66,24 +31,25 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		cfgs:     make(map[string]ServerConfig),
-		sessions: make(map[string]bool),
+		sessions: make(map[string]liveSession),
 	}
 }
 
-// Configure stores server configs (does not connect).
-func (m *Manager) Configure(cfgs ...ServerConfig) {
+// Configure stores server configs (does not connect). Validates each config.
+func (m *Manager) Configure(cfgs ...ServerConfig) error {
 	if m == nil {
-		return
+		return fmt.Errorf("nil mcp manager")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range cfgs {
-		c.ID = strings.TrimSpace(c.ID)
-		if c.ID == "" {
-			continue
+		c := c
+		if err := ValidateServerConfig(&c); err != nil {
+			return err
 		}
 		m.cfgs[c.ID] = c
 	}
+	return nil
 }
 
 func (m *Manager) Connect(ctx context.Context, cfg ServerConfig) (Session, error) {
@@ -93,19 +59,46 @@ func (m *Manager) Connect(ctx context.Context, cfg ServerConfig) (Session, error
 	if m.Real != nil {
 		return m.Real.Connect(ctx, cfg)
 	}
-	cfg.ID = strings.TrimSpace(cfg.ID)
-	if cfg.ID == "" {
-		return nil, fmt.Errorf("server id required")
+	if err := ValidateServerConfig(&cfg); err != nil {
+		return nil, err
 	}
-	if _, err := ResolveAuth(cfg.Auth); err != nil && cfg.Auth.Kind != AuthNone && cfg.Auth.Kind != "" {
-		// Allow connect without token for local stub demos; record message.
-		_ = err
+	notify := func(n Notification) {
+		if m.notify != nil {
+			m.notify(cfg.ID, n)
+		}
 	}
+
+	var sess liveSession
+	var err error
+	tr := cfg.Transport
+	if tr == "" {
+		if cfg.URL != "" {
+			tr = TransportHTTP
+		} else {
+			tr = TransportStdio
+		}
+	}
+	switch tr {
+	case TransportHTTP, TransportSSE:
+		sess, err = startHTTPSession(ctx, cfg, notify)
+	case TransportStdio:
+		sess, err = startStdioSession(ctx, cfg, notify)
+	default:
+		return nil, fmt.Errorf("mcp: unknown transport %q", tr)
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
+	// Replace prior session for same id.
+	if old, ok := m.sessions[cfg.ID]; ok {
+		_ = old.Close(context.Background())
+	}
 	m.cfgs[cfg.ID] = cfg
-	m.sessions[cfg.ID] = true
+	m.sessions[cfg.ID] = sess
 	m.mu.Unlock()
-	return stubSession{id: cfg.ID}, nil
+	return sess, nil
 }
 
 func (m *Manager) Disconnect(ctx context.Context, serverID string) error {
@@ -113,63 +106,67 @@ func (m *Manager) Disconnect(ctx context.Context, serverID string) error {
 		return m.Real.Disconnect(ctx, serverID)
 	}
 	m.mu.Lock()
+	sess := m.sessions[serverID]
 	delete(m.sessions, serverID)
 	m.mu.Unlock()
+	if sess != nil {
+		return sess.Close(ctx)
+	}
 	return nil
+}
+
+func (m *Manager) get(serverID string) (liveSession, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sess := m.sessions[serverID]
+	if sess == nil {
+		return nil, fmt.Errorf("mcp: server %q not connected", serverID)
+	}
+	return sess, nil
 }
 
 func (m *Manager) ListTools(ctx context.Context, serverID string) ([]Tool, error) {
 	if m != nil && m.Real != nil {
 		return m.Real.ListTools(ctx, serverID)
 	}
-	m.mu.RLock()
-	cfg, ok := m.cfgs[serverID]
-	alive := m.sessions[serverID]
-	m.mu.RUnlock()
-	if !ok || !alive {
-		return nil, fmt.Errorf("mcp: server %q not connected", serverID)
+	sess, err := m.get(serverID)
+	if err != nil {
+		return nil, err
 	}
-	// GitHub-shaped catalog when server id/name suggests github.
-	if isGitHub(cfg) {
-		return GitHubToolCatalog(cfg.Toolsets), nil
-	}
-	return []Tool{{
-		Name:        "ping",
-		Description: "Stub MCP ping for " + serverID,
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-	}}, nil
+	return sess.listTools(ctx)
 }
 
 func (m *Manager) ListResources(ctx context.Context, serverID string) ([]Resource, error) {
 	if m != nil && m.Real != nil {
 		return m.Real.ListResources(ctx, serverID)
 	}
-	return nil, nil
+	sess, err := m.get(serverID)
+	if err != nil {
+		return nil, err
+	}
+	return sess.listResources(ctx)
 }
 
 func (m *Manager) ListPrompts(ctx context.Context, serverID string) ([]Prompt, error) {
 	if m != nil && m.Real != nil {
 		return m.Real.ListPrompts(ctx, serverID)
 	}
-	return nil, nil
+	sess, err := m.get(serverID)
+	if err != nil {
+		return nil, err
+	}
+	return sess.listPrompts(ctx)
 }
 
 func (m *Manager) CallTool(ctx context.Context, serverID, name string, args json.RawMessage) (CallResult, error) {
 	if m != nil && m.Real != nil {
 		return m.Real.CallTool(ctx, serverID, name, args)
 	}
-	m.mu.RLock()
-	alive := m.sessions[serverID]
-	cfg := m.cfgs[serverID]
-	m.mu.RUnlock()
-	if !alive {
-		return CallResult{}, fmt.Errorf("mcp: server %q not connected", serverID)
+	sess, err := m.get(serverID)
+	if err != nil {
+		return CallResult{}, err
 	}
-	msg := fmt.Sprintf("mcp stub call server=%s tool=%s transport=%s", serverID, name, cfg.Transport)
-	if isGitHub(cfg) {
-		msg = fmt.Sprintf("github mcp stub: tool=%s (wire GITHUB_PERSONAL_ACCESS_TOKEN + docker/http client for live calls)", name)
-	}
-	return CallResult{Content: msg, IsError: false}, nil
+	return sess.callTool(ctx, name, args)
 }
 
 func (m *Manager) OnNotification(fn func(serverID string, n Notification)) {
@@ -199,20 +196,17 @@ func (m *Manager) Health(ctx context.Context, serverID string) error {
 	if m != nil && m.Real != nil {
 		return m.Real.Health(ctx, serverID)
 	}
-	m.mu.RLock()
-	ok := m.sessions[serverID]
-	m.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("not connected")
-	}
-	return nil
+	_, err := m.get(serverID)
+	return err
 }
 
-type stubSession struct{ id string }
-
-func (s stubSession) ID() string                         { return s.id }
-func (s stubSession) ServerID() string                   { return s.id }
-func (s stubSession) Close(context.Context) error        { return nil }
+// Config returns a copy of a stored server config.
+func (m *Manager) Config(serverID string) (ServerConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.cfgs[serverID]
+	return c, ok
+}
 
 func isGitHub(cfg ServerConfig) bool {
 	id := strings.ToLower(cfg.ID + " " + cfg.Name + " " + cfg.URL + " " + cfg.Command)
