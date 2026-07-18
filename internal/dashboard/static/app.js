@@ -1546,6 +1546,8 @@
       eval_min: typeof raw.eval_min === "number" ? raw.eval_min : 0,
       parallel: typeof raw.parallel === "number" ? raw.parallel : 0,
       roles: Array.isArray(raw.roles) ? raw.roles : [],
+      tools: Array.isArray(raw.tools) ? raw.tools : [],
+      mcp: Array.isArray(raw.mcp) ? raw.mcp : (raw.mcp_servers || []),
       x: typeof raw.x === "number" ? raw.x : null,
       y: typeof raw.y === "number" ? raw.y : null,
     };
@@ -1945,13 +1947,45 @@
   function toggleSelectedStageEdgeKind() {
     const e = stageEdges.find((x) => x.id === stageSelectedEdgeId);
     if (!e) return;
+    const dlg = document.getElementById("edge-kind-dialog");
+    const sel = document.getElementById("edge-kind-select");
+    if (sel) sel.value = e.kind || "flow";
+    if (dlg && typeof dlg.showModal === "function") {
+      dlg.showModal();
+      return;
+    }
+    // Fallback: cycle kinds when dialog unavailable.
     pushStageHistory();
-    const cycle = ["flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded"];
+    const cycle = ["flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge"];
     const i = Math.max(0, cycle.indexOf(e.kind || "flow"));
     e.kind = cycle[(i + 1) % cycle.length];
     if (e.kind === "flow") reorderStagesFromFlowEdges();
     renderStageGraph();
     showHoopsOk("Edge is now " + e.kind);
+  }
+
+  function applyEdgeKindDialog() {
+    const e = stageEdges.find((x) => x.id === stageSelectedEdgeId);
+    const sel = document.getElementById("edge-kind-select");
+    if (!e || !sel) return;
+    pushStageHistory();
+    e.kind = sel.value || "flow";
+    if (e.kind === "flow") reorderStagesFromFlowEdges();
+    renderStageGraph();
+    showHoopsOk("Edge is now " + e.kind);
+    const dlg = document.getElementById("edge-kind-dialog");
+    if (dlg) dlg.close();
+  }
+
+  function initEdgeKindDialog() {
+    document.getElementById("edge-kind-save")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      applyEdgeKindDialog();
+    });
+    document.getElementById("edge-kind-cancel")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      document.getElementById("edge-kind-dialog")?.close();
+    });
   }
 
   function makeEdgehandles(cy, onComplete) {
@@ -2155,6 +2189,8 @@
     const promptEl = document.getElementById("stage-edit-prompt");
     const routeEl = document.getElementById("stage-edit-route");
     const evalEl = document.getElementById("stage-edit-eval-min");
+    const toolsEl = document.getElementById("stage-edit-tools");
+    const mcpEl = document.getElementById("stage-edit-mcp");
     if (kindEl) kindEl.value = coerceStageKind(node?.kind || "actor");
     if (idEl) idEl.value = node?.id || "";
     if (nameEl) nameEl.value = node?.name || "";
@@ -2162,6 +2198,15 @@
     if (promptEl) promptEl.value = node?.prompt || "";
     if (routeEl) routeEl.value = node?.route || "";
     if (evalEl) evalEl.value = node?.eval_min > 0 ? String(node.eval_min) : "";
+    if (toolsEl) {
+      toolsEl.value = Array.isArray(node?.tools) && node.tools.length
+        ? JSON.stringify(node.tools, null, 0)
+        : "";
+    }
+    if (mcpEl) {
+      const mcp = node?.mcp || [];
+      mcpEl.value = Array.isArray(mcp) ? mcp.join(", ") : String(mcp || "");
+    }
     if (typeof dlg.showModal === "function") dlg.showModal();
     else dlg.setAttribute("open", "");
   }
@@ -2177,6 +2222,25 @@
     const route = String(document.getElementById("stage-edit-route")?.value || "");
     const evalRaw = Number(document.getElementById("stage-edit-eval-min")?.value);
     const eval_min = Number.isFinite(evalRaw) && evalRaw > 0 ? evalRaw : 0;
+    let tools = [];
+    const toolsRaw = String(document.getElementById("stage-edit-tools")?.value || "").trim();
+    if (toolsRaw) {
+      try {
+        const parsed = JSON.parse(toolsRaw);
+        if (Array.isArray(parsed)) tools = parsed;
+      } catch (_) {
+        showHoopsOk("Tools JSON invalid -- fix before save");
+        return;
+      }
+    }
+    const mcp = String(document.getElementById("stage-edit-mcp")?.value || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    // Expand MCP server ids into tool refs when tools empty but mcp listed.
+    if (!tools.length && mcp.length) {
+      tools = mcp.map((server) => ({ name: "*", kind: "mcp", server }));
+    }
     if (stageEditUid) {
       const node = stageNodes.find((n) => n.uid === stageEditUid);
       if (!node) return;
@@ -2188,6 +2252,8 @@
       node.prompt = prompt;
       node.route = route;
       node.eval_min = eval_min;
+      node.tools = tools;
+      node.mcp = mcp;
       selectStageNode(node.uid);
       renderStageGraph();
       showHoopsOk("Updated stage: " + node.id);
@@ -2199,6 +2265,8 @@
         prompt,
         route,
         eval_min,
+        tools,
+        mcp,
       });
       showHoopsOk("Added stage: " + id);
     }
@@ -2325,7 +2393,7 @@
             id: e.id || "e-" + i + "-" + src + "-" + tgt,
             source: src,
             target: tgt,
-            kind: e.kind === "feedback" ? "feedback" : "flow",
+            kind: e.kind || "flow",
           };
         })
         .filter(Boolean);
@@ -2377,6 +2445,7 @@
 
   function initStageCyControls() {
     initStageEditDialog();
+    initEdgeKindDialog();
     initAgentLogUI();
     document.getElementById("stage-undo")?.addEventListener("click", () => undoStage());
     document.getElementById("stage-redo")?.addEventListener("click", () => redoStage());
@@ -2724,12 +2793,22 @@
       }
     });
     if (swarmThreads.length && swarmLinks.length) {
-      const lastLinked = swarmThreads.filter((t) => linkSet.has(t.uid)).slice(-1)[0];
-      if (lastLinked) {
+      const linked = swarmThreads.filter((t) => linkSet.has(t.uid));
+      const mergeFail = linked.some((t) => t.status === "fail");
+      linked.forEach((th) => {
         els.push({
           group: "edges",
-          data: { id: "merge-" + lastLinked.uid, source: lastLinked.uid, target: "orch", kind: "feedback" },
-          classes: "feedback",
+          data: { id: "merge-" + th.uid, source: th.uid, target: "orch", kind: "merge" },
+          classes: mergeFail ? "feedback status-fail" : "feedback",
+        });
+      });
+      if (mergeFail) {
+        els.push({
+          group: "nodes",
+          data: { id: "merge-fail", label: "merge\nFAILED" },
+          position: { x: ox + 80, y: oy + 70 },
+          classes: "status-fail",
+          selectable: false,
         });
       }
     }
@@ -3141,13 +3220,21 @@
         if (row.kind === "critic" && s.eval_min > 0) row.eval_min = s.eval_min;
         if (s.parallel > 1) row.parallel = Number(s.parallel) || 0;
         if (Array.isArray(s.roles) && s.roles.length) row.roles = s.roles;
+        if (Array.isArray(s.tools) && s.tools.length) {
+          row.tools = s.tools.filter((t) => t && t.name && t.name !== "*");
+          // MCP server bindings without specific tools → bind server for catalog fill.
+          const wild = s.tools.filter((t) => t && t.kind === "mcp" && (t.name === "*" || !t.name));
+          wild.forEach((t) => {
+            if (t.server) row.tools.push({ name: "list_tools", kind: "mcp", server: t.server });
+          });
+        }
         return row;
       });
       const graph_edges = stageEdges.map((e) => ({
         id: e.id,
         source: (stageNodes.find((n) => n.uid === e.source) || {}).id || e.source,
         target: (stageNodes.find((n) => n.uid === e.target) || {}).id || e.target,
-        kind: e.kind === "feedback" ? "feedback" : "flow",
+        kind: e.kind || "flow",
       }));
       const evalGoal = (document.getElementById("hoop-eval-goal") || {}).value?.trim() || "";
       const maxIter = Number(document.getElementById("hoop-max-iter")?.value) || 0;
@@ -3363,6 +3450,8 @@
           setAgentLogFocus("swarm", data.turn_id);
         }
         const results = data.results || [];
+        const prog = data.progress || {};
+        const pathSet = new Set(prog.path_taken || []);
         swarmThreads.forEach((t, i) => {
           const r = results.find((x) => String(x.role || "").toLowerCase() === t.role) || results[i];
           if (!r) {
@@ -3372,7 +3461,21 @@
           t.status = r.err ? "fail" : "ok";
           t.summary = r.summary || r.episode?.summary || "";
           t.err = r.err || "";
+          // Live DecisionRoute: mark workers on path.
+          const wid = "worker-" + String(t.role || "").toLowerCase();
+          if (pathSet.has(wid) && t.status === "ok") t.status = "ok";
         });
+        if (prog.merge_failed) {
+          swarmThreads.forEach((t) => {
+            if (t.status !== "fail" && t.err) t.status = "fail";
+          });
+          if (out) {
+            out.textContent = (prog.merge_narrative || data.summary || text) +
+              (prog.path_taken ? "\n\npath: " + (prog.path_taken || []).join(" -> ") : "");
+          }
+        } else if (prog.path_taken && out) {
+          out.textContent = (data.summary || text) + "\n\nroute: " + prog.path_taken.join(" -> ");
+        }
       } catch (_) {
         swarmThreads.forEach((t) => { t.status = "ok"; });
       }

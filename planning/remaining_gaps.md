@@ -1,78 +1,58 @@
-# Remaining gaps after overnight run (2026-07-19)
+# Remaining gaps after leftovers overnight (2026-07-19)
 
-Honest leftover list after AI-first SM, HITL, tools/MCP interfaces, shared context, Graphify notes, samples, and UX polish.
+Honest leftover list after live MCP transport, LLM tool loop, mid-cycle HITL, swarm SM route, governance budgets, tools/MCP UI, and redundancy collapse.
+
+See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_mcp.md](./tools_mcp.md).
 
 ---
 
-## Shipped this run
+## Shipped this leftovers run
 
 | Track | Status |
 |-------|--------|
-| AI-first `internal/statemachine` (graph/tree/loop/swarm) | Shipped + tests; hoop cycle walks SM + DecisionRoute |
-| HITL `waiting_human` + approve/reject/resume API + dashboard | Shipped + tests |
-| Live route viz (path/current/next/waiting paint) | Shipped (Cytoscape + progress fields) |
-| Conditional edges (`on_fail`, `escalate`, `conditional`, …) | Shipped normalize + UI cycle |
-| `internal/tools` standard builtins + unified registry | Shipped + tests |
-| `internal/mcp` Client/ServerAdapter/Auth/GitHub config | Interfaces + Manager stub; live transport TODO |
-| `internal/plugin` lifecycle + ToolProvider | Shipped + MemRegistry tests |
-| Shared contextgraph Query / RelevancyScore / provenance | Shipped; swarm injects `context_query` into workers |
-| Graphify notes | `planning/graphify_context_notes.md` |
-| Clone + audit sample | `samples/hoops/clone-repo-security-audit.yaml` + swarm |
-| Docs/site + dashboard UX visibility | Partial polish (tokens, HITL, log focus) |
+| Live MCP stdio + Streamable HTTP JSON-RPC | Shipped + tests (pipes + httptest); Manager no longer stub-calls when connected |
+| GitHub MCP config (`GITHUB_*` / `GH_TOKEN`) + install notes | Shipped; connect fails soft without token |
+| `LocalServer.Serve` stdio outbound | Shipped + pipe test |
+| Inline PAT rejected (`auth.token` forbidden) | Shipped validate |
+| Agentic tool loop + OpenAI `tools[]` from Catalog | Shipped; hoop stages feed tool results into model |
+| Parallel `InvokeAllParallel` | Shipped |
+| `shell_exec` via `orchestration.tools.allow_shell` | Shipped (default off) |
+| Mid-cycle HITL resume (`MachineCursor`) | Shipped + tests |
+| Swarm FanOut via `TopologySwarm` + DecisionRoute progress | Shipped; merge-failure narrative on response + UI |
+| Soft/hard token/latency/cost/RPM + tool denylist | Shipped (enforce stop/degrade) |
+| Stage tools/MCP editor + edge-kind modal | Shipped |
+| nodetools StubMCP removed (alias-only facade) | Shipped |
 
 ---
 
-## Gaps / TODOs
+## Truly still blocked / deferred
 
-### MCP (real transport)
+### External deps (not code stubs)
 
-- [ ] Stdio JSON-RPC client for `docker run … github-mcp-server`
-- [ ] HTTP MCP client against `https://api.githubcopilot.com/mcp/` with live PAT
-- [ ] `ServerAdapter.Serve` over stdio/HTTP for exposing Glider tools outbound
-- [ ] Dashboard UI to attach MCP server ids to nodes (fields exist in YAML; editor form incomplete)
-- [ ] Secrets: never persist PAT in YAML — only `token_env` (documented; enforce in config validate)
+- [ ] **Live GitHub MCP against real network** — requires operator PAT + docker/network; Glider connects when `GITHUB_TOKEN` / `GITHUB_PERSONAL_ACCESS_TOKEN` / `GH_TOKEN` is set. CI cannot assert live GitHub without secrets.
+- [ ] **Hosted Copilot MCP quirks** — session headers / toolset filters may need field tweaks against production once a PAT is available.
 
-### Tools
+### Product decisions (intentionally deferred)
 
-- [ ] Enable `shell_exec` via config allowlist (default off)
-- [ ] Parallel `InvokeAll` + tool result typed channels into SM context
-- [ ] Wire Path A OpenAI `tools[]` schema from `tools.Catalog` for hoop LLM stages
+- SSO / RBAC / multi-tenant control plane
+- SIEM / hash-chained audit export
+- Temporal-class multi-day durable HITL (beyond process-local cursor JSON)
+- tree-sitter / codebase knowledge graph
+- Slate-style episode thread weaving / dynamic subagent spawn from planner
+- Chargeback UI for budgets (spend is tracked; no billing UI)
+- Richer `PathSummary` entity graph / separate Fact index persistence
 
-### State machine / HITL
+### Minor polish (non-blocking)
 
-- [ ] Mid-cycle resume after `human_gate` (today Resume starts a new cycle)
-- [ ] Durable multi-day HITL (Temporal-class) — enterprise deferred
-- [ ] Swarm Cytoscape merge failure node labels (CritiqueMerge text exists; UI paint partial)
-
-### Context / Graphify
-
-- [ ] tree-sitter / codebase knowledge graph (explicitly out of scope)
-- [ ] Richer `PathSummary` as real entity graph (not event substring)
-- [ ] Persist Fact index separately from event ring
-
-### Product / enterprise (deferred)
-
-- SSO / RBAC / multi-tenant
-- SIEM / hash-chained audit
-- Soft→hard budgets + chargeback UI
-- Slate thread weaving
-- Dynamic subagent spawn from planner
-
-### UX
-
-- [ ] Edge kind picker modal (today cycles kinds on toggle)
-- [ ] Tools/MCP panel on stage edit dialog
-- [ ] Stronger empty states for agent log when unbound
-- [ ] Docs: dedicated tools/MCP page (catalog is in planning/)
+- [ ] Stronger empty states for unbound agent log (partial)
+- [ ] Dedicated docs/site HTML page for tools/MCP (planning note exists: `tools_mcp.md`)
 
 ---
 
-## How to verify quickly
+## How to verify
 
 ```powershell
 go test ./internal/statemachine/ ./internal/tools/ ./internal/mcp/ ./internal/plugin/ ./internal/contextgraph/ ./internal/loop/ ./internal/swarm/ ./internal/dashboard/ -count=1
-go run ./scripts/loadhoop -file samples/hoops/clone-repo-security-audit.yaml
-# Set GITHUB_PERSONAL_ACCESS_TOKEN for live GitHub MCP when transport lands
+# Live GitHub (optional):
+# $env:GITHUB_TOKEN="ghp_..."; go run ./cmd/glider -config configs/glider.local.yaml
 ```
-
-See also: [orchestrator_overnight_plan.md](./orchestrator_overnight_plan.md), [tools_catalog.md](./tools_catalog.md), [graphify_context_notes.md](./graphify_context_notes.md).

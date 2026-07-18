@@ -414,10 +414,37 @@
                 </select>
               </label>
               <label>Eval min (critic)<input type="number" id="stage-edit-eval-min" min="0" max="1" step="0.05" placeholder="0.7" /></label>
+              <label class="span2">Tools (builtin / MCP)
+                <textarea id="stage-edit-tools" class="cfg-mono" rows="3" placeholder='[{"name":"fs_list","kind":"builtin"},{"name":"get_me","kind":"mcp","server":"github"}]'></textarea>
+              </label>
+              <label class="span2">MCP servers (comma ids)<input type="text" id="stage-edit-mcp" placeholder="github, github-stdio" /></label>
             </div>
             <div class="cfg-actions" style="margin-top:14px">
               <button type="button" id="stage-edit-save">Save</button>
               <button type="button" id="stage-edit-cancel" class="linkish">Cancel</button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="edge-kind-dialog" class="stage-edit-dialog">
+          <form id="edge-kind-form" class="stage-edit-form">
+            <h3>Edge kind</h3>
+            <p class="hint" style="margin:0 0 10px">Pick how this transition is classified for the state machine and live route paint.</p>
+            <label>Kind
+              <select id="edge-kind-select">
+                <option value="flow">flow</option>
+                <option value="feedback">feedback</option>
+                <option value="on_fail">on_fail</option>
+                <option value="escalate">escalate</option>
+                <option value="conditional">conditional</option>
+                <option value="budget_exceeded">budget_exceeded</option>
+                <option value="parallel">parallel</option>
+                <option value="merge">merge</option>
+              </select>
+            </label>
+            <div class="cfg-actions" style="margin-top:14px">
+              <button type="button" id="edge-kind-save">Apply</button>
+              <button type="button" id="edge-kind-cancel" class="linkish">Cancel</button>
             </div>
           </form>
         </dialog>

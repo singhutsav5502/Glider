@@ -10,6 +10,7 @@ import (
 
 	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/statemachine"
 	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
@@ -32,6 +33,23 @@ type RunRequest struct {
 	TemplateID  string   `json:"template_id,omitempty"`
 	PreferLocal bool     `json:"prefer_local,omitempty"`
 	SessionID   string   `json:"session_id,omitempty"`
+	// Soft/hard budgets for this run (0 = inherit Runner.Governance).
+	SoftTokens int `json:"soft_tokens,omitempty"`
+	HardTokens int `json:"hard_tokens,omitempty"`
+	// ToolRefs optional per-worker tools (same unified registry as hoop).
+	Tools []tools.Ref `json:"tools,omitempty"`
+}
+
+// DecisionRouteView is Cytoscape-friendly live route paint (parity with hoop).
+type DecisionRouteView struct {
+	Current       string   `json:"current,omitempty"`
+	PathTaken     []string `json:"path_taken,omitempty"`
+	EdgesTaken    []string `json:"edges_taken,omitempty"`
+	NextEdges     []string `json:"next_edges,omitempty"`
+	Topology      string   `json:"topology,omitempty"`
+	RouteStatus   string   `json:"route_status,omitempty"`
+	MergeFailed   bool     `json:"merge_failed,omitempty"`
+	MergeNarrative string  `json:"merge_narrative,omitempty"`
 }
 
 // RunResponse is the orchestrator-facing merge result.
@@ -41,6 +59,9 @@ type RunResponse struct {
 	Episode   contextkit.Episode  `json:"episode"`
 	Results   []ResultView        `json:"results"`
 	ElapsedMS int64               `json:"elapsed_ms"`
+	Progress  DecisionRouteView   `json:"progress,omitempty"`
+	Tokens    int                 `json:"tokens,omitempty"`
+	BudgetHit string              `json:"budget_hit,omitempty"`
 }
 
 // ResultView is a JSON-safe worker result.
@@ -52,6 +73,13 @@ type ResultView struct {
 	Tokens   int                `json:"tokens,omitempty"`
 	Err      string             `json:"err,omitempty"`
 	Episode  contextkit.Episode `json:"episode,omitempty"`
+}
+
+// Governance is optional soft/hard token caps for swarm runs.
+type Governance struct {
+	SoftTokens int
+	HardTokens int
+	Denylist   []string
 }
 
 // Runner fans out workers via FanOut + MergeResults. Requires Enabled.
@@ -68,6 +96,8 @@ type Runner struct {
 	Logs *agentlog.Store
 	// Tools is the shared unified registry (same instance as hoop Manager when wired).
 	Tools *tools.Registry
+	// Governance defaults for runs.
+	Governance Governance
 }
 
 // ApplyOpts hot-swaps concurrency bounds.
@@ -90,7 +120,7 @@ func (r *Runner) IsEnabled() bool {
 	return r != nil && r.Enabled.Load()
 }
 
-// Run executes a fan-out wave and returns a merged orchestrator-facing summary.
+// Run executes a fan-out wave through TopologySwarm and returns a merged summary.
 func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) {
 	if r == nil {
 		return nil, fmt.Errorf("swarm: nil runner")
@@ -155,18 +185,54 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 	}
 	opts.TurnID = turnID
 
-	// Fresh independent log timeline for this swarm run instance.
+	soft := req.SoftTokens
+	if soft <= 0 {
+		soft = r.Governance.SoftTokens
+	}
+	hard := req.HardTokens
+	if hard <= 0 {
+		hard = r.Governance.HardTokens
+	}
+
+	// Build TopologySwarm machine for live DecisionRoute paint.
+	roleSlice := roles[:n]
+	def, err := statemachine.FromSwarmRoles(turnID, "1", roleSlice)
+	if err != nil {
+		return nil, err
+	}
+	rt, err := statemachine.NewRuntime(def)
+	if err != nil {
+		return nil, err
+	}
+	rt.Enter()
+	progress := routeView(rt)
+
 	if r.Logs != nil {
 		r.Logs.Reset(agentlog.ScopeSwarm, turnID)
 		r.Logs.Info(agentlog.ScopeSwarm, turnID, "lifecycle", "swarm run started", map[string]string{
-			"workers": fmt.Sprintf("%d", n),
-			"prompt":  truncate(prompt, 80),
+			"workers":  fmt.Sprintf("%d", n),
+			"prompt":   truncate(prompt, 80),
+			"topology": string(def.Topology),
 		})
 	}
 
-	_ = preferLocal // WorkerFn / Completer wrapper applies /local when wired.
+	_ = preferLocal
+
+	// Optional shared tool context (denylist filtered).
+	toolBlock := ""
+	refs := filterSwarmTools(req.Tools, r.Governance.Denylist)
+	if r.Tools != nil && len(refs) > 0 {
+		results := r.Tools.InvokeAllParallel(ctx, refs, prompt)
+		toolBlock = tools.FormatToolResults(results)
+	}
+	if r.Tools != nil {
+		if cq, err := r.Tools.Invoke(ctx, tools.Ref{Name: "context_query", Kind: tools.KindBuiltin}, turnID+" "); err == nil && cq.OK && cq.Output != "" {
+			toolBlock += "\n\n[shared_context]\n" + truncate(cq.Output, 1200)
+		}
+	}
 
 	workers := make([]Worker, n)
+	spent := 0
 	for i := 0; i < n; i++ {
 		i := i
 		role := Role(roles[i])
@@ -180,14 +246,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			model = models[0]
 		}
 		rolePrompt := fmt.Sprintf("[%s]\n%s", role, prompt)
-		// Shared context snippet so workers consult the same turn base (AI-first relevancy).
-		if r.Tools != nil {
-			if cq, err := r.Tools.Invoke(ctx, tools.Ref{Name: "context_query", Kind: tools.KindBuiltin}, turnID+" "); err == nil && cq.OK && cq.Output != "" {
-				rolePrompt += "\n\n[shared_context]\n" + truncate(cq.Output, 1200)
-			}
+		if toolBlock != "" {
+			rolePrompt += "\n\n" + toolBlock
 		}
+		// Advance SM path for this worker.
+		workerID := fmt.Sprintf("%s-%d", role, i)
+		sid := statemachine.StateID("worker-" + strings.ToLower(string(role)))
+		rt.Current = sid
+		rt.Path = append(rt.Path, sid)
+		rt.Status = statemachine.StatusRunning
+		_, _ = rt.Next()
+		progress = routeView(rt)
+
 		workers[i] = Worker{
-			ID:    fmt.Sprintf("%s-%d", role, i),
+			ID:    workerID,
 			Role:  role,
 			Model: model,
 			Run: func(wctx context.Context) (contextkit.Episode, error) {
@@ -221,12 +293,46 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 
 	start := time.Now()
 	results, err := FanOut(ctx, workers, opts)
+	for _, res := range results {
+		spent += res.Episode.Tokens
+	}
+	budgetHit := ""
+	if hard > 0 && spent >= hard {
+		budgetHit = "hard_tokens"
+	} else if soft > 0 && spent >= soft {
+		budgetHit = "soft_tokens"
+	}
+
 	merged := CritiqueMerge(results)
 	merged.ID = turnID + "-merge"
+	rt.Current = "merge"
+	rt.Path = append(rt.Path, "merge")
+	rt.Status = statemachine.StatusCompleted
+	progress = routeView(rt)
+
 	summary := OrchestratorSummary(merged, results)
+	mergeFailed := false
+	failN := 0
+	for _, res := range results {
+		if res.Err != nil {
+			failN++
+		}
+	}
+	if failN > 0 {
+		mergeFailed = failN == len(results) || strings.Contains(strings.ToLower(summary), "fail")
+		progress.MergeFailed = mergeFailed
+		progress.MergeNarrative = truncate(summary, 400)
+		if r.Logs != nil {
+			r.Logs.Info(agentlog.ScopeSwarm, turnID, "merge", "merge narrative: "+truncate(summary, 160), map[string]string{
+				"failed_workers": fmt.Sprintf("%d", failN),
+				"merge_failed":   fmt.Sprintf("%t", mergeFailed),
+			})
+		}
+	}
 	if r.Logs != nil {
 		r.Logs.Info(agentlog.ScopeSwarm, turnID, "lifecycle", "swarm merge: "+truncate(summary, 160), map[string]string{
 			"elapsed_ms": fmt.Sprintf("%d", time.Since(start).Milliseconds()),
+			"path":       strings.Join(progress.PathTaken, ","),
 		})
 	}
 
@@ -259,9 +365,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		Episode:   merged,
 		Results:   views,
 		ElapsedMS: time.Since(start).Milliseconds(),
+		Progress:  progress,
+		Tokens:    spent,
+		BudgetHit: budgetHit,
+	}
+	if budgetHit == "hard_tokens" {
+		return out, fmt.Errorf("budget_exceeded:hard_tokens")
 	}
 	if err != nil {
-		// Partial merge still returned; surface error alongside when all failed.
 		ok := 0
 		for _, v := range views {
 			if v.Err == "" && v.Summary != "" {
@@ -273,6 +384,55 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		}
 	}
 	return out, nil
+}
+
+func routeView(rt *statemachine.Runtime) DecisionRouteView {
+	if rt == nil {
+		return DecisionRouteView{}
+	}
+	r := rt.Route
+	path := make([]string, len(r.PathTaken))
+	for i, s := range r.PathTaken {
+		path[i] = string(s)
+	}
+	if len(path) == 0 && len(rt.Path) > 0 {
+		path = make([]string, len(rt.Path))
+		for i, s := range rt.Path {
+			path[i] = string(s)
+		}
+	}
+	cur := string(r.Current)
+	if cur == "" {
+		cur = string(rt.Current)
+	}
+	return DecisionRouteView{
+		Current:     cur,
+		PathTaken:   path,
+		EdgesTaken:  append([]string(nil), r.EdgesTaken...),
+		NextEdges:   append([]string(nil), r.NextEdges...),
+		Topology:    string(rt.Def.Topology),
+		RouteStatus: string(r.Status),
+	}
+}
+
+func filterSwarmTools(refs []tools.Ref, deny []string) []tools.Ref {
+	if len(deny) == 0 {
+		return refs
+	}
+	var out []tools.Ref
+	for _, r := range refs {
+		hit := false
+		for _, d := range deny {
+			if strings.EqualFold(d, r.Name) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // CompleterWorkerFn adapts an HTTP Completer-style callback for Runner.WorkerFn.
