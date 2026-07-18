@@ -783,9 +783,67 @@ func (s *Server) handleLoopAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, st)
+	case action == "approve" && r.Method == http.MethodPost:
+		dec, err := readGateDecision(r, true)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st, err := s.Loops.DecideGate(id, dec)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+	case action == "reject" && r.Method == http.MethodPost:
+		dec, err := readGateDecision(r, false)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st, err := s.Loops.DecideGate(id, dec)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+	case action == "resume" && r.Method == http.MethodPost:
+		st, err := s.Loops.Resume(context.Background(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+	case action == "snapshot" && r.Method == http.MethodGet:
+		st, err := s.Loops.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, loop.SnapshotGraph(st.Spec))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func readGateDecision(r *http.Request, approve bool) (loop.GateDecision, error) {
+	dec := loop.GateDecision{Approve: approve, Resume: approve}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return dec, err
+	}
+	defer r.Body.Close()
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return dec, nil
+	}
+	if err := json.Unmarshal(body, &dec); err != nil {
+		return dec, err
+	}
+	dec.Approve = approve
+	if !approve {
+		dec.Resume = false
+	}
+	return dec, nil
 }
 
 func (s *Server) discover(ctx context.Context) ([]DiscoveredModel, config.ModelCatalog, []string, []string) {

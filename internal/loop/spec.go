@@ -37,11 +37,12 @@ const (
 type Status string
 
 const (
-	StatusIdle      Status = "idle"
-	StatusRunning   Status = "running"
-	StatusStopped   Status = "stopped"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
+	StatusIdle          Status = "idle"
+	StatusRunning       Status = "running"
+	StatusStopped       Status = "stopped"
+	StatusCompleted     Status = "completed"
+	StatusFailed        Status = "failed"
+	StatusWaitingHuman  Status = "waiting_human" // HITL pause at human_gate
 )
 
 // StopConditions end the loop early when matched after an iteration.
@@ -77,8 +78,12 @@ type LoopSpec struct {
 	HumanGate bool `json:"human_gate,omitempty" yaml:"human_gate,omitempty"`
 	// Stages composes Loop Engineering stages (planner/actor/critic/memory/router).
 	Stages []StageSpec `json:"stages,omitempty" yaml:"stages,omitempty"`
-	// GraphEdges persists Cytoscape flow/feedback edges from the graph editor.
+	// GraphEdges persists Cytoscape flow/feedback/conditional edges from the graph editor.
 	GraphEdges []GraphEdge `json:"graph_edges,omitempty" yaml:"graph_edges,omitempty"`
+	// GraphVersion is an audit-friendly template version (bumped on significant edge edits).
+	GraphVersion string `json:"graph_version,omitempty" yaml:"graph_version,omitempty"`
+	// Topology hints the state-machine shape: graph|tree|loop|swarm (auto-detected when empty).
+	Topology string `json:"topology,omitempty" yaml:"topology,omitempty"`
 	// Eval is critic/goal feedback (maker ≠ checker).
 	Eval EvalSpec `json:"eval,omitempty" yaml:"eval,omitempty"`
 	// Learning enables hoop self-learning bias for this loop (overrides process default when true).
@@ -87,15 +92,47 @@ type LoopSpec struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// CycleProgress is mid-cycle live status for dashboard polling.
+// GateRequest is a durable HITL pause payload (approve/reject/comment).
+type GateRequest struct {
+	Active    bool      `json:"active"`
+	StageID   string    `json:"stage_id,omitempty"`
+	StageKind string    `json:"stage_kind,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Iteration int       `json:"iteration,omitempty"`
+	OpenedAt  time.Time `json:"opened_at,omitempty"`
+	Comment   string    `json:"comment,omitempty"`   // operator comment on decide
+	Decision  string    `json:"decision,omitempty"`  // approve|reject|""
+	DecidedAt time.Time `json:"decided_at,omitempty"`
+	Actor     string    `json:"actor,omitempty"`
+}
+
+// CycleProgress is mid-cycle live status for dashboard polling / DecisionRoute viz.
 type CycleProgress struct {
-	Phase      string    `json:"phase,omitempty"` // observe|route|plan|act|critique|learn|idle
+	Phase      string    `json:"phase,omitempty"` // observe|route|plan|act|critique|learn|idle|waiting_human
 	StageKind  string    `json:"stage_kind,omitempty"`
 	StageID    string    `json:"stage_id,omitempty"`
 	StageIndex int       `json:"stage_index,omitempty"`
 	Iteration  int       `json:"iteration,omitempty"`
 	Note       string    `json:"note,omitempty"`
 	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	// Live decision route (state machine path) for Cytoscape paint.
+	Current       string   `json:"current,omitempty"`
+	PathTaken     []string `json:"path_taken,omitempty"`
+	EdgesTaken    []string `json:"edges_taken,omitempty"`
+	NextEdges     []string `json:"next_edges,omitempty"`
+	BranchChoices []BranchChoiceJSON `json:"branch_choices,omitempty"`
+	Topology      string   `json:"topology,omitempty"`
+	RouteStatus   string   `json:"route_status,omitempty"`
+}
+
+// BranchChoiceJSON is a JSON-friendly branch candidate for the dashboard.
+type BranchChoiceJSON struct {
+	EdgeID   string  `json:"edge_id"`
+	To       string  `json:"to"`
+	Kind     string  `json:"kind"`
+	Score    float64 `json:"score"`
+	Selected bool    `json:"selected,omitempty"`
+	Reason   string  `json:"reason,omitempty"`
 }
 
 // IterationOutcome is one engineering-cycle result (hoop-learning + eval feedback).
@@ -136,6 +173,8 @@ type LoopState struct {
 	LastError     string                    `json:"last_error,omitempty"`
 	LastEvalScore float64                   `json:"last_eval_score,omitempty"`
 	Progress      CycleProgress             `json:"progress,omitempty"`
+	// Gate is set when StatusWaitingHuman (durable HITL).
+	Gate          GateRequest               `json:"gate,omitempty"`
 	StartedAt     *time.Time                `json:"started_at,omitempty"`
 	StoppedAt     *time.Time                `json:"stopped_at,omitempty"`
 	UpdatedAt     time.Time                 `json:"updated_at"`
@@ -248,11 +287,15 @@ func (s *LoopSpec) Normalize() error {
 		e.Source = strings.TrimSpace(e.Source)
 		e.Target = strings.TrimSpace(e.Target)
 		e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
+		e.Guard = strings.ToLower(strings.TrimSpace(e.Guard))
+		e.Label = strings.TrimSpace(e.Label)
 		if e.Kind == "" {
 			e.Kind = "flow"
 		}
-		if e.Kind != "flow" && e.Kind != "feedback" {
-			return fmt.Errorf("graph_edges[%d]: kind must be flow|feedback", i)
+		switch e.Kind {
+		case "flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge":
+		default:
+			return fmt.Errorf("graph_edges[%d]: kind must be flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge", i)
 		}
 		if e.Source == "" || e.Target == "" {
 			return fmt.Errorf("graph_edges[%d]: source and target required", i)
@@ -260,6 +303,16 @@ func (s *LoopSpec) Normalize() error {
 		if e.ID == "" {
 			e.ID = fmt.Sprintf("%s->%s:%s", e.Source, e.Target, e.Kind)
 		}
+	}
+	s.GraphVersion = strings.TrimSpace(s.GraphVersion)
+	if s.GraphVersion == "" && len(s.GraphEdges) > 0 {
+		s.GraphVersion = "1"
+	}
+	s.Topology = strings.ToLower(strings.TrimSpace(s.Topology))
+	switch s.Topology {
+	case "", "graph", "tree", "loop", "swarm":
+	default:
+		return fmt.Errorf("topology must be graph|tree|loop|swarm")
 	}
 	now := time.Now().UTC()
 	if s.CreatedAt.IsZero() {

@@ -247,7 +247,7 @@ func TestManagerFailStop(t *testing.T) {
 
 func TestCatalog(t *testing.T) {
 	c := Catalog()
-	if len(c.Kinds) != 5 || len(c.Defaults) < 3 {
+	if len(c.Kinds) != 6 || len(c.Defaults) < 3 {
 		t.Fatalf("%+v", c)
 	}
 }

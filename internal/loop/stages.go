@@ -10,11 +10,12 @@ import (
 type StageKind string
 
 const (
-	StagePlanner StageKind = "planner" // discover / triage / decompose
-	StageActor   StageKind = "actor"   // implement / produce artifact
-	StageCritic  StageKind = "critic"  // maker/checker — emit eval score
-	StageMemory  StageKind = "memory"  // load/persist durable state (no LLM by default)
-	StageRouter  StageKind = "router"  // which model/tools for following stages
+	StagePlanner   StageKind = "planner"    // discover / triage / decompose
+	StageActor     StageKind = "actor"      // implement / produce artifact
+	StageCritic    StageKind = "critic"     // maker/checker — emit eval score
+	StageMemory    StageKind = "memory"     // load/persist durable state (no LLM by default)
+	StageRouter    StageKind = "router"     // which model/tools for following stages
+	StageHumanGate StageKind = "human_gate" // HITL pause node (first-class)
 )
 
 // AutonomyLevel matches cobusgreyling L1–L3 rollout.
@@ -46,6 +47,16 @@ type StageSpec struct {
 	Parallel int `json:"parallel,omitempty" yaml:"parallel,omitempty"`
 	// Roles tags parallel workers (plan|exec|research|worker). Empty → worker-0..N.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
+	// Tools declares MCP / plugin capabilities on this node (see nodetools).
+	Tools []ToolRef `json:"tools,omitempty" yaml:"tools,omitempty"`
+}
+
+// ToolRef is a node-declared MCP server or local plugin capability.
+type ToolRef struct {
+	Name   string `json:"name" yaml:"name"`
+	Kind   string `json:"kind,omitempty" yaml:"kind,omitempty"`     // mcp|plugin|builtin
+	Server string `json:"server,omitempty" yaml:"server,omitempty"` // MCP server id
+	Plugin string `json:"plugin,omitempty" yaml:"plugin,omitempty"` // local plugin id
 }
 
 // GraphEdge is a canvas edge persisted with the hoop so topology survives reload.
@@ -53,8 +64,12 @@ type GraphEdge struct {
 	ID     string `json:"id,omitempty" yaml:"id,omitempty"`
 	Source string `json:"source" yaml:"source"`
 	Target string `json:"target" yaml:"target"`
-	// Kind is flow (pipeline order) or feedback (critic→planner style).
+	// Kind: flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge.
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Guard optionally overrides the default guard for this edge kind.
+	Guard     string  `json:"guard,omitempty" yaml:"guard,omitempty"` // always|score_below|relevancy|...
+	Threshold float64 `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	Label     string  `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
 // ModuleSpec is an alias for StageSpec (compose UI / hot-swap wording).
@@ -82,9 +97,21 @@ func (m *StageSpec) Normalize() error {
 	}
 	m.Kind = StageKind(strings.ToLower(string(m.Kind)))
 	switch m.Kind {
-	case StagePlanner, StageActor, StageCritic, StageMemory, StageRouter:
+	case StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate:
 	default:
-		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|router)", m.Kind)
+		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|router|human_gate)", m.Kind)
+	}
+	for i := range m.Tools {
+		m.Tools[i].Name = strings.TrimSpace(m.Tools[i].Name)
+		m.Tools[i].Kind = strings.ToLower(strings.TrimSpace(m.Tools[i].Kind))
+		if m.Tools[i].Kind == "" {
+			m.Tools[i].Kind = "builtin"
+		}
+		m.Tools[i].Server = strings.TrimSpace(m.Tools[i].Server)
+		m.Tools[i].Plugin = strings.TrimSpace(m.Tools[i].Plugin)
+		if m.Tools[i].Name == "" {
+			return fmt.Errorf("module %s: tools[%d]: name required", m.ID, i)
+		}
 	}
 	m.Name = strings.TrimSpace(m.Name)
 	if m.Name == "" {
@@ -216,11 +243,12 @@ type ModuleCatalog struct {
 // Catalog returns compose-UI metadata (pure data; no I/O).
 func Catalog() ModuleCatalog {
 	return ModuleCatalog{
-		Kinds:    []StageKind{StagePlanner, StageActor, StageCritic, StageMemory, StageRouter},
+		Kinds:    []StageKind{StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate},
 		Defaults: DefaultModules("your recursive goal"),
-		Notes: "Loop Engineering hoop: compose Planner/Actor/Critic (+ Memory/Router). " +
+		Notes: "Loop Engineering hoop: compose Planner/Actor/Critic (+ Memory/Router/HumanGate). " +
 			"Interval/cron is optional Automations heartbeat — not the definition of the loop. " +
-			"See planning/loop_engineering.md.",
+			"Runtime is an AI-first state machine (graph|tree|loop|swarm). " +
+			"See planning/loop_engineering.md and internal/statemachine.",
 	}
 }
 

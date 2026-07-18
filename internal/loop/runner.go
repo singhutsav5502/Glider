@@ -12,6 +12,7 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
 
@@ -39,6 +40,10 @@ type Manager struct {
 	Episodes *contextkit.Store // optional episode ring
 	// Logs is optional per-hoop agent activity (independent ring per hoop id).
 	Logs *agentlog.Store
+	// Tools is the unified builtin/MCP/plugin registry for node tool refs.
+	Tools *tools.Registry
+	// BudgetCheck optional FinOps hook; nil → always OK.
+	BudgetCheck func(*LoopState) bool
 
 	runners map[string]*runnerHandle
 }
@@ -165,12 +170,15 @@ func (m *Manager) Start(parent context.Context, id string) (*LoopState, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	// Fresh independent log timeline for this hoop instance.
+	// Fresh independent log timeline for this hoop instance (keep history on HITL resume).
 	if m.Logs != nil {
-		m.Logs.Reset(agentlog.ScopeHoop, id)
+		if st.Checkpoint.WakeReason != "resume" {
+			m.Logs.Reset(agentlog.ScopeHoop, id)
+		}
 		m.Logs.Info(agentlog.ScopeHoop, id, "lifecycle", "hoop started", map[string]string{
 			"route": string(st.Spec.Route),
 			"goal":  truncate(st.Spec.Goal, 80),
+			"wake":  st.Checkpoint.WakeReason,
 		})
 	}
 	m.emit(st, contextgraph.EventLoopStarted, map[string]string{
@@ -268,8 +276,9 @@ func (m *Manager) runLoop(ctx context.Context, h *runnerHandle, id string) {
 			switch stopReason {
 			case "failed", "on_fail_n", "max_latency":
 				st.Status = StatusFailed
-			case "human_gate":
-				st.Status = StatusStopped
+			case "human_gate", "waiting_human":
+				st.Status = StatusWaitingHuman
+				st.StoppedAt = nil // still "live" for HITL resume
 			default:
 				st.Status = StatusCompleted
 			}
@@ -351,6 +360,101 @@ func (m *Manager) emit(st *LoopState, kind contextgraph.EventKind, attrs map[str
 		Actor:     "loop",
 		Attrs:     attrs,
 	})
+}
+
+// GateDecision is the HITL approve/reject payload.
+type GateDecision struct {
+	Approve bool   `json:"approve"`
+	Comment string `json:"comment,omitempty"`
+	Actor   string `json:"actor,omitempty"`
+	Resume  bool   `json:"resume,omitempty"` // if approve+resume, continue cycles
+}
+
+// DecideGate records an operator decision on a waiting_human hoop.
+func (m *Manager) DecideGate(id string, d GateDecision) (*LoopState, error) {
+	st, err := m.Store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if st.Status != StatusWaitingHuman && !st.Gate.Active {
+		return nil, fmt.Errorf("hoop %q is not waiting for human (status=%s)", id, st.Status)
+	}
+	now := time.Now().UTC()
+	st.Gate.Comment = strings.TrimSpace(d.Comment)
+	st.Gate.Actor = strings.TrimSpace(d.Actor)
+	if st.Gate.Actor == "" {
+		st.Gate.Actor = "operator"
+	}
+	st.Gate.DecidedAt = now
+	if d.Approve {
+		st.Gate.Decision = "approve"
+		st.Gate.Active = false
+		st.Checkpoint.EvalStatus = "human_approved"
+		st.Progress.Note = "approved"
+		if m.Logs != nil {
+			m.Logs.Info(agentlog.ScopeHoop, id, "hitl", "approved: "+truncate(st.Gate.Comment, 80), map[string]string{
+				"actor": st.Gate.Actor,
+			})
+		}
+	} else {
+		st.Gate.Decision = "reject"
+		st.Gate.Active = false
+		st.Status = StatusFailed
+		st.StoppedAt = &now
+		st.Checkpoint.EvalStatus = "human_rejected"
+		st.Checkpoint.WakeReason = "human_reject"
+		st.LastError = "rejected by human"
+		if st.Gate.Comment != "" {
+			st.LastError += ": " + st.Gate.Comment
+		}
+		st.Progress.Phase = "idle"
+		st.Progress.Note = "rejected"
+		if m.Logs != nil {
+			m.Logs.Info(agentlog.ScopeHoop, id, "hitl", "rejected: "+truncate(st.Gate.Comment, 80), map[string]string{
+				"actor": st.Gate.Actor,
+			})
+		}
+		_ = m.Store.Save(st)
+		return st, nil
+	}
+	st.UpdatedAt = now
+	if err := m.Store.Save(st); err != nil {
+		return nil, err
+	}
+	if d.Resume {
+		return m.Resume(context.Background(), id)
+	}
+	// Approved but not resumed: idle ready for Start/Resume.
+	st.Status = StatusStopped
+	st.Progress.Phase = "idle"
+	_ = m.Store.Save(st)
+	return st, nil
+}
+
+// Resume continues a hoop after HITL approve (or from stopped with prior approval).
+func (m *Manager) Resume(parent context.Context, id string) (*LoopState, error) {
+	st, err := m.Store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if st.Gate.Decision == "reject" {
+		return nil, fmt.Errorf("hoop %q was rejected; create/start a new run", id)
+	}
+	// Clear gate wait; Start will set running.
+	st.Gate.Active = false
+	if st.Gate.Decision == "" && st.Status == StatusWaitingHuman {
+		// Resume without explicit approve is allowed for operator override.
+		st.Gate.Decision = "approve"
+		st.Gate.DecidedAt = time.Now().UTC()
+		st.Gate.Actor = "resume"
+	}
+	st.Status = StatusStopped
+	st.Checkpoint.WakeReason = "resume"
+	_ = m.Store.Save(st)
+	if m.Logs != nil {
+		m.Logs.Info(agentlog.ScopeHoop, id, "hitl", "resuming after human gate", nil)
+	}
+	return m.Start(parent, id)
 }
 
 func truncate(s string, n int) string {

@@ -13,7 +13,9 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/statemachine"
 	"github.com/glider-ai/glider/internal/swarm"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
 
@@ -59,9 +61,20 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		goal = st.Spec.Prompt
 	}
 
-	modules := EnabledStages(st.Spec.Stages)
+	modules, smRT, smErr := stageOrderFromMachine(st.Spec)
+	if smErr != nil && m.Logs != nil {
+		m.Logs.Error(agentlog.ScopeHoop, st.Spec.ID, "statemachine", "build: "+smErr.Error(), nil)
+	}
 	if len(modules) == 0 {
 		modules = EnabledStages(DefaultModules(goal))
+	}
+	if smRT != nil {
+		smRT.Enter()
+		smRT.SetContext(statemachine.DecisionContext{
+			BudgetOK:     true,
+			RouterSignal: string(EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))),
+			Relevancy:    relevancyHint(0, false, EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st)), 0),
+		})
 	}
 
 	m.emit(st, contextgraph.EventLoopTick, map[string]string{
@@ -81,6 +94,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		totalTok   int
 		lastRoute  RoutePref
 		cycleErr   error
+		waitHuman  bool
 	)
 
 	defaultRoute := EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))
@@ -95,7 +109,77 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		if !mod.IsEnabled() {
 			continue
 		}
-		m.setProgress(st, stagePhase(mod.Kind), mod, stageIdx, iter, "")
+		// Sync state machine current node + live DecisionRoute.
+		if smRT != nil {
+			smRT.Current = statemachine.StateID(mod.ID)
+			if len(smRT.Path) == 0 || smRT.Path[len(smRT.Path)-1] != smRT.Current {
+				smRT.Path = append(smRT.Path, smRT.Current)
+			}
+			smRT.Status = statemachine.StatusRunning
+			smRT.SetContext(statemachine.DecisionContext{
+				BudgetOK:     m.budgetOK(st),
+				EvalScore:    evalScore,
+				EvalPass:     evalPass,
+				RouterSignal: string(lastRoute),
+				Relevancy:    relevancyHint(evalScore, evalPass, lastRoute, m.graphEventCount(turnID)),
+				LastError:    "",
+				Human:        humanToSM(st),
+			})
+			_, _ = smRT.Next() // populate branch choices for viz
+			m.emitRouteDecision(st, smRT, mod)
+		}
+		m.setProgress(st, stagePhase(mod.Kind), mod, stageIdx, iter, summarizeBranch(smRT))
+		if smRT != nil {
+			st.Progress = progressFromRoute(smRT, st.Progress)
+			_ = m.Store.Save(st)
+		}
+
+		// HITL first-class node: pause cycle until approve/resume.
+		if mod.Kind == StageHumanGate {
+			openGate(st, mod, "human_gate stage")
+			st.Progress = progressFromRoute(smRT, st.Progress)
+			st.Progress.Phase = "waiting_human"
+			_ = m.Store.Save(st)
+			if m.Logs != nil {
+				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "hitl", "paused at human_gate "+mod.ID, map[string]string{
+					"stage_id": mod.ID,
+				})
+			}
+			waitHuman = true
+			stages = append(stages, StageResult{Kind: StageHumanGate, ModuleID: mod.ID, Text: "waiting_human"})
+			break
+		}
+
+		// Node tools (MCP/plugin) — invoke before LLM stages when declared.
+		if len(mod.Tools) > 0 && m.Tools != nil {
+			refs := make([]tools.Ref, 0, len(mod.Tools))
+			for _, t := range mod.Tools {
+				refs = append(refs, tools.Ref{Name: t.Name, Kind: tools.Kind(t.Kind), Server: t.Server, Plugin: t.Plugin})
+			}
+			toolResults := m.Tools.InvokeAll(ctx, refs, goal)
+			for _, tr := range toolResults {
+				msg := tr.Name + " ok=" + fmt.Sprintf("%t", tr.OK)
+				if tr.Stubbed {
+					msg += " stub"
+				}
+				if m.Logs != nil {
+					m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "tool", msg, map[string]string{
+						"stage_id": mod.ID, "tool": tr.Name, "kind": string(tr.Kind),
+					})
+				}
+				if m.Graph != nil {
+					m.Graph.Append(contextgraph.Event{
+						Kind:   contextgraph.EventToolFinished,
+						TurnID: turnID,
+						Actor:  "loop",
+						Attrs: map[string]string{
+							"tool": tr.Name, "ok": fmt.Sprintf("%t", tr.OK), "stage": mod.ID,
+							"provenance": string(contextgraph.ProvenanceExtracted),
+						},
+					})
+				}
+			}
+		}
 
 		switch mod.Kind {
 		case StageMemory:
@@ -221,19 +305,36 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	if hadCritic && !evalPass && (st.Spec.Autonomy == AutonomyL1 || st.Spec.HumanGate) {
 		humanGate = true
 	}
+	// Critic-fail auto-gate: durable wait when configured (unless already paused mid-cycle).
+	if !waitHuman && humanGate {
+		gateMod := ModuleSpec{Kind: StageHumanGate, ID: "human_gate", Name: "human_gate"}
+		for _, s := range st.Spec.Stages {
+			if s.Kind == StageHumanGate {
+				gateMod = s
+				break
+			}
+		}
+		openGate(st, gateMod, fmt.Sprintf("critic fail score=%.3f", evalScore))
+		waitHuman = true
+		if fb := pickFeedbackTarget(st.Spec, evalScore, evalPass); fb != "" && m.Logs != nil {
+			m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "route_decision", "feedback candidate "+fb, map[string]string{
+				"target": fb, "eval_score": fmt.Sprintf("%.3f", evalScore),
+			})
+		}
+	}
 
 	cr := CycleResult{
 		Iteration: iter,
 		Stages:    stages,
 		EvalScore: evalScore,
 		EvalPass:  evalPass,
-		Success:   success,
+		Success:   success && !waitHuman,
 		Route:     string(lastRoute),
 		LatencyMS: lat,
 		Tokens:    totalTok,
 		EpisodeID: epID,
 		Summary:   summary,
-		HumanGate: humanGate,
+		HumanGate: humanGate || waitHuman,
 		At:        time.Now().UTC(),
 	}
 	if cycleErr != nil {
@@ -317,7 +418,10 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	st.AppendOutcome(outcome, m.Cfg.OutcomeRing)
 	ApplyHoopLearning(st, m.learningCfg(st))
 	st.Checkpoint.LastEpisodeID = epID
-	if success {
+	if waitHuman {
+		st.Checkpoint.EvalStatus = "waiting_human"
+		st.Status = StatusWaitingHuman
+	} else if success {
 		st.Checkpoint.EvalStatus = "pass"
 	} else if humanGate {
 		st.Checkpoint.EvalStatus = "human_gate"
@@ -326,12 +430,21 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 	}
 	st.LastError = cr.Err
 	st.LastEvalScore = evalScore
-	st.Progress = CycleProgress{
+	idleProg := CycleProgress{
 		Phase:     "idle",
 		Iteration: iter,
 		Note:      st.Checkpoint.EvalStatus,
 		UpdatedAt: time.Now().UTC(),
 	}
+	if waitHuman {
+		idleProg.Phase = "waiting_human"
+		idleProg.StageKind = string(StageHumanGate)
+		idleProg.StageID = st.Gate.StageID
+	}
+	if smRT != nil {
+		idleProg = progressFromRoute(smRT, idleProg)
+	}
+	st.Progress = idleProg
 
 	stopReason := m.evaluateStop(st, outcome, summary)
 	if stopReason == "" && hadCritic && evalPass && st.Spec.Stop.OnSuccessN <= 0 && st.Spec.MaxIterations <= 0 {
@@ -339,6 +452,9 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		if st.Spec.Interval == "" && st.Spec.Cron == "" {
 			stopReason = "eval_pass"
 		}
+	}
+	if stopReason == "" && waitHuman {
+		stopReason = "waiting_human"
 	}
 	if stopReason == "" && humanGate && st.Spec.Autonomy == AutonomyL1 {
 		stopReason = "human_gate"
@@ -577,7 +693,59 @@ func stagePhase(k StageKind) string {
 		return "act"
 	case StageCritic:
 		return "critique"
+	case StageHumanGate:
+		return "waiting_human"
 	default:
 		return string(k)
+	}
+}
+
+func (m *Manager) emitRouteDecision(st *LoopState, rt *statemachine.Runtime, mod ModuleSpec) {
+	if m.Logs == nil || st == nil || rt == nil {
+		return
+	}
+	attrs := map[string]string{
+		"stage_id":  mod.ID,
+		"stage":     string(mod.Kind),
+		"current":   string(rt.Current),
+		"topology":  string(rt.Def.Topology),
+		"branches":  summarizeBranch(rt),
+	}
+	if len(rt.Route.NextEdges) > 0 {
+		attrs["next_edges"] = strings.Join(rt.Route.NextEdges, ",")
+	}
+	m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "route_decision",
+		fmt.Sprintf("at %s next=%d", mod.ID, len(rt.Route.NextEdges)), attrs)
+}
+
+func (m *Manager) budgetOK(st *LoopState) bool {
+	if m == nil || m.BudgetCheck == nil {
+		return true
+	}
+	return m.BudgetCheck(st)
+}
+
+func (m *Manager) graphEventCount(turnID string) int {
+	if m == nil || m.Graph == nil {
+		return 0
+	}
+	if v, ok := m.Graph.Turn(turnID); ok && v.Stats != nil {
+		return v.Stats.EventCount
+	}
+	// Fallback: blend store-wide relevancy into count proxy.
+	r := m.Graph.RelevancyScore(turnID)
+	return int(r * 20)
+}
+
+func humanToSM(st *LoopState) *statemachine.HumanDecision {
+	if st == nil || st.Gate.Decision == "" {
+		return nil
+	}
+	return &statemachine.HumanDecision{
+		Approved: st.Gate.Decision == "approve",
+		Comment:  st.Gate.Comment,
+		At:       st.Gate.DecidedAt,
+		Actor:    st.Gate.Actor,
+		GateNode: statemachine.StateID(st.Gate.StageID),
 	}
 }
