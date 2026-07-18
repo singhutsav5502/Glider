@@ -52,14 +52,15 @@
 
 ---
 
-## Honest scores (pre-overnight)
+## Honest scores (pre → post overnight)
 
-| Area | Score | Verdict |
-|------|-------|---------|
-| Loop Engineering overall | ~60–65% | Usable MVP; latency/progress/learning gaps |
-| Swarm productization | ~40% | Foundation stubs; not in-loop or flag-on |
-| Graph → runtime | ~50% | Editor strong; edges/progress weak |
-| Graph UX (undo/modals) | ~35% | Edit dialog only; no history |
+| Area | Before | After |
+|------|--------|-------|
+| Loop Engineering overall | ~60–65% | ~75% |
+| Swarm productization | ~40% | ~65% |
+| Graph → runtime | ~50% | ~80% |
+| Graph UX (undo/modals) | ~35% | ~90% |
+| Per-instance agent logs | 0% | ~85% |
 
 ---
 
