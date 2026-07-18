@@ -53,9 +53,9 @@ Dashboard: `http://localhost:8081`.
 | 3 | **Scripting for rules** | **Starlark** | Sub-ms, sandboxed, Python-like. |
 | 4 | **Inference backends** | **Ollama + vLLM** (both core) | Variants vs true LoRA hot-swap. |
 | 5 | **LoRA strategy** | Dual approach | Ollama pre-baked variants; vLLM per-request adapters. |
-| 6 | **Routing logic** | **One shared harness** for both modes | Explicit `/local`/`/cloud` = overrides. **Main drivers** = Starlark scripts + context token thresholds. Unrecognized MITM bodies **passthrough**. |
+| 6 | **Routing logic** | **One shared harness** for both modes | Explicit `/local`/`/cloud` = overrides. Today: Starlark + **token thresholds**. Planned: task classifiers above tokens — [smart_routing_and_local_tools.md](smart_routing_and_local_tools.md). Unrecognized MITM bodies **passthrough**. |
 | 7 | **VRAM management** | Load on demand, unload after idle timeout | Scale-to-zero. |
-| 8 | **Context token threshold** | Configurable primary driver | e.g. `>8000` → cloud/origin; `<=8000` → local (unless overridden). |
+| 8 | **Context token threshold** | Configurable **ceiling / fallback** (today still primary auto driver) | e.g. `>8000` → cloud/origin; roadmap demotes tokens below task class. |
 | 9 | **Cursor system prompts** | **Never stripped by default** | UI depends on them. |
 | 10 | **Request transformation** | Opt-in trim + augment | Optional only. |
 | 11 | **Dashboard** | Core from day one | Live VRAM, routing, config. |
@@ -64,12 +64,13 @@ Dashboard: `http://localhost:8081`.
 | 14 | **Model ID mapping** | `model_aliases` in `glider.yaml` | Map Cursor/OpenAI model IDs → local registry names before routing. |
 | 15 | **MITM CA** | Local CA under `~/.glider/mitm/` | User trusts CA; leaf certs minted per host. |
 | 16 | **MITM vs gateway engine** | Same `PipelineCompleter` | Gateway: `Complete`. MITM: `CompleteLocal` → non-local returns `ErrOriginPassthrough` → Cursor upstream. |
+| 17 | **Agent protocol on MITM** | Path B text-only when `agent_rpc_fulfill` | BidiAppend extract → RunSSE local fulfill (canned proven; Ollama when backends work). Tool loops / child RunSSE still origin — prefer gateway + `cus-` for Agent+tools. See [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md). |
 
 ---
 
 ## V2 Future Goals (Swarm & Loop Engineering)
 
-- **Swarm Delegation:** Planner local model → worker swarm → aggregate SSE to Cursor.
+- **Swarm Delegation:** Planner local model → worker swarm → aggregate SSE to Cursor. Status & Slate-inspired plan: [swarm_orchestration.md](swarm_orchestration.md) (~5% done).
 - **Loop Engineering:** Local lint/test reflection before Cursor sees the final stream.
 
 ---
@@ -101,8 +102,8 @@ Dashboard: `http://localhost:8081`.
   - Gateway: `Complete` (cloud → BYOK OpenAI/Anthropic)
   - MITM: `CompleteLocal` (cloud/non-local → `ErrOriginPassthrough` → original Cursor Host)
 - Blind tunnel for non-allowlisted CONNECT hosts
-- Routing priority: **explicit overrides** → **Starlark scripts** → **context thresholds** → default cloud
-- Explicit `/local`, `/cloud`, `/heavy`, `/fast`; regex / context / Starlark rules
+- Routing priority: **explicit hard-force** (`/local` `/cloud` …) → **task_classifier** → **Starlark** → **context thresholds** → default cloud
+- Explicit `/local`, `/cloud`, `/heavy`, `/fast` (TipTap-safe; always beat classifiers)
 - `model_aliases` map
 - Opt-in request transform (trim / augment); system prompts preserved
 
@@ -123,7 +124,8 @@ Dashboard: `http://localhost:8081`.
 
 ### Observability
 - Request metrics: Mode / Action / Host / Path / Rule / OriginalModel (+ tokens, latency)
-- slog: MITM CONNECT `decrypt` vs `blind_tunnel`; intercept local / origin_passthrough / skip / error
+- slog: MITM CONNECT `decrypt` vs `blind_tunnel`; intercept local / origin_passthrough; skip kinds `skip_agent_rpc` / `skip_control` / `skip` / error
+- Path classification: `ClassifyPath` / `IsLLMPath` — OpenAI JSON harness vs Agent Connect/gRPC vs control (see [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md))
 - Dashboard Overview request log columns: TIME, MODE, ACTION, HOST / MODEL, RULE, LATENCY, TOKENS
 - Session history under `~/.glider/history` (one session = one Glider process run); live WS still tails the current session
 
@@ -201,20 +203,24 @@ glider.exe --config configs/glider.yaml
 2. Use Chat / Ask / Cmd+K with OpenAI-path models
 3. Optional overrides: `/local`, `/cloud` — otherwise scripts + token thresholds decide
 
-### Mode B — MITM (Agent + all Cursor models)
+### Mode B — MITM (Agent TLS + Path B text fulfill)
 1. Trust `~/.glider/mitm/ca.crt` (see `scripts/setup-windows.ps1`)
 2. Set `NODE_EXTRA_CA_CERTS` to that CA
 3. Cursor settings: `http.proxy` = `http://127.0.0.1:8082`, `proxySupport` = `override`, `disableHttp2` = `true`
-4. Fully quit and relaunch Cursor
-5. Use Agent normally — same harness as gateway; non-local → original Cursor upstream
+4. Enable `mitm.agent_rpc_fulfill: true` (leave `agent_rpc_canned_on_error: false` for real Ollama)
+5. Fully quit and relaunch Cursor
+6. Text-only Agent turns can route local; tool loops stay on **origin passthrough**. Prefer Path A gateway + `cus-` for Agent+tools.
 
 ### What Success Looks Like
-- Agent subscription models work through MITM with origin passthrough
-- Thresholds/scripts route small work local without typing `/local`
-- Explicit `/local` / `/cloud` still override when needed
-- Gateway BYOK path remains independent but shares the same engine
+- Agent subscription models keep working through MITM (origin passthrough when not fulfilling)
+- Path B text-only Agent turns fulfill locally when `agent_rpc_fulfill` + local rules match
+- Gateway BYOK path routes `/local` and threshold/script decisions for OpenAI-compat / `cus-` models
+- Dashboard shows harness outcomes; debug dumps under `~/.glider/mitm-debug` when `debug_agent_rpc` is on
+- Explicit `/local` / `/cloud` still override when bodies are chat/Responses-shaped
 - < 5ms proxy overhead on passthrough
-- Dashboard at `:8081` shows routing
+- Dashboard at `:8081` shows routing for gateway and Path B fulfill hits
+
+> **Remaining gap:** Agent tool loops / child RunSSE are not fulfilled on MITM — see [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md).
 
 ---
 
@@ -224,6 +230,7 @@ glider.exe --config configs/glider.yaml
 |---|---|
 | [implementation_plan.md](implementation_plan.md) | HLD/LLD, package layout, config schema (incl. MITM) |
 | [tdd_test_plan.md](tdd_test_plan.md) | Phase tests + Phase 6 MITM/Responses/aliases |
+| [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md) | G13: Agent Connect/gRPC gap + phased plan |
 | [../README.md](../README.md) | User setup for dual mode |
 | [../docs/CURSOR_CHECKLIST.md](../docs/CURSOR_CHECKLIST.md) | Manual Cursor verification |
 | [../STATUS.md](../STATUS.md) | Build status snapshot |

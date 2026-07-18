@@ -1,7 +1,12 @@
-/glider.exe
+﻿/glider.exe
 /glider
 /coverage.out
 *.exe
 .env
 *.test
 .glider-debug/
+
+# Nested research clone metadata (vendored as plain trees)
+**/.git.bak/
+
+

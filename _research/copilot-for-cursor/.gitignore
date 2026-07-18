@@ -1,0 +1,21 @@
+# Logs
+*.log
+proxy-debug.log
+
+# Usage data (persisted to ~/.copilot-proxy/ by default)
+usage.json
+
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~
+dist/

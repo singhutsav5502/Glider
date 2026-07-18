@@ -1,0 +1,36 @@
+{
+  "name": "copilot-for-cursor",
+  "version": "2.1.1",
+  "description": "Proxy that bridges GitHub Copilot API to Cursor IDE — translates Anthropic format, bridges Responses API for GPT 5.x, and more",
+  "bin": {
+    "copilot-for-cursor": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "*.ts",
+    "dashboard.html",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build start.ts --outdir dist --target node",
+    "dev": "bun run start.ts",
+    "start": "bun dist/start.js"
+  },
+  "keywords": [
+    "copilot",
+    "cursor",
+    "proxy",
+    "anthropic",
+    "openai",
+    "responses-api"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CharlesYWL/copilot-for-cursor.git"
+  },
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.0"
+  }
+}

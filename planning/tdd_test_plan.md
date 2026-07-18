@@ -1384,6 +1384,15 @@
 | **Then** | `ErrOriginPassthrough` / `handled=false` |
 | **Success** | No local execute
 
+#### `T6.2.8` — Path classification: Agent RPC vs OpenAI vs control
+| | |
+|---|---|
+| **Type** | Unit |
+| **Given** | Paths: `/v1/chat/completions`, `/aiserver.v1.BidiService/BidiAppend`, `/aiserver.v1.DashboardService/...` |
+| **When** | `ClassifyPath` / Interceptor `TryHandle` |
+| **Then** | openai_compat → harness-eligible; agent_rpc → `skip_agent_rpc` Info; control → `skip_control` Debug; never `handled=true` for RPC |
+| **Success** | Counters match; no request-log row for skips |
+
 ---
 
 ### 6.3 Responses API (`internal/api/`)

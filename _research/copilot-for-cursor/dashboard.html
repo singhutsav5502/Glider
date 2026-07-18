@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Copilot for Cursor — Dashboard</title>
+<style>
+:root {
+    --bg: #0b0d17;
+    --bg-2: #0f1222;
+    --bg-card: rgba(22, 25, 43, 0.7);
+    --bg-card-solid: #16192b;
+    --bg-hover: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.08);
+    --border-light: rgba(255,255,255,0.14);
+    --text: #e8eaf3;
+    --text-dim: #8b90a8;
+    --text-muted: #5a607a;
+    --accent: #7c8cff;
+    --accent-2: #c084fc;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --blue: #60a5fa;
+    --purple: #c084fc;
+    --orange: #fb923c;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --grad: linear-gradient(135deg, #7c8cff 0%, #c084fc 100%);
+    --grad-soft: linear-gradient(135deg, rgba(124,140,255,0.15), rgba(192,132,252,0.15));
+    --shadow: 0 8px 32px rgba(0,0,0,0.4);
+    --shadow-glow: 0 0 40px rgba(124,140,255,0.15);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+        radial-gradient(ellipse 80% 50% at 20% 0%, rgba(124,140,255,0.18), transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 10%, rgba(192,132,252,0.14), transparent 60%),
+        radial-gradient(ellipse 50% 40% at 50% 100%, rgba(96,165,250,0.10), transparent 60%),
+        linear-gradient(180deg, #0b0d17 0%, #0a0c18 100%);
+    background-attachment: fixed;
+    font-feature-settings: 'cv02','cv03','cv04','cv11';
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ─────────────────────────────────────── */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10, 12, 24, 0.6);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+}
+.header-title {
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: -0.01em;
+}
+.header-title .brand {
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.header-title .dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--green);
+    display: inline-block;
+    box-shadow: 0 0 10px rgba(52,211,153,0.7);
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .6; transform: scale(.9); }
+}
+.header-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--grad-soft);
+    color: var(--accent);
+    border: 1px solid rgba(124,140,255,0.25);
+    font-family: 'SF Mono','JetBrains Mono','Consolas',monospace;
+}
+
+/* ── Tabs ────────────────────────────────────────── */
+.tabs {
+    display: flex;
+    gap: 4px;
+    background: transparent;
+    padding: 16px 28px 0;
+    border-bottom: 1px solid var(--border);
+}
+.tab {
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 10px 10px 0 0;
+    border-bottom: 2px solid transparent;
+    transition: all .2s ease;
+    user-select: none;
+    position: relative;
+    margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.tab.active {
+    color: var(--text);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-bottom-color: transparent;
+}
+.tab.active::after {
+    content: '';
+    position: absolute;
+    left: 14px; right: 14px;
+    bottom: -1px;
+    height: 2px;
+    background: var(--grad);
+    border-radius: 2px;
+}
+
+/* ── Content ─────────────────────────────────────── */
+.content {
+    flex: 1;
+    padding: 28px;
+    overflow-y: auto;
+    max-width: 1280px;
+    width: 100%;
+    margin: 0 auto;
+}
+.tab-panel { display: none; animation: fadeIn .25s ease; }
+.tab-panel.active { display: block; }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Cards ───────────────────────────────────────── */
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+}
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: border-color .2s ease, transform .2s ease;
+}
+.card:hover { border-color: var(--border-light); }
+.card-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+.card-value {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(180deg, #fff, #c5c9db);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.card-value.mono {
+    font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent);
+    background: none;
+    -webkit-background-clip: initial;
+    background-clip: initial;
+    word-break: break-all;
+}
+
+/* ── Copyable row ────────────────────────────────── */
+.copy-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.copy-btn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-light);
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 6px;
+    transition: all .2s ease;
+    flex-shrink: 0;
+}
+.copy-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(124,140,255,0.08);
+}
+.copy-btn.copied { border-color: var(--green); color: var(--green); background: rgba(52,211,153,0.08); }
+
+/* ── Tables ──────────────────────────────────────── */
+.table-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 28px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+.table-header {
+    padding: 14px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.table-header .badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--grad-soft);
+    color: var(--accent);
+    border: 1px solid rgba(124,140,255,0.2);
+    font-weight: 500;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+th {
+    text-align: left;
+    padding: 12px 18px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    cursor: default;
+    background: rgba(255,255,255,0.02);
+}
+td {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg-hover); }
+.status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 6px;
+    box-shadow: 0 0 8px currentColor;
+}
+.status-dot.ok { background: var(--green); color: var(--green); }
+.status-dot.err { background: var(--red); color: var(--red); }
+.model-badge {
+    font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(192,132,252,0.1);
+    color: var(--purple);
+    border: 1px solid rgba(192,132,252,0.2);
+}
+
+/* ── Section titles ──────────────────────────────── */
+.section-title {
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.section-title::before {
+    content: '';
+    width: 3px; height: 14px;
+    background: var(--grad);
+    border-radius: 2px;
+}
+
+/* ── Console ─────────────────────────────────────── */
+.console-wrap {
+    background: rgba(5,6,14,0.8);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 180px);
+    min-height: 400px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    overflow: hidden;
+}
+.console-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+}
+.console-toolbar .title { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+.console-toolbar button {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-light);
+    color: var(--text-dim);
+    padding: 5px 14px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .2s ease;
+    font-weight: 500;
+}
+.console-toolbar button:hover { border-color: var(--red); color: var(--red); background: rgba(248,113,113,0.08); }
+.console-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 18px;
+    font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.log-line { display: block; }
+.log-line .ts { color: #4a5068; margin-right: 8px; }
+.log-line.LOG .lvl { color: var(--green); }
+.log-line.INFO .lvl { color: var(--blue); }
+.log-line.WARN .lvl { color: var(--yellow); }
+.log-line.ERROR .lvl { color: var(--red); }
+.log-line.DEBUG .lvl { color: var(--purple); }
+.log-line .msg { color: #c5c9db; }
+.log-line.ERROR .msg { color: #fca5a5; }
+.log-line.WARN .msg { color: #fde68a; }
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 768px) {
+    .tabs { padding: 12px 16px 0; overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .content { padding: 20px 16px; }
+    .header { padding: 14px 16px; }
+}
+@media (max-width: 640px) {
+    .cards { grid-template-columns: 1fr; }
+}
+
+/* ── Scrollbars ──────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); background-clip: padding-box; border: 2px solid transparent; }
+
+/* ── Misc ────────────────────────────────────────── */
+.empty-state {
+    text-align: center;
+    padding: 56px 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+.num { font-variant-numeric: tabular-nums; }
+
+/* ── Persistence bar ─────────────────────────────── */
+.persistence-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    margin-bottom: 24px;
+    background: rgba(52,211,153,0.06);
+    border: 1px solid rgba(52,211,153,0.18);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.persist-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    box-shadow: 0 0 8px rgba(52,211,153,0.6);
+}
+
+/* ── Toggle switch ──────────────────────────────── */
+.toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--border-light);
+    border-radius: 24px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 2px;
+    bottom: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: 0.3s;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.toggle input:checked + .toggle-slider {
+    background: var(--grad);
+    border-color: transparent;
+}
+.toggle input:checked + .toggle-slider::before {
+    transform: translateX(20px);
+}
+
+/* ── Primary gradient buttons ────────────────────── */
+.btn-primary {
+    background: var(--grad);
+    color: #fff;
+    border: none;
+    padding: 9px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    transition: transform .15s ease, box-shadow .15s ease;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(124,140,255,0.25);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,140,255,0.4); }
+.btn-primary:active { transform: translateY(0); }
+
+/* ── Headings inside cards ───────────────────────── */
+.card h3 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+/* ── Inputs ──────────────────────────────────────── */
+input[type="text"], input[type="password"], select {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-light);
+    color: var(--text);
+    border-radius: 8px;
+    transition: border-color .2s ease, box-shadow .2s ease;
+    outline: none;
+}
+input[type="text"]:focus, input[type="password"]:focus, select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124,140,255,0.15);
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <div class="header-title">
+        <span class="dot"></span>
+        <span class="brand">Copilot for Cursor</span>
+    </div>
+    <span class="header-badge">localhost:4142</span>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" role="tablist">
+    <div class="tab active" data-tab="endpoint" role="tab" tabindex="0" aria-selected="true">Endpoint</div>
+    <div class="tab" data-tab="usage" role="tab" tabindex="0" aria-selected="false">Usage</div>
+    <div class="tab" data-tab="tunnel" role="tab" tabindex="0" aria-selected="false">Tunnel</div>
+    <div class="tab" data-tab="console" role="tab" tabindex="0" aria-selected="false">Console Log</div>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+    <!-- ═══════════ TAB 1: Endpoint ═══════════ -->
+    <div id="tab-endpoint" class="tab-panel active">
+        <div class="cards">
+            <div class="card">
+                <div class="card-label">Local Endpoint</div>
+                <div class="copy-row">
+                    <div class="card-value mono" id="endpoint-url">http://localhost:4142/v1</div>
+                    <button class="copy-btn" onclick="copyText('http://localhost:4142/v1',this)">Copy</button>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-label">API Key (copilot-api)</div>
+                <div class="copy-row">
+                    <div class="card-value mono" id="upstream-key-display">Loading…</div>
+                    <button class="copy-btn" id="upstream-key-copy-btn" style="display:none" onclick="copyUpstreamKey(this)">Copy</button>
+                </div>
+            </div>
+            <div class="card" style="grid-column: 1 / -1">
+                <div class="card-label">Public Tunnel</div>
+                <div class="copy-row">
+                    <div class="card-value mono" id="endpoint-tunnel-url" style="font-size:13px; color:var(--text-dim);">Not running</div>
+                    <button class="copy-btn" onclick="switchTabById('tunnel')">Open Tunnel Tab</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upstream (copilot-api) Keys -->
+        <div class="card" style="margin-bottom: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; border: none; padding: 0;">Copilot API Keys</h3>
+                <button class="btn-primary" onclick="handleCreateUpstreamKey()">+ New Key</button>
+            </div>
+            <p style="color: #888; font-size: 13px; margin-bottom: 12px;">
+                Keys stored in copilot-api's <code style="color:var(--accent)">config.json</code>. The first key is used by the proxy for upstream requests.
+                <br><span style="color:var(--yellow);">Note:</span> New keys require a copilot-api restart to take effect.
+            </p>
+
+            <div id="newUpstreamKeyAlert" style="display: none; background: #1a2e1a; border: 1px solid #22c55e; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                <div style="color: #22c55e; font-weight: 600; margin-bottom: 4px;">Copy this key now — it won't be shown in full again!</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <code id="newUpstreamKeyValue" style="flex: 1; background: #111; padding: 8px; border-radius: 4px; font-size: 13px; color: #22c55e; word-break: break-all;"></code>
+                    <button onclick="copyText(document.getElementById('newUpstreamKeyValue').textContent, this)" style="background: #333; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Copy</button>
+                </div>
+            </div>
+
+            <div id="upstreamKeysList"></div>
+        </div>
+
+        <!-- API Key Management -->
+        <div class="card" style="margin-bottom: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; border: none; padding: 0;">Proxy API Key Protection</h3>
+                <label class="toggle">
+                    <input type="checkbox" id="requireKeyToggle" onchange="toggleRequireKey(this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <p id="authStatus" style="color: #888; font-size: 13px; margin-bottom: 16px;">Loading...</p>
+            
+            <div id="keysSection" style="display: none;">
+                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                    <input type="text" id="keyNameInput" placeholder="Key name (e.g. Cursor)" 
+                        style="flex:1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                    <button class="btn-primary" onclick="createKey()">+ Create Key</button>
+                </div>
+                
+                <!-- Newly created key (shown once) -->
+                <div id="newKeyAlert" style="display: none; background: #1a2e1a; border: 1px solid #22c55e; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                    <div style="color: #22c55e; font-weight: 600; margin-bottom: 4px;">⚠️ Copy this key now — it won't be shown again!</div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <code id="newKeyValue" style="flex: 1; background: #111; padding: 8px; border-radius: 4px; font-size: 13px; color: #22c55e; word-break: break-all;"></code>
+                        <button onclick="copyNewKey()" style="background: #333; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Copy</button>
+                    </div>
+                </div>
+                
+                <!-- Keys list -->
+                <div id="keysList"></div>
+            </div>
+        </div>
+
+        <div class="section-title">Available Models</div>
+        <div class="table-wrap">
+            <div class="table-header">
+                Models <span class="badge" id="model-count">—</span>
+            </div>
+            <div id="models-loading" class="empty-state">Loading models…</div>
+            <table id="models-table" style="display:none">
+                <thead>
+                    <tr>
+                        <th>Model ID (use this)</th>
+                        <th>Original ID</th>
+                        <th>Display Name</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="models-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ═══════════ TAB 2: Usage ═══════════ -->
+    <div id="tab-usage" class="tab-panel">
+        <div class="cards" id="usage-cards">
+            <div class="card">
+                <div class="card-label">Total Requests (Lifetime)</div>
+                <div class="card-value num" id="stat-requests">0</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Prompt Tokens</div>
+                <div class="card-value num" id="stat-prompt">0</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Completion Tokens</div>
+                <div class="card-value num" id="stat-completion">0</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Total Tokens</div>
+                <div class="card-value num" id="stat-total">0</div>
+            </div>
+        </div>
+
+        <div class="persistence-bar" id="persistence-bar" style="display:none">
+            <span class="persist-dot"></span>
+            <span id="persist-info">Data persisted</span>
+            <button class="copy-btn" onclick="flushUsage()" id="flush-btn" style="margin-left:auto">Save Now</button>
+        </div>
+
+        <div class="section-title">Daily History</div>
+        <div class="table-wrap" id="daily-wrap" style="display:none">
+            <table id="daily-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Requests</th>
+                        <th>Prompt Tokens</th>
+                        <th>Completion Tokens</th>
+                        <th>Total Tokens</th>
+                        <th>Errors</th>
+                    </tr>
+                </thead>
+                <tbody id="daily-body"></tbody>
+            </table>
+        </div>
+
+        <div class="section-title">Per-Model Breakdown</div>
+        <div class="table-wrap">
+            <table id="model-usage-table">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Requests</th>
+                        <th>Prompt Tokens</th>
+                        <th>Completion Tokens</th>
+                        <th>Avg Duration</th>
+                        <th>Errors</th>
+                    </tr>
+                </thead>
+                <tbody id="model-usage-body"></tbody>
+            </table>
+        </div>
+
+        <div class="section-title">Recent Requests</div>
+        <div class="table-wrap">
+            <table id="recent-table">
+                <thead>
+                    <tr>
+                        <th style="width:30px"></th>
+                        <th>Model</th>
+                        <th>Prompt</th>
+                        <th>Completion</th>
+                        <th>Duration</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="recent-body"></tbody>
+            </table>
+        </div>
+        <div id="usage-empty" class="empty-state" style="display:none">
+            No requests recorded yet. Send a chat completion to see usage.
+        </div>
+    </div>
+
+    <!-- ═══════════ TAB: Tunnel ═══════════ -->
+    <div id="tab-tunnel" class="tab-panel">
+        <div class="card" style="margin-bottom: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:260px;">
+                    <h3 style="margin:0 0 4px; border:none; padding:0; font-size:15px;">Public Tunnel</h3>
+                    <p style="color:var(--text-dim); font-size:13px; margin:0;">
+                        Expose your local proxy to the internet in one click. Use the public URL from another machine, a teammate's Cursor, or your phone.
+                    </p>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="dot" id="tunnel-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--text-muted);display:inline-block;"></span>
+                    <span id="tunnel-status-label" class="mono" style="font-size:12px; color:var(--text-dim);">idle</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+                <div>
+                    <label for="tunnel-provider" class="card-label" style="display:block; margin-bottom:6px;">Provider</label>
+                    <select id="tunnel-provider" style="width:100%; padding:8px 10px; background:var(--bg); color:var(--text); border:1px solid var(--border-light); border-radius:6px; font-size:13px;">
+                        <option value="cloudflared">Cloudflare Quick Tunnel (no account)</option>
+                        <option value="ngrok">ngrok (needs authtoken)</option>
+                        <option value="bore">bore.pub (no account)</option>
+                    </select>
+                </div>
+                <div id="tunnel-authtoken-wrap" style="display:none;">
+                    <label for="tunnel-authtoken" class="card-label" style="display:block; margin-bottom:6px;">ngrok Authtoken (optional)</label>
+                    <input id="tunnel-authtoken" type="password" placeholder="Leave blank if already set via NGROK_AUTHTOKEN" style="width:100%; padding:8px 10px; background:var(--bg); color:var(--text); border:1px solid var(--border-light); border-radius:6px; font-size:13px; font-family:monospace;">
+                </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button id="tunnel-start-btn" onclick="handleTunnelStart()" class="btn-primary" style="flex:1; padding:11px 16px;">Start Tunnel</button>
+                <button id="tunnel-stop-btn" onclick="handleTunnelStop()" style="flex:1; background:rgba(248,113,113,0.15); color:var(--red); border:1px solid rgba(248,113,113,0.35); padding:11px 16px; border-radius:8px; cursor:pointer; font-weight:600; display:none;">Stop Tunnel</button>
+            </div>
+        </div>
+
+        <div id="tunnel-result" class="card" style="display:none; margin-bottom:16px;">
+            <div class="card-label" style="margin-bottom:8px;">Public URL</div>
+            <div class="copy-row" style="margin-bottom:12px;">
+                <div class="card-value mono" id="tunnel-url" style="font-size:14px; word-break:break-all;"></div>
+                <button class="copy-btn" onclick="copyText(document.getElementById('tunnel-url').textContent, this)">Copy</button>
+            </div>
+            <div class="card-label" style="margin-bottom:8px;">Cursor Endpoint</div>
+            <div class="copy-row" style="margin-bottom:16px;">
+                <div class="card-value mono" id="tunnel-cursor-url" style="font-size:14px; word-break:break-all;"></div>
+                <button class="copy-btn" onclick="copyText(document.getElementById('tunnel-cursor-url').textContent, this)">Copy</button>
+            </div>
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+                <div id="tunnel-qr" style="background:#fff; padding:8px; border-radius:6px; line-height:0;"></div>
+                <div style="flex:1; min-width:200px; color:var(--text-dim); font-size:13px;">
+                    Scan the QR code to open this URL on another device. Paste the Cursor endpoint into Cursor settings to route requests through the tunnel.
+                </div>
+            </div>
+        </div>
+
+        <div id="tunnel-error" class="card" style="display:none; margin-bottom:16px; border-color: var(--red);">
+            <div class="card-label" style="color:var(--red); margin-bottom:4px;">Tunnel error</div>
+            <div id="tunnel-error-msg" class="mono" style="font-size:13px; color:var(--text); white-space:pre-wrap;"></div>
+        </div>
+
+        <div class="card" style="border-color:#1a3050; background:#0e1a2b;">
+            <div class="card-label" style="color:var(--accent); margin-bottom:4px;">Security note</div>
+            <div style="font-size:13px; color:var(--text);">
+                The tunnel exposes your proxy publicly. Anyone with the URL can use your GitHub Copilot quota unless you enable API key auth on the <a href="#" onclick="switchTabById('endpoint'); return false;" style="color:var(--accent);">Endpoint tab</a>.
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════ TAB 3: Console ═══════════ -->
+    <div id="tab-console" class="tab-panel">
+        <div class="console-wrap">
+            <div class="console-toolbar">
+                <span class="title" id="console-status">● Connected</span>
+                <button onclick="clearLogs()">Clear</button>
+            </div>
+            <div class="console-output" id="console-output"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ── Tab switching ──────────────────────────────────────────── */
+const tabs = document.querySelectorAll('.tab');
+function switchTab(t) {
+    tabs.forEach(x => { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    t.classList.add('active');
+    t.setAttribute('aria-selected', 'true');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+    if (t.dataset.tab === 'usage') fetchUsage();
+    if (t.dataset.tab === 'tunnel') initTunnelTab();
+}
+function switchTabById(id) {
+    const t = document.querySelector(`.tab[data-tab="${id}"]`);
+    if (t) switchTab(t);
+}
+tabs.forEach(t => {
+    t.addEventListener('click', () => switchTab(t));
+    t.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(t); }
+    });
+});
+
+/* ── Helpers ────────────────────────────────────────────────── */
+function copyText(text, btn) {
+    navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    });
+}
+
+function fmtNum(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
+}
+
+function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+}
+
+function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+/* ── Tab 1: Models ──────────────────────────────────────────── */
+async function fetchModels() {
+    try {
+        // Fetch via /api/models to bypass API key auth for dashboard
+        const res = await fetch('/api/models');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const models = (data.data || []).sort((a, b) => a.id.localeCompare(b.id));
+        const prefix = 'cus-';
+
+        document.getElementById('model-count').textContent = models.length + ' models';
+        document.getElementById('models-loading').style.display = 'none';
+        const table = document.getElementById('models-table');
+        table.style.display = '';
+        const tbody = document.getElementById('models-body');
+        tbody.innerHTML = '';
+
+        models.forEach(m => {
+            const origId = m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id;
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td><span class="model-badge">' + esc(m.id) + '</span></td>' +
+                '<td style="color:var(--text-dim)">' + esc(origId) + '</td>' +
+                '<td style="color:var(--text-dim)">' + esc(m.display_name || m.id) + '</td>' +
+                '<td><button class="copy-btn">Copy</button></td>';
+            const btn = tr.querySelector('.copy-btn');
+            btn.addEventListener('click', function() { copyText(m.id, this); });
+            tbody.appendChild(tr);
+        });
+    } catch (e) {
+        document.getElementById('models-loading').textContent = 'Failed to load models: ' + e.message;
+    }
+}
+fetchModels();
+
+/* ── Tab 1: Upstream (copilot-api) Keys ───────────────────── */
+let fullUpstreamKey = '';
+
+async function loadUpstreamKeys() {
+    try {
+        const resp = await fetch('/api/upstream-keys');
+        const data = await resp.json();
+        const display = document.getElementById('upstream-key-display');
+        const copyBtn = document.getElementById('upstream-key-copy-btn');
+
+        if (data.keys && data.keys.length > 0) {
+            display.textContent = data.keys[0];
+            copyBtn.style.display = '';
+        } else {
+            display.textContent = 'No keys configured';
+            display.style.color = 'var(--yellow)';
+        }
+
+        renderUpstreamKeys(data.keys || []);
+    } catch (e) {
+        document.getElementById('upstream-key-display').textContent = 'Failed to load';
+    }
+}
+
+function renderUpstreamKeys(maskedKeys) {
+    const list = document.getElementById('upstreamKeysList');
+    if (maskedKeys.length === 0) {
+        list.innerHTML = '<div style="color: #666; font-size: 13px; padding: 12px 0;">No API keys configured. Create one to authenticate with copilot-api.</div>';
+        return;
+    }
+    list.innerHTML = '';
+    maskedKeys.forEach((k, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #222;';
+        const badge = i === 0
+            ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#1a2332;color:var(--accent);margin-left:8px;">Active</span>'
+            : '';
+        row.innerHTML =
+            '<div style="flex: 1; min-width: 0;">' +
+                '<code style="color: #aaa; font-size: 13px;">' + esc(k) + '</code>' + badge +
+            '</div>' +
+            '<button class="copy-btn" title="Copy masked key" onclick="copyText(\'' + esc(k) + '\', this)">Copy</button>' +
+            '<button style="background: none; border: none; color: #666; cursor: pointer; font-size: 16px; padding: 4px 8px;" title="Delete" data-key="' + esc(k) + '">🗑</button>';
+        row.querySelector('button[title="Delete"]').addEventListener('click', function() { handleDeleteUpstreamKey(this.dataset.key); });
+        list.appendChild(row);
+    });
+}
+
+function copyUpstreamKey(btn) {
+    const display = document.getElementById('upstream-key-display').textContent;
+    copyText(display, btn);
+}
+
+async function handleCreateUpstreamKey() {
+    try {
+        const resp = await fetch('/api/upstream-keys', { method: 'POST' });
+        const data = await resp.json();
+        if (data.key) {
+            document.getElementById('newUpstreamKeyAlert').style.display = 'block';
+            document.getElementById('newUpstreamKeyValue').textContent = data.key;
+            loadUpstreamKeys();
+        }
+    } catch (e) {
+        alert('Failed to create key: ' + e.message);
+    }
+}
+
+async function handleDeleteUpstreamKey(maskedKey) {
+    if (!confirm('Delete this copilot-api key?')) return;
+    const prefix = maskedKey.split('...')[0];
+    try {
+        await fetch('/api/upstream-keys/' + encodeURIComponent(prefix), { method: 'DELETE' });
+        document.getElementById('newUpstreamKeyAlert').style.display = 'none';
+        loadUpstreamKeys();
+    } catch (e) {
+        alert('Failed to delete key: ' + e.message);
+    }
+}
+
+loadUpstreamKeys();
+
+/* ── Tab 1: API Key Management ─────────────────────────────── */
+let authConfig = { requireApiKey: false, keys: [] };
+
+async function loadAuthConfigUI() {
+    try {
+        const resp = await fetch('/api/keys');
+        authConfig = await resp.json();
+        document.getElementById('requireKeyToggle').checked = authConfig.requireApiKey;
+        document.getElementById('authStatus').textContent = authConfig.requireApiKey 
+            ? '🔒 API key required for all requests' 
+            : '🔓 No authentication — anyone with the URL can use the proxy';
+        document.getElementById('keysSection').style.display = 'block';
+        renderKeys();
+    } catch (e) {
+        document.getElementById('authStatus').textContent = 'Failed to load auth config';
+    }
+}
+
+function renderKeys() {
+    const list = document.getElementById('keysList');
+    if (authConfig.keys.length === 0) {
+        list.innerHTML = '<div style="color: #666; font-size: 13px; padding: 12px 0;">No API keys created yet.</div>';
+        return;
+    }
+    list.innerHTML = '';
+    authConfig.keys.forEach(k => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #222;';
+        row.innerHTML = `
+            <label class="toggle" style="flex-shrink: 0;">
+                <input type="checkbox" ${k.active ? 'checked' : ''}>
+                <span class="toggle-slider"></span>
+            </label>
+            <div style="flex: 1; min-width: 0;">
+                <div style="font-weight: 500; font-size: 14px;">${esc(k.name)}</div>
+                <code style="color: #888; font-size: 12px;">${esc(k.key)}</code>
+            </div>
+            <div style="color: #666; font-size: 12px; white-space: nowrap;">${timeAgo(k.createdAt)}</div>
+            <button style="background: none; border: none; color: #666; cursor: pointer; font-size: 16px; padding: 4px 8px;" title="Delete">🗑</button>
+        `;
+        row.querySelector('input[type="checkbox"]').addEventListener('change', function() { toggleKey(k.id, this.checked); });
+        row.querySelector('button[title="Delete"]').addEventListener('click', function() { deleteKey(k.id); });
+        list.appendChild(row);
+    });
+}
+
+async function toggleRequireKey(enabled) {
+    await fetch('/api/settings/auth', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ requireApiKey: enabled }) });
+    loadAuthConfigUI();
+}
+
+async function createKey() {
+    const name = document.getElementById('keyNameInput').value.trim() || 'Untitled';
+    const resp = await fetch('/api/keys', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
+    const newKey = await resp.json();
+    document.getElementById('newKeyAlert').style.display = 'block';
+    document.getElementById('newKeyValue').textContent = newKey.key;
+    document.getElementById('keyNameInput').value = '';
+    loadAuthConfigUI();
+}
+
+function copyNewKey() {
+    navigator.clipboard.writeText(document.getElementById('newKeyValue').textContent);
+}
+
+async function toggleKey(id, active) {
+    await fetch('/api/keys/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ active }) });
+    loadAuthConfigUI();
+}
+
+async function deleteKey(id) {
+    if (!confirm('Delete this API key?')) return;
+    await fetch('/api/keys/' + id, { method: 'DELETE' });
+    document.getElementById('newKeyAlert').style.display = 'none';
+    loadAuthConfigUI();
+}
+
+loadAuthConfigUI();
+
+/* ── Tab 2: Usage ───────────────────────────────────────────── */
+let usageTimer = null;
+
+async function fetchUsage() {
+    try {
+        const res = await fetch('/api/usage');
+        if (!res.ok) return;
+        const d = await res.json();
+
+        document.getElementById('stat-requests').textContent = fmtNum(d.totalRequests);
+        document.getElementById('stat-prompt').textContent = fmtNum(d.totalPromptTokens);
+        document.getElementById('stat-completion').textContent = fmtNum(d.totalCompletionTokens);
+        document.getElementById('stat-total').textContent = fmtNum(d.totalTokens);
+
+        // Persistence bar
+        if (d.persistence) {
+            const bar = document.getElementById('persistence-bar');
+            bar.style.display = 'flex';
+            const saved = d.persistence.lastSavedAt ? timeAgo(d.persistence.lastSavedAt) : 'never';
+            const since = d.persistence.createdAt ? new Date(d.persistence.createdAt).toLocaleDateString() : '—';
+            document.getElementById('persist-info').textContent =
+                'Saved ' + saved + '  ·  Tracking since ' + since + '  ·  ' + d.persistence.file;
+        }
+
+        const empty = document.getElementById('usage-empty');
+        if (d.totalRequests === 0) {
+            empty.style.display = '';
+            document.getElementById('model-usage-table').parentElement.style.display = 'none';
+            document.getElementById('recent-table').parentElement.style.display = 'none';
+            document.getElementById('daily-wrap').style.display = 'none';
+            return;
+        }
+        empty.style.display = 'none';
+        document.getElementById('model-usage-table').parentElement.style.display = '';
+        document.getElementById('recent-table').parentElement.style.display = '';
+
+        // Daily snapshots
+        if (d.dailySnapshots && d.dailySnapshots.length > 0) {
+            document.getElementById('daily-wrap').style.display = '';
+            const dBody = document.getElementById('daily-body');
+            dBody.innerHTML = '';
+            d.dailySnapshots.slice().reverse().forEach(s => {
+                const tr = document.createElement('tr');
+                tr.innerHTML =
+                    '<td>' + esc(s.date) + '</td>' +
+                    '<td class="num">' + fmtNum(s.requests) + '</td>' +
+                    '<td class="num">' + fmtNum(s.promptTokens) + '</td>' +
+                    '<td class="num">' + fmtNum(s.completionTokens) + '</td>' +
+                    '<td class="num">' + fmtNum(s.totalTokens) + '</td>' +
+                    '<td class="num" style="color:' + (s.errors > 0 ? 'var(--red)' : 'var(--text-dim)') + '">' + s.errors + '</td>';
+                dBody.appendChild(tr);
+            });
+        } else {
+            document.getElementById('daily-wrap').style.display = 'none';
+        }
+
+        // Per-model
+        const mBody = document.getElementById('model-usage-body');
+        mBody.innerHTML = '';
+        (d.byModel || []).sort((a, b) => b.requests - a.requests).forEach(m => {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td><span class="model-badge">' + esc(m.model) + '</span></td>' +
+                '<td class="num">' + fmtNum(m.requests) + '</td>' +
+                '<td class="num">' + fmtNum(m.promptTokens) + '</td>' +
+                '<td class="num">' + fmtNum(m.completionTokens) + '</td>' +
+                '<td class="num">' + m.avgDuration + 'ms</td>' +
+                '<td class="num" style="color:' + (m.errors > 0 ? 'var(--red)' : 'var(--text-dim)') + '">' + m.errors + '</td>';
+            mBody.appendChild(tr);
+        });
+
+        // Recent requests
+        const rBody = document.getElementById('recent-body');
+        rBody.innerHTML = '';
+        (d.recentRequests || []).forEach(r => {
+            const ok = r.status < 400;
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td><span class="status-dot ' + (ok ? 'ok' : 'err') + '"></span></td>' +
+                '<td><span class="model-badge">' + esc(r.model) + '</span></td>' +
+                '<td class="num">' + fmtNum(r.promptTokens) + '</td>' +
+                '<td class="num">' + fmtNum(r.completionTokens) + '</td>' +
+                '<td class="num">' + r.duration + 'ms</td>' +
+                '<td style="color:var(--text-dim)">' + timeAgo(r.timestamp) + '</td>';
+            rBody.appendChild(tr);
+        });
+    } catch (e) { /* silent */ }
+}
+
+async function flushUsage() {
+    const btn = document.getElementById('flush-btn');
+    btn.textContent = 'Saving…';
+    try {
+        await fetch('/api/usage/flush', { method: 'POST' });
+        btn.textContent = 'Saved!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Save Now'; btn.classList.remove('copied'); }, 1500);
+        fetchUsage();
+    } catch {
+        btn.textContent = 'Failed';
+        setTimeout(() => { btn.textContent = 'Save Now'; }, 1500);
+    }
+}
+
+// Auto-refresh usage every 5s when tab is active
+setInterval(() => {
+    if (document.getElementById('tab-usage').classList.contains('active')) fetchUsage();
+}, 5000);
+fetchUsage();
+
+/* ── Tab 3: Console ─────────────────────────────────────────── */
+const output = document.getElementById('console-output');
+let autoScroll = true;
+
+output.addEventListener('scroll', () => {
+    autoScroll = (output.scrollTop + output.clientHeight >= output.scrollHeight - 30);
+});
+
+function appendLine(ts, level, message) {
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    const span = document.createElement('span');
+    span.className = 'log-line ' + level;
+    span.innerHTML =
+        '<span class="ts">' + time + '.' + ms + '</span>' +
+        '<span class="lvl">[' + level + ']</span> ' +
+        '<span class="msg">' + esc(message) + '</span>';
+    output.appendChild(span);
+    if (autoScroll) output.scrollTop = output.scrollHeight;
+}
+
+function connectSSE() {
+    const status = document.getElementById('console-status');
+    const es = new EventSource('/api/logs/stream');
+
+    es.onopen = () => { status.textContent = '● Connected'; status.style.color = 'var(--green)'; };
+    es.onerror = () => { status.textContent = '● Disconnected'; status.style.color = 'var(--red)'; };
+
+    es.onmessage = (evt) => {
+        try {
+            const d = JSON.parse(evt.data);
+            if (d.type === 'init') {
+                output.innerHTML = '';
+                (d.lines || []).forEach(l => appendLine(l.timestamp, l.level, l.message));
+            } else if (d.type === 'line') {
+                appendLine(d.timestamp, d.level, d.message);
+            } else if (d.type === 'clear') {
+                output.innerHTML = '';
+            }
+        } catch {}
+    };
+}
+connectSSE();
+
+function clearLogs() {
+    fetch('/api/logs/clear', { method: 'POST' });
+}
+
+/* ── Tunnel ──────────────────────────────────────────────────── */
+let tunnelEventSource = null;
+let tunnelTabInitialized = false;
+
+function initTunnelTab() {
+    if (tunnelTabInitialized) return;
+    tunnelTabInitialized = true;
+
+    const providerSelect = document.getElementById('tunnel-provider');
+    const authtokenWrap = document.getElementById('tunnel-authtoken-wrap');
+    const updateAuthVisibility = () => {
+        authtokenWrap.style.display = providerSelect.value === 'ngrok' ? 'block' : 'none';
+    };
+    providerSelect.addEventListener('change', updateAuthVisibility);
+    updateAuthVisibility();
+
+    fetch('/api/tunnel').then(r => r.json()).then(applyTunnelState).catch(() => {});
+
+    if (!tunnelEventSource) {
+        tunnelEventSource = new EventSource('/api/tunnel/stream');
+        tunnelEventSource.onmessage = (e) => {
+            try { applyTunnelState(JSON.parse(e.data)); } catch {}
+        };
+        tunnelEventSource.onerror = () => {};
+    }
+}
+
+function applyTunnelState(s) {
+    const dot = document.getElementById('tunnel-status-dot');
+    const label = document.getElementById('tunnel-status-label');
+    const startBtn = document.getElementById('tunnel-start-btn');
+    const stopBtn = document.getElementById('tunnel-stop-btn');
+    const result = document.getElementById('tunnel-result');
+    const urlEl = document.getElementById('tunnel-url');
+    const cursorUrlEl = document.getElementById('tunnel-cursor-url');
+    const errorBox = document.getElementById('tunnel-error');
+    const errorMsg = document.getElementById('tunnel-error-msg');
+    const endpointTunnelUrl = document.getElementById('endpoint-tunnel-url');
+
+    const statusColors = {
+        idle:     'var(--text-muted)',
+        starting: 'var(--yellow)',
+        running:  'var(--green)',
+        error:    'var(--red)',
+        stopped:  'var(--text-muted)',
+    };
+    if (dot) dot.style.background = statusColors[s.status] || 'var(--text-muted)';
+    if (label) label.textContent = s.status + (s.provider ? ' · ' + s.provider : '');
+
+    const isActive = s.status === 'starting' || s.status === 'running';
+    if (startBtn) startBtn.style.display = isActive ? 'none' : 'block';
+    if (stopBtn) stopBtn.style.display = isActive ? 'block' : 'none';
+    if (startBtn) startBtn.textContent = s.status === 'starting' ? 'Starting…' : 'Start Tunnel';
+
+    if (s.url && s.status === 'running') {
+        result.style.display = 'block';
+        urlEl.textContent = s.url;
+        cursorUrlEl.textContent = s.url.replace(/\/$/, '') + '/v1';
+        renderQRCode(s.url);
+        if (endpointTunnelUrl) endpointTunnelUrl.textContent = s.url;
+    } else {
+        result.style.display = 'none';
+        if (endpointTunnelUrl) endpointTunnelUrl.textContent = 'Not running';
+    }
+
+    if (s.error) {
+        errorBox.style.display = 'block';
+        errorMsg.textContent = s.error;
+    } else {
+        errorBox.style.display = 'none';
+    }
+}
+
+function renderQRCode(text) {
+    const container = document.getElementById('tunnel-qr');
+    if (!container) return;
+    container.innerHTML = '';
+    const render = () => {
+        try {
+            const qr = window.qrcode(0, 'L');
+            qr.addData(text);
+            qr.make();
+            container.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+            const svg = container.querySelector('svg');
+            if (svg) {
+                svg.style.width = '128px';
+                svg.style.height = '128px';
+            }
+        } catch (e) {
+            container.textContent = '';
+        }
+    };
+    if (window.qrcode) {
+        render();
+    } else {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+        script.onload = render;
+        script.onerror = () => { container.style.display = 'none'; };
+        document.head.appendChild(script);
+    }
+}
+
+async function handleTunnelStart() {
+    const provider = document.getElementById('tunnel-provider').value;
+    const authtoken = document.getElementById('tunnel-authtoken').value.trim() || undefined;
+    const startBtn = document.getElementById('tunnel-start-btn');
+    startBtn.disabled = true;
+    startBtn.textContent = 'Starting…';
+    try {
+        await fetch('/api/tunnel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, authtoken }),
+        });
+    } finally {
+        startBtn.disabled = false;
+    }
+}
+
+async function handleTunnelStop() {
+    const stopBtn = document.getElementById('tunnel-stop-btn');
+    stopBtn.disabled = true;
+    try {
+        await fetch('/api/tunnel', { method: 'DELETE' });
+    } finally {
+        stopBtn.disabled = false;
+    }
+}
+
+fetch('/api/tunnel').then(r => r.json()).then(applyTunnelState).catch(() => {});
+</script>
+</body>
+</html>

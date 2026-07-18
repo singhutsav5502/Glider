@@ -14,7 +14,7 @@ Phases 1–5 core packages are implemented and covered by `go test ./...`. Phase
 |------|-------------------|----------|
 | Gateway Responses API | `internal/api` | `/v1/responses`; Responses-shaped bodies on `/chat/completions` |
 | Model aliases | `internal/orchestrator`, `glider.yaml` | Rewrite Cursor model IDs before routing |
-| HTTPS MITM | `internal/mitm` | CONNECT, local CA, allowlist decrypt, local intercept or origin passthrough |
+| HTTPS MITM | `internal/mitm` | CONNECT, local CA, allowlist decrypt; **OpenAI JSON paths** → harness; **Agent Connect/gRPC** → origin (opaque) |
 | Config profiles | `configs/glider.yaml`, `configs/glider.cloud.yaml` | Intro/full-system demo (MITM on) vs gateway default-cloud BYOK |
 | Setup | `scripts/setup-windows.ps1`, `start-glider.*`, `docs/CURSOR_CHECKLIST.md` | CA trust + Cursor proxy settings |
 | Observability | `internal/metrics` | Mode/Action/Host/Path/Rule/OriginalModel; session JSONL under `~/.glider/history` |
@@ -27,7 +27,7 @@ Phases 1–5 core packages are implemented and covered by `go test ./...`. Phase
 | `Complete` | Gateway `:8080` | BYOK OpenAI/Anthropic |
 | `CompleteLocal` | MITM `:8082` | `ErrOriginPassthrough` → **Cursor origin** (auth preserved) |
 
-Unrecognized Cursor-proprietary envelopes always blind-passthrough. **Routing priority:** (1) explicit `/local`/`/cloud` overrides → (2) Starlark scripts → (3) context thresholds → (4) default cloud.
+Unrecognized Cursor-proprietary envelopes always blind-passthrough. **G13 status:** modern Agent chat is Connect/protobuf (`BidiAppend` + `RunSSE`) — Path B text-only local fulfill works when `mitm.agent_rpc_fulfill` is on; tool loops still origin. See [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md). **Routing priority:** (1) explicit `/local`/`/cloud` overrides → (2) Starlark scripts → (3) context thresholds → (4) default cloud.
 
 **Hot-reload vs restart:** Swap/watch rebuilds router, model aliases, context threshold, and slog log level. GPU assignments are persisted on the same config Swap path and read by `GET /api/vram`. Listen ports, MITM (enable/port/CA/hosts), backend URLs, and cloud provider registration require process restart.
 
@@ -53,6 +53,7 @@ The previous implementation plan had critical gaps uncovered by deep research in
 | G10 | **No metrics or cost tracking.** No way to see how many tokens were routed locally vs. cloud, latency percentiles, or estimated cost savings. | User can't validate if Glider is actually saving them money. | Add a metrics collector exposed via the Dashboard. |
 | G11 | **Gateway-only cannot see Cursor Agent / subscription models.** Override OpenAI Base URL only affects BYOK OpenAI path. | Agent and Claude/Cursor-native models never hit Glider. | Add **HTTPS MITM forward proxy** (`http.proxy`) with local CA; decrypt allowlisted hosts; passthrough to original Cursor upstream when not routing local. |
 | G12 | **Cursor Agent Responses API / wrong endpoint shape.** Agent may POST Responses-shaped JSON to `/chat/completions`. | Gateway rejects `missing messages`. | Accept `/v1/responses` and translate Responses → chat completions (and stream Responses-shaped events back when needed). |
+| G13 | **Modern Cursor Agent uses Connect/gRPC, not OpenAI JSON on api2.** Production traffic is `BidiService/BidiAppend` + `agent.v1.AgentService/RunSSE`. | Without Path B codec, MITM could only passthrough → no local Agent routing. | **Partial:** classify paths; Path B text fulfill (`agent_rpc_fulfill`: BidiAppend extract → RunSSE); tool loops still origin; gateway + `cus-` for Agent+tools. See [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md). |
 
 ### 1.2 Revised Key Decisions
 
@@ -159,7 +160,7 @@ The previous implementation plan had critical gaps uncovered by deep research in
 |-----------|----------------------|------|
 | **API Gateway** | Accept and validate OpenAI-format HTTP requests (chat + Responses), stream SSE responses back. | HTTP lifecycle only. |
 | **MITM Proxy** | Explicit HTTP CONNECT proxy; TLS terminate allowlisted hosts with local CA; intercept or blind-tunnel. | TLS/CONNECT only. |
-| **MITM Interceptor** | Parse chat/Responses bodies; call shared `Harness.CompleteLocal` (same pipeline as gateway). | Adapter only — no separate router shortcut. |
+| **MITM Interceptor** | Classify path; parse OpenAI/Responses JSON only; call shared `Harness.CompleteLocal`. Agent Connect/gRPC → origin. | Adapter only — no protobuf decode yet (G13). |
 | **PipelineCompleter** | Shared harness: alias → tokenize → route → transform → execute (`Complete` / `CompleteLocal`). | Decision + execution for both modes. |
 | **Tokenizer** | Estimate token count of incoming payloads. | BPE encoding, token math. |
 | **Router** | Evaluate rules (explicit, regex, threshold, Starlark scripts) and produce a `RoutingDecision`. | Rule evaluation only. Does NOT execute the request. |
@@ -190,17 +191,19 @@ The previous implementation plan had critical gaps uncovered by deep research in
 9. OBSERVE     │ Metrics (mode/action/host/path/rule/original_model) → Dashboard WS + `~/.glider/history`
 ```
 
-**Mode B (MITM) — same harness via `CompleteLocal`:**
+**Mode B (MITM) — same harness via `CompleteLocal` (OpenAI-shaped paths only):**
 
 ```
 1. CONNECT     │ Cursor CONNECT api2.cursor.sh:443 → Glider :8082
 2. MITM TLS    │ If host allowlisted (api2/api3/api4/*.api5.cursor.sh) → leaf cert from Glider CA; else blind tunnel
-3. DECRYPT     │ Read HTTP request; if not chat/Responses → blind origin passthrough
-4. HARNESS     │ Interceptor → CompleteLocal (alias → tokenize → route → transform → …)
-               │   target local  → execute Ollama/vLLM, write response to client
+3. CLASSIFY    │ openai_compat → parse JSON; agent_rpc (Bidi/RunSSE/StreamChat*) → Path B / legacy fulfill or opaque; cursor_control → origin
+4. HARNESS     │ Interceptor → CompleteLocal for openai_compat + fulfillable agent_rpc
+               │   target local  → execute Ollama/vLLM, write response (JSON or RunSSE/StreamChat codec)
                │   target cloud  → ErrOriginPassthrough → TLS to original Host (auth intact)
-5. OBSERVE     │ slog decrypt|blind_tunnel; intercept local|origin_passthrough|skip|error; metrics → Dashboard
+5. OBSERVE     │ slog decrypt|blind_tunnel; intercept local|origin_passthrough|skip_agent_rpc|skip_control; metrics → Dashboard
 ```
+
+> Modern Agent chat is usually `BidiAppend` + `RunSSE` — text-only Path B when `agent_rpc_fulfill`; see [cursor_agent_protocol_interception.md](cursor_agent_protocol_interception.md).
 
 **Rule priority (both modes, `configs/glider.yaml`):**
 
@@ -210,6 +213,7 @@ The previous implementation plan had critical gaps uncovered by deep research in
 | 50 | Starlark scripts (e.g. `detect_refactor.star`) | **Main driver** |
 | 10 / 5 | Context size `>` / `<=` thresholds | **Main driver** |
 | 0 | Default `cloud` | Gateway → BYOK; MITM → origin |
+
 ---
 
 ## 4. Low-Level Design (LLD)
@@ -234,6 +238,7 @@ glider/
 │   │   ├── proxy.go                   # CONNECT, TLS terminate, passthrough, blind tunnel
 │   │   ├── ca.go                      # Local CA + per-host leaf certs
 │   │   ├── hosts.go                   # Allowlist matcher (*.cursor.sh, …)
+│   │   ├── classify.go                # PathKind: openai_compat | agent_rpc | cursor_control
 │   │   ├── intercept.go               # Parse body → Harness.CompleteLocal (shared engine)
 │   │   └── paths.go                   # ~/.glider/mitm default paths
 │   │
@@ -887,7 +892,7 @@ See `docs/CURSOR_CHECKLIST.md`.
 | 3 | **Request Transformation** | **Opt-in only.** Cursor system prompts **never stripped by default**. |
 | 4 | **Cursor Agent / all models** | **MITM forward proxy** required; gateway alone is insufficient. |
 | 5 | **MITM non-local destination** | **Original upstream Host** (Cursor subscription), not BYOK OpenAI. |
-| 6 | **Unrecognized MITM bodies** | Always **passthrough** — never break Agent. |
+| 6 | **Unrecognized / Agent RPC MITM bodies** | Always **passthrough** — never break Agent. Protobuf Agent chat is not harness-routable (G13). |
 | 7 | **Shared harness** | Gateway and MITM both use `PipelineCompleter`; MITM uses `CompleteLocal`. |
 | 8 | **Routing drivers** | Explicit `/local`/`/cloud` = overrides; **Starlark + token thresholds** = main drivers; default cloud. |
 | 9 | **MITM CA scope** | Cursor-only proxy; Trusted Root install + `NODE_EXTRA_CA_CERTS` for Cursor/Node — does not rewrite normal Windows internet for non-proxy clients. |
