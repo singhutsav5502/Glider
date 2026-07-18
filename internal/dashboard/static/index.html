@@ -109,6 +109,16 @@
           </p>
         </div>
 
+        <aside class="ux-help" aria-label="How to use Hoops and Swarm">
+          <strong class="ux-help-title">How it works</strong>
+          <ol class="ux-help-steps">
+            <li><strong>Build stages</strong> on Graph editor (palette + Link mode), then Create / Update hoop here.</li>
+            <li><strong>Click a hoop card</strong> to bind the Agent log, then Start -- cycle runs Memory → Router → Planner → Actor → Critic.</li>
+            <li><strong>Swarm</strong> is a one-shot fan-out: link orchestrator to worker roles on the graph, set prompt, Run swarm. Merge summary appears below.</li>
+          </ol>
+          <p class="ux-help-note">Parallel actors inside a hoop also call <code>swarm.FanOut</code> mid-cycle when a stage has <code>parallel &gt; 1</code>.</p>
+        </aside>
+
         <div id="live-status-board" class="live-board" aria-live="polite">
           <div class="live-card" data-live="ws">
             <span class="live-label">WebSocket</span>
@@ -136,9 +146,22 @@
           </div>
         </div>
 
-        <div class="agent-log-hoops-wrap">
-          <div class="dnd-label">Agent log (selected hoop / last swarm run)</div>
-          <p class="hint" id="hoops-agent-log-hint" style="margin:4px 0 8px">Click a hoop card to bind the log stream to that hoop id. Swarm runs bind after Run swarm.</p>
+        <div class="agent-log-hoops-wrap agent-log-shell">
+          <div class="agent-log-head">
+            <div>
+              <div class="dnd-label" style="margin:0">Agent log</div>
+              <span class="agent-log-badge" id="hoops-agent-log-badge">Not following</span>
+            </div>
+            <div class="graph-toolbar">
+              <button type="button" id="hoops-agent-log-pause" class="linkish" aria-pressed="false" title="Pause auto-scroll append">Pause</button>
+              <button type="button" id="hoops-agent-log-clear" class="linkish" title="Clear local view">Clear</button>
+              <button type="button" id="hoops-agent-log-refresh" class="linkish">Refresh</button>
+            </div>
+          </div>
+          <p class="hint" id="hoops-agent-log-hint" style="margin:6px 0 8px">Click a hoop card to bind the log stream. Swarm binds after Run swarm.</p>
+          <div class="agent-log-cols" aria-hidden="true">
+            <span>TIME</span><span>LEVEL</span><span>STAGE / ROLE</span><span>MESSAGE</span>
+          </div>
           <div id="hoops-agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
         </div>
 
@@ -263,6 +286,15 @@
           <button type="button" class="linkish" id="graphs-back-hoops">Back to Hoops</button>
         </div>
 
+        <aside class="ux-help" aria-label="Graph editor guide">
+          <strong class="ux-help-title">Stage vs Swarm</strong>
+          <ol class="ux-help-steps">
+            <li><strong>Stage graph</strong> (top): hoop pipeline. Link mode + drag edges; Fit / wheel zoom / pan blank area. Create hoop on Hoops tab when ready.</li>
+            <li><strong>Swarm graph</strong> (bottom-left): orchestrator fan-out. Only linked worker roles are sent to Run swarm.</li>
+            <li><strong>Agent log</strong> (bottom-right): follows the selected hoop id or last swarm <code>turn_id</code> -- not a global mixed stream.</li>
+          </ol>
+        </aside>
+
         <div class="graphs-workspace">
           <section class="graphs-stage" id="graphs-stage-section" aria-labelledby="graphs-stage-label">
             <div class="graphs-section-bar">
@@ -299,48 +331,61 @@
               </div>
               <div class="stage-graph-wrap graphs-canvas-wrap">
                 <div id="stage-graph-host" class="cy-host graphs-canvas" aria-label="Stage graph">
-                  <p class="dnd-empty" id="stage-graph-empty">Add stages from the palette</p>
+                  <p class="dnd-empty" id="stage-graph-empty">Add stages from the palette -- click or drag onto the canvas</p>
                 </div>
               </div>
             </div>
           </section>
 
-          <section class="graphs-swarm" id="graphs-swarm-section" aria-labelledby="graphs-swarm-label">
-            <div class="graphs-section-bar">
-              <div class="dnd-label" id="graphs-swarm-label">
-                Swarm thread graph
-                <span class="graph-hint">Link mode: orch &lt;-&gt; workers * click fan-out edge to unlink * only linked roles run</span>
+          <div class="graphs-bottom">
+            <section class="graphs-swarm" id="graphs-swarm-section" aria-labelledby="graphs-swarm-label">
+              <div class="graphs-section-bar">
+                <div class="dnd-label" id="graphs-swarm-label">
+                  Swarm thread graph
+                  <span class="graph-hint">Link mode: orch &lt;-&gt; workers * click fan-out edge to unlink * only linked roles run</span>
+                </div>
+                <div class="graph-toolbar">
+                  <button type="button" id="swarm-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
+                  <button type="button" id="swarm-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
+                  <button type="button" id="swarm-link-mode" class="linkish" aria-pressed="false" title="Drag between orchestrator and workers">Link mode</button>
+                  <button type="button" id="swarm-thread-add" class="linkish">Add thread</button>
+                  <button type="button" id="swarm-thread-remove" class="linkish" disabled>Remove selected</button>
+                  <button type="button" id="swarm-thread-edit" class="linkish" disabled>Edit role</button>
+                  <button type="button" id="swarm-zoom-out" class="linkish" title="Zoom out">-</button>
+                  <button type="button" id="swarm-zoom-in" class="linkish" title="Zoom in">+</button>
+                  <button type="button" id="swarm-zoom-reset" class="linkish" title="Fit graph">Fit</button>
+                </div>
               </div>
-              <div class="graph-toolbar">
-                <button type="button" id="swarm-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
-                <button type="button" id="swarm-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
-                <button type="button" id="swarm-link-mode" class="linkish" aria-pressed="false" title="Drag between orchestrator and workers">Link mode</button>
-                <button type="button" id="swarm-thread-add" class="linkish">Add thread</button>
-                <button type="button" id="swarm-thread-remove" class="linkish" disabled>Remove selected</button>
-                <button type="button" id="swarm-thread-edit" class="linkish" disabled>Edit role</button>
-                <button type="button" id="swarm-zoom-reset" class="linkish" title="Fit graph">Fit</button>
+              <div class="graphs-canvas-wrap graphs-swarm-canvas">
+                <div id="swarm-graph-host" class="cy-host graphs-canvas" aria-label="Swarm thread graph">
+                  <p class="dnd-empty" id="swarm-graph-empty">Add threads, then Link mode to connect orchestrator</p>
+                </div>
               </div>
-            </div>
-            <div id="swarm-graph-host" class="cy-host graphs-canvas" aria-label="Swarm thread graph"></div>
-          </section>
+            </section>
 
-          <section class="graphs-agent-log" id="graphs-agent-log" aria-labelledby="agent-log-label">
-            <div class="graphs-section-bar">
-              <div class="dnd-label" id="agent-log-label">
-                Agent log
-                <span class="graph-hint" id="agent-log-scope-hint">Select a hoop card or run a swarm to stream that instance only</span>
+            <section class="graphs-agent-log agent-log-shell" id="graphs-agent-log" aria-labelledby="agent-log-label">
+              <div class="agent-log-head">
+                <div>
+                  <div class="dnd-label" id="agent-log-label" style="margin:0">Agent log</div>
+                  <span class="agent-log-badge" id="agent-log-badge">Not following</span>
+                  <span class="graph-hint" id="agent-log-scope-hint">Select a hoop card or run a swarm</span>
+                </div>
+                <div class="graph-toolbar">
+                  <button type="button" id="agent-log-pause" class="linkish" aria-pressed="false" title="Pause live append">Pause</button>
+                  <button type="button" id="agent-log-clear-view" class="linkish" title="Clear local view (server ring kept)">Clear</button>
+                  <button type="button" id="agent-log-refresh" class="linkish">Refresh</button>
+                </div>
               </div>
-              <div class="graph-toolbar">
-                <button type="button" id="agent-log-clear-view" class="linkish" title="Clear local view (server ring kept)">Clear view</button>
-                <button type="button" id="agent-log-refresh" class="linkish">Refresh</button>
+              <div class="agent-log-cols" aria-hidden="true">
+                <span>TIME</span><span>LEVEL</span><span>STAGE / ROLE</span><span>MESSAGE</span>
               </div>
-            </div>
-            <div id="agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
-          </section>
+              <div id="agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
+            </section>
+          </div>
         </div>
 
         <dialog id="stage-edit-dialog" class="stage-edit-dialog">
-  <form id="stage-edit-form" class="stage-edit-form">
+          <form id="stage-edit-form" class="stage-edit-form">
             <h3 id="stage-edit-title">Code stage</h3>
             <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router. Id, name, and prompt make each stage concrete.</p>
             <div class="cfg-grid">

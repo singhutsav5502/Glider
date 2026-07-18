@@ -57,6 +57,34 @@
       <h2>UI</h2>
       <p>Dashboard → <strong>Hoops &amp; Swarm</strong> (<code>http://127.0.0.1:8081</code>): compose goal, stages, self-learning, route=local, Start.</p>
 
+      <h2 id="user-guide">User guide: Hoops, Graph, Swarm</h2>
+      <p>
+        Two related but separate surfaces share state with the Hoops tab:
+        the <strong>stage graph</strong> (hoop pipeline) and the <strong>swarm thread graph</strong>
+        (one-shot orchestrator fan-out). Agent logs are per-instance, never a mixed global stream.
+      </p>
+      <h3>Hoop (loop cycle)</h3>
+      <ol>
+        <li>Open <strong>Graph editor</strong> → Stage graph. Add stages from the palette (or <strong>+ Code stage</strong> for custom id/prompt).</li>
+        <li>Turn on <strong>Link mode</strong>, drag node-to-node for flow edges. Double-click an edge (or Edge type) to toggle flow vs feedback. Use Fit / wheel zoom; pan on empty canvas.</li>
+        <li>Back on <strong>Hoops &amp; Swarm</strong>: set name, goal, route (default local), Create hoop.</li>
+        <li><strong>Click the hoop card</strong> so Agent log shows <em>Following hoop &lt;id&gt;</em>, then Start. Cycle: Memory → Router → Planner → Actor → Critic (stop on goal / score / max iterations).</li>
+        <li>Edit graph on the card reloads stages into the shared canvas for Update.</li>
+      </ol>
+      <h3>Swarm (dashboard Run swarm)</h3>
+      <ol>
+        <li>On Graph editor → Swarm thread graph: Add thread roles, Link mode to connect orchestrator ↔ workers. Only <em>linked</em> roles sync into the Roles field.</li>
+        <li>On Hoops → Swarm wave: prompt + max workers → <strong>Run swarm</strong>.</li>
+        <li>Server path: <code>POST /api/swarm/run</code> → <code>swarm.Runner</code> → <code>FanOut</code> (bounded workers, parent cancel) → <code>MergeResults</code>. UI paints ok/fail on worker nodes and binds Agent log to the run <code>turn_id</code>.</li>
+      </ol>
+      <h3>Fan-out inside a hoop</h3>
+      <p>
+        If an actor (or similar) stage has <code>parallel: 2+</code> (optional <code>roles</code>),
+        <code>internal/loop</code> calls <code>swarm.FanOut</code> mid-cycle and critique-merges workers before Critic —
+        same primitive as dashboard swarm, different entry point. Gateway prompts with <code>/swarm</code> or
+        <code>[fanout]</code> use <code>orchestration.fan_out</code> when enabled.
+      </p>
+
       <h3>Graph-first compose</h3>
       <p>
         Dashboard <strong>Graph editor</strong> uses <strong>Cytoscape.js 3.30.4</strong> (MIT, vendored under
@@ -72,7 +100,8 @@
       </p>
       <p>
         <strong>Per-instance agent logs:</strong> each hoop id and each swarm run id has its own ring buffer
-        (not a global mixed stream). Click a hoop card or run a swarm to bind the Agent log panel.
+        (not a global mixed stream). Click a hoop card or run a swarm to bind the Agent log panel
+        (badge: Following hoop X / swarm Y). Rows are time | level | stage/role | message.
         <code>GET /api/agent-logs?scope=hoop|swarm&amp;id=...</code>; WebSocket <code>type=agent_log</code>
         carries <code>scope</code> + <code>instance_id</code>. Starting a hoop or swarm resets that instance timeline.
       </p>

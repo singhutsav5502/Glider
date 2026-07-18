@@ -40,12 +40,24 @@
 .\glider.exe --config configs\glider.yaml
 # Dashboard :8081 — orchestration.fan_out + swarm enabled</pre>
 
-      <h2>Showcase hoops</h2>
+      <h2>Enterprise showcase hoops</h2>
       <table>
         <tr><th>File</th><th>Features exercised</th></tr>
         <tr>
+          <td><code>enterprise-incident-command.yaml</code></td>
+          <td>SEV command channel; 3 parallel roles; safety critic; feedback; human gate; latency stop</td>
+        </tr>
+        <tr>
+          <td><code>compliance-evidence-pack.yaml</code></td>
+          <td>SOC2 change-control pack; parallel pack writers; auditor critic; evidence gaps</td>
+        </tr>
+        <tr>
+          <td><code>escalation-policy.yaml</code></td>
+          <td>Severity matrix + paging ladder; parallel author; on-call critic</td>
+        </tr>
+        <tr>
           <td><code>incident-triage.yaml</code></td>
-          <td>On-call runbook; parallel actor fan-out; critic gate; learning; feedback edge; max_latency</td>
+          <td>Lighter on-call runbook; parallel actors; critic; learning; feedback</td>
         </tr>
         <tr>
           <td><code>research-synthesize.yaml</code></td>
@@ -70,17 +82,34 @@
       <h2>Swarm templates</h2>
       <table>
         <tr><th>File</th><th>Roles</th></tr>
+        <tr><td><code>samples/swarms/security-review-swarm.yaml</code></td><td>threat / authz / secrets / blast</td></tr>
+        <tr><td><code>samples/swarms/multi-team-release-train-swarm.yaml</code></td><td>platform / app / qa / docs / sre</td></tr>
+        <tr><td><code>samples/swarms/data-pipeline-qa-swarm.yaml</code></td><td>schema / freshness / pii / rollback</td></tr>
         <tr><td><code>samples/swarms/code-review-swarm.yaml</code></td><td>plan / security / tests / docs</td></tr>
         <tr><td><code>samples/swarms/support-triage-swarm.yaml</code></td><td>plan / exec / research</td></tr>
       </table>
 
+      <h2 id="user-guide">User guide: Hoops, Graph, Swarm</h2>
+      <ol>
+        <li><strong>Stage graph</strong> — build the hoop pipeline (palette, Link mode, Fit). Create / Update on Hoops tab.</li>
+        <li><strong>Start hoop</strong> — click the card to bind Agent log (<em>Following hoop &lt;id&gt;</em>), then Start. Cycle uses stages from the graph.</li>
+        <li><strong>Swarm wave</strong> — link orchestrator to worker roles on Swarm graph; Run swarm calls <code>swarm.FanOut</code> + merge; log follows <code>turn_id</code>.</li>
+        <li><strong>In-hoop parallel</strong> — YAML <code>parallel: 2+</code> on an actor also uses <code>FanOut</code> mid-cycle (see <code>incident-triage.yaml</code>).</li>
+      </ol>
+      <p>Full walkthrough: <a href="loop-engineering.html#user-guide">Loop Engineering · User guide</a>.</p>
+
       <h2>Run a hoop</h2>
-      <pre>go run ./scripts/loadhoop -file samples/hoops/incident-triage.yaml -start
+      <pre>go run ./scripts/loadhoop -file samples/hoops/enterprise-incident-command.yaml -start
 # Dashboard → Hoops: click the card to bind the per-instance agent log
 # Graph editor → Agent log panel streams that hoop id only</pre>
 
+      <h2>Planning</h2>
+      <p>Enterprise orchestrator MVP and graph gaps (with source URLs):
+        <code>planning/enterprise_orchestrator_mvp.md</code>,
+        <code>planning/graph_feature_gaps.md</code>.</p>
+
       <h2>Per-instance agent logs</h2>
-      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream. API:</p>
+      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream (structured rows: time | level | stage/role | message). API:</p>
       <pre>GET /api/agent-logs?scope=hoop&amp;id=incident-triage
 GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
       <p>WebSocket <code>/ws</code> events with <code>type: agent_log</code> include <code>scope</code> and <code>instance_id</code>.</p>

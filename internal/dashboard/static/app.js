@@ -41,15 +41,20 @@
       const focusGraphs = () => {
         renderStageGraph();
         renderSwarmGraph();
-        resizeCyInstances();
+        resizeCyInstances({ fit: true });
         const focus = opts && opts.focus;
         if (focus === "swarm") {
           document.getElementById("graphs-swarm-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
         } else if (focus === "stage") {
-          document.getElementById("graphs-stage-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          document.getElementById("graphs-stage-section")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       };
-      requestAnimationFrame(() => requestAnimationFrame(focusGraphs));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          focusGraphs();
+          setTimeout(() => resizeCyInstances({ fit: true }), 60);
+        })
+      );
     } else if (prev === "hoops" || prev === "graphs") {
       if (name !== "hoops" && name !== "graphs") stopLiveBoardPoll();
     }
@@ -905,7 +910,10 @@
   /** @type {{scope:string,id:string}|null} */
   let agentLogFocus = null;
   let lastSwarmRunId = "";
+  /** @type {object[]} */
   let agentLogViewLines = [];
+  let agentLogPaused = false;
+  let agentLogAutoScroll = true;
 
   function cloneJSON(x) {
     return JSON.parse(JSON.stringify(x));
@@ -1092,43 +1100,115 @@
     } else {
       agentLogFocus = { scope, id };
     }
-    const hint = document.getElementById("agent-log-scope-hint");
-    const hint2 = document.getElementById("hoops-agent-log-hint");
-    const label = agentLogFocus
-      ? "Streaming " + agentLogFocus.scope + ":" + agentLogFocus.id + " only"
-      : "Select a hoop card or run a swarm to stream that instance only";
-    if (hint) hint.textContent = label;
-    if (hint2) hint2.textContent = label;
+    updateAgentLogChrome();
     refreshAgentLogPanels();
   }
 
-  function formatAgentLogEntry(e) {
-    const t = e.at ? new Date(e.at).toLocaleTimeString() : "";
+  function updateAgentLogChrome() {
+    const bound = !!agentLogFocus;
+    const label = bound
+      ? "Streaming " + agentLogFocus.scope + ":" + agentLogFocus.id + " only"
+      : "Select a hoop card or run a swarm to stream that instance only";
+    const badgeText = bound
+      ? "Following " + agentLogFocus.scope + " " + agentLogFocus.id
+      : "Not following";
+    const hint = document.getElementById("agent-log-scope-hint");
+    const hint2 = document.getElementById("hoops-agent-log-hint");
+    if (hint) hint.textContent = label;
+    if (hint2) hint2.textContent = label;
+    ["agent-log-badge", "hoops-agent-log-badge"].forEach((bid) => {
+      const el = document.getElementById(bid);
+      if (!el) return;
+      el.textContent = badgeText;
+      el.classList.toggle("is-bound", bound);
+      el.title = bound ? badgeText : "";
+    });
+    document.querySelectorAll(".hoop-card[data-id]").forEach((card) => {
+      const on =
+        agentLogFocus &&
+        agentLogFocus.scope === "hoop" &&
+        card.dataset.id === agentLogFocus.id;
+      card.classList.toggle("is-log-focus", !!on);
+    });
+    syncAgentLogPauseButtons();
+  }
+
+  function agentLogStageLabel(e) {
+    if (!e) return "--";
+    const attrs = e.attrs || {};
+    if (attrs.stage) return attrs.stage;
+    if (attrs.role) return attrs.role;
+    if (attrs.stage_id) return attrs.stage_id;
+    if (e.kind) return e.kind;
+    return "--";
+  }
+
+  function agentLogRowHTML(e) {
+    const t = e.at ? new Date(e.at).toLocaleTimeString() : "--";
     const lvl = (e.level || "info").toUpperCase();
-    const kind = e.kind || "";
-    return "[" + t + "] " + lvl + " " + kind + " " + (e.message || "");
+    const stage = agentLogStageLabel(e);
+    const cls = e.level === "error" ? "error" : e.level === "warn" ? "warn" : "";
+    return (
+      '<div class="log-row ' +
+      cls +
+      '">' +
+      '<span class="log-time">' +
+      esc(t) +
+      "</span>" +
+      '<span class="log-level">' +
+      esc(lvl) +
+      "</span>" +
+      '<span class="log-stage" title="' +
+      esc(stage) +
+      '">' +
+      esc(stage) +
+      "</span>" +
+      '<span class="log-msg">' +
+      esc(e.message || "") +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  function agentLogRowElement(e) {
+    const div = document.createElement("div");
+    const cls = e.level === "error" ? "error" : e.level === "warn" ? "warn" : "";
+    div.className = "log-row" + (cls ? " " + cls : "");
+    const t = document.createElement("span");
+    t.className = "log-time";
+    t.textContent = e.at ? new Date(e.at).toLocaleTimeString() : "--";
+    const lvl = document.createElement("span");
+    lvl.className = "log-level";
+    lvl.textContent = (e.level || "info").toUpperCase();
+    const stage = document.createElement("span");
+    stage.className = "log-stage";
+    stage.textContent = agentLogStageLabel(e);
+    stage.title = stage.textContent;
+    const msg = document.createElement("span");
+    msg.className = "log-msg";
+    msg.textContent = e.message || "";
+    div.appendChild(t);
+    div.appendChild(lvl);
+    div.appendChild(stage);
+    div.appendChild(msg);
+    return div;
   }
 
   function renderAgentLogPanels(entries) {
+    agentLogViewLines = Array.isArray(entries) ? entries.slice() : [];
     const html =
-      !entries || !entries.length
-        ? '<p class="log-empty">No log lines for this instance yet.</p>'
-        : entries
-            .map((e) => {
-              const cls = e.level === "error" ? "error" : e.level === "warn" ? "warn" : "";
-              return '<div class="log-line ' + cls + '">' + esc(formatAgentLogEntry(e)) + "</div>";
-            })
-            .join("");
-    const a = document.getElementById("agent-log-panel");
-    const b = document.getElementById("hoops-agent-log-panel");
-    if (a) {
+      !agentLogViewLines.length
+        ? '<p class="log-empty">No log lines for this instance yet. Start a hoop or run a swarm while following it.</p>'
+        : agentLogViewLines.map(agentLogRowHTML).join("");
+    const panels = [
+      document.getElementById("agent-log-panel"),
+      document.getElementById("hoops-agent-log-panel"),
+    ];
+    panels.forEach((a) => {
+      if (!a) return;
       a.innerHTML = html;
-      a.scrollTop = a.scrollHeight;
-    }
-    if (b) {
-      b.innerHTML = html;
-      b.scrollTop = b.scrollHeight;
-    }
+      if (agentLogAutoScroll) a.scrollTop = a.scrollHeight;
+    });
   }
 
   async function refreshAgentLogPanels() {
@@ -1154,24 +1234,61 @@
   function appendLiveAgentLog(e) {
     if (!agentLogFocus || !e) return;
     if (e.scope !== agentLogFocus.scope || e.instance_id !== agentLogFocus.id) return;
-    const panels = [document.getElementById("agent-log-panel"), document.getElementById("hoops-agent-log-panel")];
+    if (agentLogPaused) return;
+    agentLogViewLines.push(e);
+    if (agentLogViewLines.length > 400) agentLogViewLines = agentLogViewLines.slice(-400);
+    const panels = [
+      document.getElementById("agent-log-panel"),
+      document.getElementById("hoops-agent-log-panel"),
+    ];
     panels.forEach((panel) => {
       if (!panel) return;
       const empty = panel.querySelector(".log-empty");
       if (empty) empty.remove();
-      const div = document.createElement("div");
-      div.className = "log-line" + (e.level === "error" ? " error" : e.level === "warn" ? " warn" : "");
-      div.textContent = formatAgentLogEntry(e);
-      panel.appendChild(div);
-      panel.scrollTop = panel.scrollHeight;
+      panel.appendChild(agentLogRowElement(e));
+      if (agentLogAutoScroll) panel.scrollTop = panel.scrollHeight;
     });
   }
 
-  function initAgentLogUI() {
-    document.getElementById("agent-log-refresh")?.addEventListener("click", () => refreshAgentLogPanels());
-    document.getElementById("agent-log-clear-view")?.addEventListener("click", () => {
-      renderAgentLogPanels([]);
+  function setAgentLogPaused(on) {
+    agentLogPaused = !!on;
+    syncAgentLogPauseButtons();
+  }
+
+  function syncAgentLogPauseButtons() {
+    ["agent-log-pause", "hoops-agent-log-pause"].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.setAttribute("aria-pressed", agentLogPaused ? "true" : "false");
+      btn.textContent = agentLogPaused ? "Resume" : "Pause";
     });
+  }
+
+  function clearAgentLogView() {
+    agentLogViewLines = [];
+    renderAgentLogPanels([]);
+  }
+
+  function initAgentLogUI() {
+    const refresh = () => refreshAgentLogPanels();
+    const clear = () => clearAgentLogView();
+    const togglePause = () => setAgentLogPaused(!agentLogPaused);
+    document.getElementById("agent-log-refresh")?.addEventListener("click", refresh);
+    document.getElementById("hoops-agent-log-refresh")?.addEventListener("click", refresh);
+    document.getElementById("agent-log-clear-view")?.addEventListener("click", clear);
+    document.getElementById("hoops-agent-log-clear")?.addEventListener("click", clear);
+    document.getElementById("agent-log-pause")?.addEventListener("click", togglePause);
+    document.getElementById("hoops-agent-log-pause")?.addEventListener("click", togglePause);
+    ["agent-log-panel", "hoops-agent-log-panel"].forEach((id) => {
+      const panel = document.getElementById(id);
+      if (!panel) return;
+      panel.addEventListener("scroll", () => {
+        const nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 40;
+        agentLogAutoScroll = nearBottom;
+      });
+    });
+    updateAgentLogChrome();
+    renderAgentLogPanels([]);
   }
 
   const CY_BASE_STYLE = [
@@ -1310,14 +1427,15 @@
     return cyAvailable() && stageCy && typeof stageCy.edgehandles === "function";
   }
 
-  function resizeCyInstances() {
+  function resizeCyInstances(opts) {
+    const fit = !!(opts && opts.fit);
     if (stageCy) {
       stageCy.resize();
-      stageCy.fit(undefined, 48);
+      if (fit && stageNodes.length) stageCy.fit(undefined, 48);
     }
     if (swarmCy) {
       swarmCy.resize();
-      swarmCy.fit(undefined, 40);
+      if (fit && swarmThreads.length) swarmCy.fit(undefined, 40);
     }
   }
 
@@ -2662,7 +2780,9 @@
 
   function renderSwarmGraph() {
     const host = document.getElementById("swarm-graph-host");
+    const empty = document.getElementById("swarm-graph-empty");
     if (host) host.classList.toggle("has-nodes", swarmThreads.length > 0);
+    if (empty) empty.hidden = swarmThreads.length > 0;
     if (!cyAvailable()) return;
     if (!isGraphsTabActive() && !swarmCy) return;
     ensureSwarmCy();
@@ -2742,8 +2862,22 @@
     document.getElementById("swarm-zoom-reset")?.addEventListener("click", () => {
       if (swarmCy) swarmCy.fit(undefined, 40);
     });
+    document.getElementById("swarm-zoom-in")?.addEventListener("click", () => {
+      if (!swarmCy) return;
+      swarmCy.zoom({
+        level: Math.min(2.5, swarmCy.zoom() * 1.15),
+        renderedPosition: { x: swarmCy.width() / 2, y: swarmCy.height() / 2 },
+      });
+    });
+    document.getElementById("swarm-zoom-out")?.addEventListener("click", () => {
+      if (!swarmCy) return;
+      swarmCy.zoom({
+        level: Math.max(0.35, swarmCy.zoom() / 1.15),
+        renderedPosition: { x: swarmCy.width() / 2, y: swarmCy.height() / 2 },
+      });
+    });
     window.addEventListener("resize", () => {
-      if (isGraphsTabActive()) resizeCyInstances();
+      if (isGraphsTabActive()) resizeCyInstances({ fit: false });
     });
   }
 
@@ -2835,6 +2969,7 @@
           if (hid) setAgentLogFocus("hoop", hid);
         });
       });
+      updateAgentLogChrome();
       el.querySelectorAll(".hoop-edit-graph").forEach((b) => b.addEventListener("click", async () => {
         const res = await fetch(`/api/loops/${encodeURIComponent(b.dataset.id)}`);
         if (!res.ok) {
@@ -3217,7 +3352,8 @@
         if (isLiveLoopTabActive()) refreshLiveBoard();
       }
       if (msg.type === "agent_log") {
-        appendLiveAgentLog(msg.data || {});
+        const payload = msg.data && typeof msg.data === "object" ? msg.data : msg;
+        appendLiveAgentLog(payload);
       }
       if (msg.type === "vram_update") {
         const g = document.getElementById("gpu-gauges");
