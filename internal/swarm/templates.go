@@ -128,9 +128,16 @@ func (s *TemplateStore) Get(id string) (*Template, error) {
 	return s.readFile(s.path(id))
 }
 
-type hoopFile struct {
+// flatHoopFile matches samples/swarms/*.yaml (fields at top level).
+type flatHoopFile struct {
 	Kind string `yaml:"kind"`
-	Template
+	Template `yaml:",inline"`
+}
+
+// nestedHoopFile matches TemplateStore.Save output (fields under template:).
+type nestedHoopFile struct {
+	Kind     string   `yaml:"kind"`
+	Template Template `yaml:"template"`
 }
 
 func (s *TemplateStore) readFile(path string) (*Template, error) {
@@ -138,15 +145,24 @@ func (s *TemplateStore) readFile(path string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	var raw hoopFile
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, err
+	var t Template
+	var kind string
+	var nested nestedHoopFile
+	if err := yaml.Unmarshal(data, &nested); err == nil && (nested.Template.ID != "" || nested.Template.Prompt != "") {
+		t = nested.Template
+		kind = nested.Kind
+	} else {
+		var flat flatHoopFile
+		if err := yaml.Unmarshal(data, &flat); err != nil {
+			return nil, err
+		}
+		t = flat.Template
+		kind = flat.Kind
 	}
-	kind := strings.ToLower(strings.TrimSpace(raw.Kind))
+	kind = strings.ToLower(strings.TrimSpace(kind))
 	if kind != "" && kind != "swarm_template" && kind != "swarm" {
 		return nil, fmt.Errorf("not a swarm template")
 	}
-	t := raw.Template
 	if t.ID == "" {
 		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		t.ID = base
@@ -155,7 +171,7 @@ func (s *TemplateStore) readFile(path string) (*Template, error) {
 	return &t, nil
 }
 
-// Save writes a swarm template YAML atomically.
+// Save writes a swarm template YAML atomically (flat, sample-compatible).
 func (s *TemplateStore) Save(t *Template) error {
 	if t == nil {
 		return fmt.Errorf("nil template")
@@ -168,10 +184,7 @@ func (s *TemplateStore) Save(t *Template) error {
 	if err := s.ensureDir(); err != nil {
 		return err
 	}
-	payload := struct {
-		Kind string `yaml:"kind"`
-		Template
-	}{Kind: "swarm_template", Template: *t}
+	payload := flatHoopFile{Kind: "swarm_template", Template: *t}
 	data, err := yaml.Marshal(payload)
 	if err != nil {
 		return err

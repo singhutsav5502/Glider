@@ -1,0 +1,30 @@
+kind: swarm_template
+id: multi-team-release-train-swarm
+name: Multi-team release train (go/no-go)
+enabled: true
+prefer_local: true
+max_workers: 4
+roles:
+  - platform
+  - app
+  - qa
+  - sre
+prompt: |
+  Release train RT-2026.07 for "Glider Orchestration MVP" cut. Planned ship window:
+  Tuesday 14:00-16:00 UTC. Scope: hoop graph_edges persistence, CritiqueMerge, parallel
+  actors, sample enterprise hoops/swarms, fan_out Starlark sample. Out of scope: SSO/RBAC,
+  Temporal-class durable HITL, Slate thread weaving. Docs readiness is owned by platform
+  (samples.html + planning docs); call it out in platform section.
+
+  Known status (facts only):
+  - platform: go test ./... green on main CI; dashboard layout polish still in flight (sibling);
+    docs samples.html updating; STATUS.md may lag
+  - app: Path B sticky e2e green; Path B tool codec still missing (documented)
+  - qa: loadhoop samples not yet run on staging Ollama box this week
+  - sre: rollback = previous glider.exe + configs; feature flags for fan_out / agent_rpc_fulfill
+
+  Each role writes ROLE: <name> (<=140 words): readiness, blockers, go/no-go vote, and one
+  must-fix before train. Final merged output should tally votes and propose ship / slip /
+  ship-with-exceptions with named exceptions. Do not invent passing tests.
+description: |
+  Cross-team release-train fan-out (platform/app/qa/sre) for go/no-go narrative merge.

@@ -3,7 +3,9 @@
 > Overnight session **2026-07-19**. Authority: code under `internal/loop`, `internal/swarm`, dashboard graph.  
 > Product framing: [loop_engineering.md](./loop_engineering.md), [swarm_orchestration.md](./swarm_orchestration.md).  
 > Living combined notes (may lag): [loop_swarm_gap_plan.md](./loop_swarm_gap_plan.md).  
-> Implementation checklist: [loop_swarm_implementation_plan.md](./loop_swarm_implementation_plan.md).
+> Implementation checklist: [loop_swarm_implementation_plan.md](./loop_swarm_implementation_plan.md).  
+> **External / enterprise graph gaps** (prior art + citations): [graph_feature_gaps.md](./graph_feature_gaps.md).  
+> **Enterprise orchestrator MVP** (usage + strategy): [enterprise_orchestrator_mvp.md](./enterprise_orchestrator_mvp.md).
 
 ---
 

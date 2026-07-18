@@ -1,0 +1,27 @@
+kind: swarm_template
+id: data-pipeline-qa-swarm
+name: Data pipeline QA (warehouse -> feature store)
+enabled: true
+prefer_local: true
+max_workers: 4
+roles:
+  - schema
+  - freshness
+  - pii
+  - rollback
+prompt: |
+  QA a daily batch pipeline: CRM events -> Bronze (S3) -> Silver (Spark) -> Gold feature table
+  customer_health_score used by an upsell agent. Change: added column last_support_ticket_at
+  and backfill for 90 days. SLA: Gold available by 06:00 UTC; freshness < 26h; PII policy
+  forbids raw email in Gold (hash only). Last run: Silver job took 3.1h (budget 2h); 0.4%
+  nulls on new column; one partner feed late 40 minutes.
+
+  Roles (<=130 words each, labeled ROLE:):
+  - schema: contract checks, null thresholds, type drift
+  - freshness: SLA risk, late-feed handling, watermark advice
+  - pii: column classification, hash verification, agent prompt leakage risk
+  - rollback: how to revert backfill / dual-run; kill switch for agent feature
+
+  Close with PASS / PASS-WITH-WATCH / FAIL and the single highest-risk issue.
+description: |
+  Data-pipeline QA swarm for schema/freshness/PII/rollback - enterprise analytics + agent feature store.

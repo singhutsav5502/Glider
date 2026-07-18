@@ -16,6 +16,9 @@
 | [context_management.md](context_management.md) | `contextgraph` hybrid MVP + Episode/export/prune + local→Ollama flow |
 | [loop_engineering.md](loop_engineering.md) | **Canonical** Loop Engineering (Osmani / cobusgreyling) — hoops, stages, eval |
 | [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) | **Living** expected-features checklist + overnight P0/P1 gap work |
+| [loop_swarm_gap_analysis.md](loop_swarm_gap_analysis.md) | Overnight code gap table (loop / swarm / graph UX) |
+| [graph_feature_gaps.md](graph_feature_gaps.md) | **Graph gaps vs prior art** (LangGraph, Temporal, Slate, Anthropic, …) |
+| [enterprise_orchestrator_mvp.md](enterprise_orchestrator_mvp.md) | **Enterprise orchestrator MVP** — usage areas, strategy, MVP vs later |
 | [swarm_orchestration.md](swarm_orchestration.md) | Swarm/FanOut honesty + hot-swap (+ canvas companion) |
 | [cursor_prior_art.md](cursor_prior_art.md) | **Archival** external prior art (Glider Path B text is novel) |
 | [cursor_agent_rpc_debug_findings.md](cursor_agent_rpc_debug_findings.md) | **Archival** live capture / wire notes (shrunk) |
