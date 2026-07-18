@@ -52,6 +52,47 @@ func TestHealth_UnhealthyBackendSkipped(t *testing.T) {
 	}
 }
 
+// Unhealthy local that answers Ping becomes usable (Ollama-up-after-start case).
+func TestHealth_ReprobeRecoversAfterPing(t *testing.T) {
+	reg := backend.NewRegistry()
+	local := &mockBackend{
+		name:       "ollama",
+		typ:        backend.BackendTypeLocal,
+		healthy:    false,
+		completeFn: chunkStream("local-ok"),
+	}
+	local.pingFn = func() error {
+		local.healthy = true
+		return nil
+	}
+	_ = reg.Register(local)
+	registerModel(reg, "codellama:7b", "ollama", 4200)
+
+	exec := orchestrator.NewSimpleExecutor(orchestrator.SimpleExecutorConfig{
+		Registry:  reg,
+		VRAM:      newStubVRAM(),
+		IsHealthy: orchestrator.DefaultHealthCheck(reg),
+	})
+
+	decision := &backend.RoutingDecision{Target: "local", BackendName: "ollama", Model: "codellama:7b"}
+	req := &backend.CompletionRequest{Model: "codellama:7b"}
+
+	ch, err := exec.Execute(context.Background(), decision, req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var content strings.Builder
+	for c := range ch {
+		content.WriteString(c.Content)
+	}
+	if content.String() != "local-ok" {
+		t.Fatalf("content = %q, want local-ok after Ping reprobe", content.String())
+	}
+	if !local.IsHealthy() {
+		t.Fatal("expected healthy after successful Ping")
+	}
+}
+
 // T3.7.2 — Cloud rate limiter enforces RPM
 func TestRateLimiter_EnforcesRPM(t *testing.T) {
 	limiter := orchestrator.NewCloudRateLimiter(10)

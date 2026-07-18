@@ -1,3 +1,16 @@
+# Glider intro profile â€” dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
+#
+# Routing priority (highest first):
+#   1. Explicit /local /fast /cloud /heavy on current user turn
+#   2. Turn-family sticky (reply-summary / title only; TTL = routing.turn_family_ttl)
+#   3. Tool-step re-decide for child RunSSE (routing.tool_followup)
+#   4. task_classifier (tools â†’ cloud unless allowlisted; must-cloud; small-local)
+#   5. Starlark scripts
+#   6. context_size token ceiling (not the primary "is this simple?" signal)
+#   7. Default always rule â†’ cloud when unsure (Path B opaque)
+#
+# See planning/smart_routing_and_local_tools.md and planning/routing_session_policy.md
+
 server:
     proxy_port: 8080
     dashboard_port: 8081
@@ -36,6 +49,50 @@ model_aliases:
     gpt-4o: codellama:7b
     gpt-4o-mini: llama3:8b-instruct
 routing:
+    # How long DecideLocal / explicit turn family sticks for reply-summary / title
+    # follow-ons only (not the whole chat). See planning/routing_session_policy.md.
+    turn_family_ttl: 90s
+    # Child tool-loop re-decide: after parent cloud|local, each tool step may prefer
+    # local (allowlist) or stay origin (denylist). Path B logs tool_followup_would_local
+    # and still origin until tool codec; Path A can route allowlisted tools locally.
+    tool_followup:
+        enabled: true
+        inherit_parent_default: true
+        reevaluate: true
+        local_tool_allowlist:
+            - read_file
+            - Read
+            - grep
+            - Grep
+            - Glob
+            - list_dir
+            - codebase_search
+            - ReadLints
+        cloud_tool_denylist:
+            - Shell
+            - Write
+            - Delete
+            - ApplyPatch
+            - edit_file
+            - EditNotebook
+            - WebFetch
+            - WebSearch
+    # Task-shape routing (M1): prefer local for rename/explain/format/Q&A; force cloud
+    # for architecture/migration/multi-file; tools[] â†’ cloud unless tool_followup
+    # allowlists every tool. Local Ollama models that reject tools fall back to BYOK
+    # cloud via FallbackChain (ToolsUnsupportedError). Disable with enabled: false.
+    task_classifier:
+        enabled: true
+        tools_force_cloud: true
+        local_model: codellama:7b
+        cloud_backend: openai
+        cloud_model: gpt-4o
+        # Optional overrides (empty = built-in MVP patterns):
+        # must_cloud_patterns: []
+        # small_local_patterns: []
+        # tools_priority: 85
+        # must_cloud_priority: 80
+        # small_local_priority: 70
     rules:
         - name: Explicit Local
           priority: 100
@@ -69,6 +126,7 @@ routing:
           action:
             target: local
             model: codellama:7b
+        # Token ceiling â€” safety net after task_classifier (not primary simplicity signal).
         - name: Context Overflow
           priority: 10
           enabled: true
@@ -111,15 +169,18 @@ cloud:
         requests_per_minute: 30
         tokens_per_minute: 100000
     budget_cap_usd: 50
+# Local inference backends. Ollama-only is fine â€” Glider does not require vLLM.
+# Prefer 127.0.0.1 over localhost on Windows (avoids IPv6 [::1] when the service binds IPv4 only).
 backends:
     - name: ollama
       type: local
-      url: http://localhost:11434
+      url: http://127.0.0.1:11434
       health_check_interval: 30s
-    - name: vllm
-      type: local
-      url: http://localhost:8001
-      health_check_interval: 30s
+    # Optional: uncomment only if you run vLLM locally.
+    # - name: vllm
+    #   type: local
+    #   url: http://127.0.0.1:8001
+    #   health_check_interval: 30s
 dashboard:
     enabled: true
     auth: false
@@ -139,3 +200,28 @@ mitm:
         - api4.cursor.sh
         - '*.api5.cursor.sh'
     passthrough_default: true
+    # Path B R&D: observe/dump Connect Agent RPCs. Turn off after R&D.
+    # Also: set GLIDER_MITM_DEBUG_RPC=1
+    debug_agent_rpc: true
+    # Path B: BidiAppend extract â†’ DecideLocal â†’ RunSSE text fulfill (experimental).
+    # Tool-loop child RunSSE still origin. Fail-soft â†’ origin when wait/encode fails.
+    # Also: GLIDER_MITM_AGENT_RPC_FULFILL=1
+    agent_rpc_fulfill: true
+    # Opt-in R&D only: on CompleteLocal failure write canned RunSSE text instead of
+    # origin. Codec is proven â€” leave false so Path B returns real Ollama text (or
+    # origin on error). Enable with GLIDER_MITM_AGENT_RPC_CANNED=1 when needed.
+    agent_rpc_canned_on_error: false
+    agent_rpc_canned_text: "pong from glider (canned Path B)"
+    # debug_dump_dir: ~/.glider/mitm-debug
+
+# Swarm foundation (off by default). When enabled, StrategyFanOut can merge
+# up to max_workers local Completes on the gateway via internal/swarm.
+# See planning/swarm_orchestration.md.
+# orchestration:
+#   fan_out:
+#     enabled: false
+#     max_workers: 2
+#   concurrency:
+#     worker_queue_size: 16
+#     result_chan_size: 32
+#     max_inflight: 4

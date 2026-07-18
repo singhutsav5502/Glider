@@ -4,3 +4,4 @@
 *.exe
 .env
 *.test
+.glider-debug/

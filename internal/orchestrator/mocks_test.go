@@ -19,6 +19,7 @@ type mockBackend struct {
 	loadErr    error
 	unloadErr  error
 	completeFn func(ctx context.Context, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error)
+	pingFn     func() error
 
 	loadCalls   atomic.Int32
 	unloadCalls atomic.Int32
@@ -60,6 +61,9 @@ func (m *mockBackend) ListLoaded(ctx context.Context) ([]backend.LoadedModel, er
 }
 
 func (m *mockBackend) Ping(ctx context.Context) error {
+	if m.pingFn != nil {
+		return m.pingFn()
+	}
 	if m.healthy {
 		return nil
 	}

@@ -18,6 +18,8 @@ go build -o glider.exe ./cmd/glider
 
 Cloud keys (gateway cloud path): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
 
+**Local backends:** Ollama alone is enough. Default configs probe `http://127.0.0.1:11434` (prefer `127.0.0.1` over `localhost` on Windows). vLLM is optional — uncomment it in `configs/glider.yaml` only if you run a server on `:8001`.
+
 Open the dashboard at [http://localhost:8081](http://localhost:8081) → **Config** tab to edit the running config (structured form primary; Edit YAML optional). Save writes the config file and hot-reloads routing, model aliases, context threshold, and log level (GPU assignments persist on the same path). Restart Glider after changing listen ports, MITM, backends, or cloud provider registration.
 
 ---
@@ -35,7 +37,11 @@ Both the gateway (`:8080`) and MITM (`:8082`) run the same pipeline for recogniz
 
 Unrecognized Cursor-proprietary envelopes always blind-passthrough on MITM.
 
-**Routing priority:** explicit commands (`/local`, `/cloud`, `/heavy`, `/fast`) override everything; then Starlark scripts and context-token thresholds decide; the config default is a low-priority fallback (see `configs/glider.yaml`).
+**Routing priority:** explicit (`/local`, `/cloud`, `/heavy`, `/fast`) → **task_classifier** (small-local / must-cloud / tools) → Starlark → context-token **ceiling** → default. See `configs/glider.yaml` and [planning/smart_routing_and_local_tools.md](planning/smart_routing_and_local_tools.md).
+
+**Path A tools:** gateway preserves `tools` / `tool_choice` and tool-loop message fields (`assistant.tool_calls`, `role=tool` + `tool_call_id`). Anthropic-shaped `tool_use` / `tool_result` blocks are normalized to OpenAI. Stream `tool_calls` are re-emitted on Cursor SSE. Ollama/vLLM attach tools best-effort; models that reject tools fall through `FallbackChain` to BYOK cloud (`ToolsUnsupportedError`). Default `routing.task_classifier.tools_force_cloud: true` (allowlisted tools can skip via `tool_followup`). Path B child/tool RunSSE stays origin.
+
+**Analytics:** Overview LOCAL/CLOUD % counts `origin_passthrough` as cloud. Live snapshot: `GET /api/metrics` (`distribution`, `tokens_saved_est`).
 
 ---
 
@@ -58,9 +64,30 @@ Default-to-cloud profile (no MITM):
 ./glider.exe --config configs/glider.cloud.yaml
 ```
 
-### Mode B — MITM (Agent + all Cursor models)
+### Mode B — MITM (Agent TLS decrypt + selective harness)
 
-Use this when you want Agent traffic to Cursor API hosts (`api2`/`api3`/`api4`/`*.api5.cursor.sh`) to hit Glider first. If rules say local, Glider serves locally (when the body is OpenAI/Responses-shaped). Otherwise Glider **passthrough to the original Cursor host** with auth intact.
+Use this when you want Agent HTTPS to Cursor API hosts (`api2`/`api3`/`api4`/`*.api5.cursor.sh`) to hit Glider first.
+
+**What MITM can do today**
+
+- Decrypt allowlisted hosts and keep subscription Agent working via **origin passthrough** when not fulfilling.
+- Route **local** for OpenAI/Responses JSON (`/v1/chat/completions`, `/v1/responses`).
+- **Path B text-only Agent:** with `mitm.agent_rpc_fulfill: true`, extract prompts from `BidiAppend` and fulfill correlated `RunSSE` locally (Ollama; leave `agent_rpc_canned_on_error: false` so real backends are preferred). Legacy `AiService/StreamChat*` remains fulfillable too.
+
+**What MITM still cannot do**
+
+- Full Agent **tool loops** / child RunSSE — those stay on Cursor origin. For Agent+tools, use **Mode A gateway** (Override OpenAI Base URL + `cus-` model prefix). See [planning/cursor_agent_protocol_interception.md](planning/cursor_agent_protocol_interception.md).
+
+**Path B (Agent RPC fulfill + debug)**
+
+```yaml
+mitm:
+  agent_rpc_fulfill: true          # BidiAppend extract → RunSSE text fulfill
+  agent_rpc_canned_on_error: false # prefer Ollama; set true only to dry-run codec
+  debug_agent_rpc: true            # or: GLIDER_MITM_DEBUG_RPC=1
+```
+
+Restart Glider, send an Agent chat, then inspect `~/.glider/mitm-debug/` dumps and `GET http://127.0.0.1:8081/api/mitm/debug/recent`.
 
 Other HTTPS (updates, telemetry, non-allowlisted hosts) still goes through the proxy as a **blind tunnel** — Glider does not decrypt it.
 
@@ -86,8 +113,8 @@ Other HTTPS (updates, telemetry, non-allowlisted hosts) still goes through the p
 **Notes**
 
 - Prefer HTTP/1.1 (`disableHttp2`). Some Cursor builds bypass `http.proxy` on HTTP/2 / Agent singleton paths.
-- Unrecognized Cursor-proprietary request bodies always **passthrough** — Agent should not break.
-- Force local with `/local` in the prompt when the body is chat/completions or Responses-shaped.
+- Agent Connect/gRPC bodies always **passthrough** — subscription Agent should not break; they are not harness-routable yet.
+- Force local with `/local` only when the body is chat/completions or Responses-shaped (gateway Mode A, or rare OpenAI-shaped MITM hits).
 
 ---
 

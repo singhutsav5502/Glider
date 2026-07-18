@@ -127,16 +127,45 @@ func (f *FallbackChain) steps(decision *backend.RoutingDecision, req *backend.Co
 	return steps
 }
 
+// reprobeLive runs HealthChecker.Ping when a backend looks unhealthy.
+// Ollama/vLLM start with healthy=false until the first successful Ping; without
+// this, local routes skip forever even when the daemon is up (no background poller).
+func (f *FallbackChain) reprobeLive(ctx context.Context, name string) bool {
+	if f == nil || f.registry == nil || name == "" {
+		return false
+	}
+	b, err := f.registry.Get(name)
+	if err != nil {
+		return false
+	}
+	hc, ok := b.(backend.HealthChecker)
+	if !ok {
+		return true
+	}
+	if err := hc.Ping(ctx); err != nil {
+		return false
+	}
+	return hc.IsHealthy()
+}
+
 // Execute runs the request through the fallback chain.
 func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDecision, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	var lastErr error
 	for _, step := range f.steps(decision, req) {
 		if f.isHealthy != nil && !f.isHealthy(step.backendName) {
-			continue
+			if !f.reprobeLive(ctx, step.backendName) {
+				if lastErr == nil {
+					lastErr = fmt.Errorf("backend %s unhealthy", step.backendName)
+				}
+				continue
+			}
 		}
 
 		cb := f.breaker(step.backendName)
 		if !cb.Allow() {
+			if lastErr == nil {
+				lastErr = fmt.Errorf("backend %s circuit open", step.backendName)
+			}
 			continue
 		}
 

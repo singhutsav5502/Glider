@@ -175,10 +175,11 @@ func requestToStarlark(req *backend.CompletionRequest) (starlark.Value, error) {
 	}
 
 	data := starlark.StringDict{
-		"model":             starlark.String(req.Model),
-		"stream":            starlark.Bool(req.Stream),
-		"estimated_tokens":  starlark.MakeInt(req.Metadata.EstimatedTokens),
-		"messages":          starlark.NewList(messages),
+		"model":            starlark.String(req.Model),
+		"stream":           starlark.Bool(req.Stream),
+		"estimated_tokens": starlark.MakeInt(req.Metadata.EstimatedTokens),
+		"messages":         starlark.NewList(messages),
+		"has_tools":        starlark.Bool(req.HasTools()),
 	}
 	if req.Temperature != nil {
 		data["temperature"] = starlark.Float(*req.Temperature)

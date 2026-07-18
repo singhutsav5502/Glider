@@ -21,6 +21,7 @@ type Session struct {
 	RequestCount int       `json:"request_count"`
 	LocalCount   int       `json:"local_count"`
 	CloudCount   int       `json:"cloud_count"`
+	CannedCount  int       `json:"canned_count,omitempty"`
 	TokenTotal   int       `json:"token_total"`
 	LatencySumMs float64   `json:"latency_sum_ms"`
 	Current      bool      `json:"current,omitempty"`
@@ -146,10 +147,19 @@ func (s *HistoryStore) Record(rec StoredRequest) error {
 	s.session.RequestCount++
 	s.session.TokenTotal += rec.Tokens
 	s.session.LatencySumMs += rec.LatencyMs
-	if rec.Route == "local" || rec.Action == "local" {
-		s.session.LocalCount++
-	} else {
+	switch {
+	case rec.Action == "canned":
+		s.session.CannedCount++
+	case rec.Action == "origin_passthrough" || rec.Route == "cloud" || rec.Action == "cloud":
 		s.session.CloudCount++
+	case rec.Route == "local" || rec.Action == "local":
+		s.session.LocalCount++
+	case rec.Action == "error":
+		// errors excluded from LOCAL/CLOUD %
+	default:
+		if rec.Route != "" {
+			s.session.CloudCount++
+		}
 	}
 	// Persist index periodically (every request is fine at dashboard scale).
 	return s.upsertIndexLocked()
@@ -275,10 +285,11 @@ func (s *HistoryStore) ListRequests(sessionID string, limit int) ([]StoredReques
 
 // SessionAggregates is a convenience summary for the dashboard.
 type SessionAggregates struct {
-	Session      Session            `json:"session"`
-	AvgLatencyMs float64            `json:"avg_latency_ms"`
-	RouteCounts  map[string]int     `json:"route_counts"`
-	ActionCounts map[string]int     `json:"action_counts"`
+	Session      Session        `json:"session"`
+	AvgLatencyMs float64        `json:"avg_latency_ms"`
+	RouteCounts  map[string]int `json:"route_counts"`
+	ActionCounts map[string]int `json:"action_counts"`
+	Distribution Distribution   `json:"distribution"`
 }
 
 // Aggregates computes per-session stats from the JSONL log.
@@ -299,11 +310,16 @@ func (s *HistoryStore) Aggregates(sessionID string) (SessionAggregates, error) {
 	var latSum float64
 	for _, r := range reqs {
 		out.RouteCounts[r.Route]++
-		if r.Action != "" {
-			out.ActionCounts[r.Action]++
+		action := r.Action
+		if action == "" {
+			action = r.Route
+		}
+		if action != "" {
+			out.ActionCounts[action]++
 		}
 		latSum += r.LatencyMs
 	}
+	out.Distribution = ComputeDistribution(out.ActionCounts)
 	if n := len(reqs); n > 0 {
 		out.AvgLatencyMs = latSum / float64(n)
 	} else if sess.RequestCount > 0 {

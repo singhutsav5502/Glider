@@ -11,6 +11,7 @@ import (
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/router"
@@ -223,5 +224,138 @@ func TestPipelineRecordsMITMObservability(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for metrics event")
+	}
+}
+
+func TestPipelineDecideLocal(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Always Local", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordExecutor{}
+	pc := &orchestrator.PipelineCompleter{Router: engine, Executor: exec}
+	req := &backend.CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []backend.Message{{Role: "user", Content: "hi"}},
+	}
+	r := httptest.NewRequest(http.MethodPost, "https://api2.cursor.sh/x", nil)
+	d, err := pc.DecideLocal(r, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Target != "local" || d.Model != "codellama:7b" {
+		t.Fatalf("%+v", d)
+	}
+	if exec.n != 0 {
+		t.Fatal("DecideLocal must not execute")
+	}
+}
+
+func TestPipelineCloudOverrideNeverLocal(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		TaskClassifier: config.TaskClassifierConfig{
+			Enabled:            true,
+			LocalModel:         "codellama:7b",
+			SmallLocalPriority: 200,
+		},
+		Rules: []config.RuleConfig{
+			{
+				Name: "Explicit Cloud", Priority: 99,
+				Trigger: config.TriggerConfig{Type: "explicit", Commands: []string{"/cloud"}},
+				Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+			},
+			{
+				Name: "Always Local", Priority: 0,
+				Trigger: config.TriggerConfig{Type: "always"},
+				Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordExecutor{}
+	pc := &orchestrator.PipelineCompleter{Router: engine, Executor: exec}
+	r := httptest.NewRequest(http.MethodPost, "http://localhost:8080/v1/chat/completions", nil)
+
+	req := &backend.CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []backend.Message{{Role: "user", Content: "Composer\n/cloud rename foo to bar"}},
+	}
+	_, err = pc.CompleteLocal(r, req)
+	if !errors.Is(err, orchestrator.ErrOriginPassthrough) {
+		t.Fatalf("CompleteLocal err=%v want ErrOriginPassthrough", err)
+	}
+	if exec.n != 0 {
+		t.Fatal("must not execute local backend for /cloud")
+	}
+
+	req2 := &backend.CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []backend.Message{{Role: "user", Content: "/cloud rename foo to bar"}},
+	}
+	ch, err := pc.Complete(r, req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	if exec.n != 1 || exec.lastTgt != "cloud" || exec.lastName != "Explicit Cloud" {
+		t.Fatalf("gateway Complete: n=%d tgt=%q rule=%q", exec.n, exec.lastTgt, exec.lastName)
+	}
+}
+
+func TestPipelineEmitsContextGraphRouteDecided(t *testing.T) {
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		TaskClassifier: config.TaskClassifierConfig{Enabled: true, LocalModel: "codellama:7b"},
+		Rules: []config.RuleConfig{{
+			Name: "Default Cloud", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := contextgraph.New("")
+	pc := &orchestrator.PipelineCompleter{
+		Router:   engine,
+		Executor: &recordExecutor{},
+		Graph:    g,
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://localhost:8080/v1/chat/completions", nil)
+	req := &backend.CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []backend.Message{{Role: "user", Content: "rename foo to bar"}},
+		Metadata: backend.RequestMetadata{RequestID: "req-class-1"},
+	}
+	ch, err := pc.Complete(r, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	view, ok := g.Turn("req-class-1")
+	if !ok {
+		t.Fatal("expected contextgraph turn")
+	}
+	if view.Route != "local" {
+		t.Fatalf("route=%q want local", view.Route)
+	}
+	found := false
+	for _, ev := range view.Events {
+		if ev.Kind == contextgraph.EventRouteDecided && ev.Attrs["reason"] == "small_offload" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing RouteDecided small_offload in %+v", view.Events)
 	}
 }

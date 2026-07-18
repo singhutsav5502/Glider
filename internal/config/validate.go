@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -216,6 +217,24 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 
 	if cfg.MITM.Port < 0 || cfg.MITM.Port > 65535 {
 		res.Errors = append(res.Errors, "mitm.port must be between 0 and 65535")
+	}
+
+	if cfg.Routing.TaskClassifier.Enabled {
+		for i, p := range cfg.Routing.TaskClassifier.MustCloudPatterns {
+			if _, err := regexp.Compile(p); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("routing.task_classifier.must_cloud_patterns[%d]: %v", i, err))
+			}
+		}
+		for i, p := range cfg.Routing.TaskClassifier.SmallLocalPatterns {
+			if _, err := regexp.Compile(p); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("routing.task_classifier.small_local_patterns[%d]: %v", i, err))
+			}
+		}
+	}
+	if ttl := strings.TrimSpace(cfg.Routing.TurnFamilyTTL); ttl != "" {
+		if _, err := time.ParseDuration(ttl); err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("routing.turn_family_ttl invalid: %v", err))
+		}
 	}
 
 	for i, r := range cfg.Routing.Rules {

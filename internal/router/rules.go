@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
@@ -47,20 +46,26 @@ func (r *ExplicitCommandRule) Name() string     { return r.name }
 func (r *ExplicitCommandRule) Priority() int    { return r.priority }
 
 func (r *ExplicitCommandRule) Evaluate(_ context.Context, req *backend.CompletionRequest) (*RuleResult, error) {
-	if len(req.Messages) == 0 {
+	if req == nil || len(req.Messages) == 0 {
 		return &RuleResult{Matched: false}, nil
 	}
-	lastIdx := len(req.Messages) - 1
-	content := req.Messages[lastIdx].Content
-	for _, cmd := range r.commands {
-		if strings.HasPrefix(content, cmd) {
-			remainder := strings.TrimSpace(strings.TrimPrefix(content, cmd))
-			req.Messages[lastIdx].Content = remainder
-			return &RuleResult{
-				Matched: true,
-				Action:  actionToDecision(r.name, r.action),
-			}, nil
+	// Prefer last user message (TipTap extract is usually a single user turn).
+	// Fall back to scanning all messages so chrome/system text cannot bury /cloud.
+	indices := make([]int, 0, len(req.Messages))
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		indices = append(indices, i)
+	}
+	for _, idx := range indices {
+		cmd, remainder, ok := MatchExplicitCommand(req.Messages[idx].Content, r.commands)
+		if !ok {
+			continue
 		}
+		_ = cmd
+		req.Messages[idx].Content = remainder
+		return &RuleResult{
+			Matched: true,
+			Action:  actionToDecision(r.name, r.action),
+		}, nil
 	}
 	return &RuleResult{Matched: false}, nil
 }
@@ -103,7 +108,7 @@ func (r *RegexRule) Evaluate(_ context.Context, req *backend.CompletionRequest) 
 	return &RuleResult{Matched: false}, nil
 }
 
-// ContextSizeRule matches on estimated token count.
+// ContextSizeRule matches on estimated token count (token ceiling; task_classifier sits above).
 type ContextSizeRule struct {
 	name     string
 	priority int

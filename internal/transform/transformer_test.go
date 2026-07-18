@@ -79,10 +79,17 @@ func TestTrimContextNoOpWhenUnderLimit_T4_4_2(t *testing.T) {
 		t.Fatalf("message count = %d, want %d", len(out.Messages), len(req.Messages))
 	}
 	for i := range req.Messages {
-		if out.Messages[i] != req.Messages[i] {
+		if !messagesEqual(out.Messages[i], req.Messages[i]) {
 			t.Fatalf("message[%d] changed: got %+v, want %+v", i, out.Messages[i], req.Messages[i])
 		}
 	}
+}
+
+func messagesEqual(a, b backend.Message) bool {
+	if a.Role != b.Role || a.Content != b.Content || a.Name != b.Name || a.ToolCallID != b.ToolCallID {
+		return false
+	}
+	return string(a.ToolCalls) == string(b.ToolCalls)
 }
 
 func TestAugmentPrependUserInstruction_T4_4_3(t *testing.T) {
@@ -144,7 +151,7 @@ func TestTransformDisabledPassthrough_T4_4_4(t *testing.T) {
 		t.Fatalf("message count = %d, want %d", len(out.Messages), len(req.Messages))
 	}
 	for i := range req.Messages {
-		if out.Messages[i] != req.Messages[i] {
+		if !messagesEqual(out.Messages[i], req.Messages[i]) {
 			t.Fatalf("message[%d] changed: got %+v, want %+v", i, out.Messages[i], req.Messages[i])
 		}
 	}

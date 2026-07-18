@@ -51,3 +51,61 @@ func TestRecordPublishesRichRequestEvent(t *testing.T) {
 		t.Fatalf("counts=%v", counts)
 	}
 }
+
+func TestIncActionDoesNotPublishRequestEvent(t *testing.T) {
+	bus := metrics.NewBus()
+	ch := bus.Subscribe(4)
+	defer bus.Unsubscribe(ch)
+
+	c := metrics.NewCollector(bus)
+	c.IncAction("mitm", "decrypt")
+	c.IncAction("mitm", "skip")
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected request event: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	counts := c.GetRouteCounts()
+	if counts["action:decrypt"] != 1 || counts["action:skip"] != 1 || counts["mode:mitm"] != 2 {
+		t.Fatalf("counts=%v", counts)
+	}
+}
+
+func TestRecordRejectsInformationalAsRequestLog(t *testing.T) {
+	bus := metrics.NewBus()
+	ch := bus.Subscribe(4)
+	defer bus.Unsubscribe(ch)
+
+	c := metrics.NewCollector(bus)
+	c.Record(metrics.RequestRecord{
+		Mode: "mitm", Action: "decrypt", Route: "decrypt", Host: "api2.cursor.sh",
+	})
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("decrypt must not publish request event: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if c.GetRouteCounts()["action:decrypt"] != 1 {
+		t.Fatalf("counts=%v", c.GetRouteCounts())
+	}
+	stats := c.GetTokenStats()
+	if stats.Total != 0 || stats.Avg != 0 {
+		t.Fatalf("decrypt must not affect token stats: %+v", stats)
+	}
+}
+
+func TestIsRequestLogAction(t *testing.T) {
+	for _, a := range []string{"local", "cloud", "origin_passthrough", "canned", "error"} {
+		if !metrics.IsRequestLogAction(a) {
+			t.Fatalf("%q should be request-log", a)
+		}
+	}
+	for _, a := range []string{"decrypt", "blind_tunnel", "skip", ""} {
+		if metrics.IsRequestLogAction(a) {
+			t.Fatalf("%q should not be request-log", a)
+		}
+	}
+}

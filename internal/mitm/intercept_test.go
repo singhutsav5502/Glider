@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/router"
@@ -276,6 +278,72 @@ func (c *countingExecutor) Execute(ctx context.Context, decision *backend.Routin
 	ch <- backend.CompletionChunk{Content: "local", FinishReason: "stop", Model: req.Model}
 	close(ch)
 	return ch, nil
+}
+
+func TestInterceptorNonLLMPathNoRequestEvent(t *testing.T) {
+	bus := metrics.NewBus()
+	ch := bus.Subscribe(4)
+	defer bus.Unsubscribe(ch)
+
+	c := metrics.NewCollector(bus)
+	inter := &mitm.Interceptor{Harness: &stubHarness{}, Metrics: c}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/aiserver.v1.DashboardService/GetEffectiveUserPlugins",
+		strings.NewReader(`{}`))
+	handled, err := inter.TryHandle(rr, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("non-llm must not be handled")
+	}
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected request event for non-llm path: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+	counts := c.GetRouteCounts()
+	if counts["action:skip_control"] != 1 {
+		t.Fatalf("counts=%v", counts)
+	}
+}
+
+func TestInterceptorUnparsedBodyNoRequestEvent(t *testing.T) {
+	bus := metrics.NewBus()
+	ch := bus.Subscribe(4)
+	defer bus.Unsubscribe(ch)
+
+	c := metrics.NewCollector(bus)
+	inter := &mitm.Interceptor{Harness: &stubHarness{}, Metrics: c}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "https://api2.cursor.sh/v1/chat/completions",
+		strings.NewReader(`{"proprietary":true}`))
+	handled, err := inter.TryHandle(rr, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("unparsed must passthrough")
+	}
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected request event for skip: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if c.GetRouteCounts()["action:skip"] != 1 {
+		t.Fatalf("counts=%v", c.GetRouteCounts())
+	}
+}
+
+type stubHarness struct{}
+
+func (stubHarness) CompleteLocal(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+	return nil, errors.New("stub harness should not be called")
 }
 
 // Ensure ErrOriginPassthrough is the sentinel MITM uses.

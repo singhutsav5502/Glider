@@ -103,6 +103,33 @@ func TestT2_4_1_ExplicitCommandRule_Match(t *testing.T) {
 	}
 }
 
+func TestExplicitCommandRule_TrimSpacePrefix(t *testing.T) {
+	rule, err := router.NewExplicitCommandRule(config.RuleConfig{
+		Name:     "Explicit Cloud",
+		Priority: 99,
+		Trigger:  config.TriggerConfig{Type: "explicit", Commands: []string{"/cloud", "/heavy"}},
+		Action:   config.ActionConfig{Target: "cloud", Backend: "openai", Model: "gpt-4o"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &backend.CompletionRequest{
+		Messages: []backend.Message{
+			{Role: "user", Content: "  /cloud do heavy work"},
+		},
+	}
+	result, err := rule.Evaluate(testCtx(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Matched || result.Action == nil || result.Action.Target != "cloud" {
+		t.Fatalf("matched=%v action=%+v", result.Matched, result.Action)
+	}
+	if req.Messages[0].Content != "do heavy work" {
+		t.Fatalf("remainder=%q", req.Messages[0].Content)
+	}
+}
+
 // T2.4.2 — ExplicitCommandRule: no match
 func TestT2_4_2_ExplicitCommandRule_NoMatch(t *testing.T) {
 	rule, err := router.NewExplicitCommandRule(explicitRuleConfig())

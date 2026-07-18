@@ -32,12 +32,24 @@
           <button type="button" id="session-refresh" class="linkish">Refresh</button>
           <span id="session-meta" class="session-meta"></span>
         </div>
+        <aside class="banner warn" id="mitm-agent-gap" role="note">
+          <strong>Path B MITM — text-only Agent.</strong>
+          With <code>agent_rpc_fulfill</code>, Glider extracts <code>BidiAppend</code> prompts and can fulfill root <code>RunSSE</code> locally (Ollama; canned only if <code>agent_rpc_canned_on_error</code>).
+          Child / tool-loop RunSSE stays on Cursor origin — for Agent+tools use <strong>gateway</strong> Override Base URL → <code>http://localhost:8080/v1</code> + <code>cus-</code> model.
+          Log: <code>local</code> / <code>origin_passthrough</code> / <code>canned</code>; turn-family sticky inherits <code>/cloud</code>|<code>/local</code> for summary/title follow-ons only (~90s). Dumps: <code>~/.glider/mitm-debug</code> when <code>debug_agent_rpc</code>.
+        </aside>
         <div class="metrics">
           <div class="metric"><span class="label">REQUESTS</span><span class="value" id="m-requests">0</span></div>
-          <div class="metric"><span class="label">LOCAL / CLOUD</span><span class="value" id="m-split">—</span></div>
+          <div class="metric"><span class="label" title="Live share of request-log outcomes from GET /api/metrics. Cloud includes gateway BYOK cloud and MITM origin_passthrough. Canned is Path B dry-run fulfill.">LOCAL / CLOUD / CANNED</span><span class="value" id="m-split">—</span></div>
           <div class="metric"><span class="label">TOKENS</span><span class="value" id="m-tokens">0</span></div>
           <div class="metric"><span class="label">AVG LATENCY</span><span class="value" id="m-latency">—</span></div>
         </div>
+        <div class="dist-bar" id="dist-bar" title="local / cloud / canned" aria-hidden="true" hidden>
+          <span class="dist-seg local" id="dist-local"></span>
+          <span class="dist-seg cloud" id="dist-cloud"></span>
+          <span class="dist-seg canned" id="dist-canned"></span>
+        </div>
+        <div class="class-rates" id="class-rates" title="Task classifier / routing reason rates from this session"></div>
         <div class="log-wrap">
           <div class="log-head">
             <span>TIME</span><span>MODE</span><span>ACTION</span><span>HOST / MODEL</span><span>RULE</span><span>LATENCY</span><span>TOKENS</span>
@@ -47,9 +59,10 @@
       </section>
 
       <section id="panel-vram" class="panel">
-        <p class="hint">Models from config plus live discovery (Ollama <code>/api/tags</code>, vLLM <code>/v1/models</code>). GPU memory from nvidia-smi when available. Assign a GPU index per model; Save writes <code>vram.gpu_assignments</code>.</p>
+        <p class="hint">Models from config plus live discovery (Ollama <code>/api/tags</code>; optional vLLM <code>/v1/models</code>). GPU memory from nvidia-smi when available. Assign a GPU index per model; Save writes <code>vram.gpu_assignments</code>. Unreachable optional backends (e.g. vLLM when you only run Ollama) show as warnings, not failures.</p>
         <div id="gpu-gauges" class="gauges"></div>
         <p id="vram-errors" class="cfg-error" hidden></p>
+        <p id="vram-warnings" class="cfg-warn" hidden></p>
         <div class="vram-actions">
           <button type="button" id="vram-refresh">Refresh</button>
           <button type="button" id="vram-save-gpus">Save GPU assignments</button>
@@ -114,7 +127,8 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="HTTPS CONNECT interceptor for Cursor hosts. Dual-mode: MITM uses origin passthrough for cloud; gateway uses BYOK providers.">MITM</legend>
+            <legend title="HTTPS CONNECT interceptor for Cursor hosts. Decrypts TLS on allowlisted hosts. With agent_rpc_fulfill, text-only BidiAppend→RunSSE can route local; tool loops still origin. Gateway + cus- preferred for Agent+tools.">MITM</legend>
+            <p class="hint" style="margin:0 0 12px">Path B: <code>agent_rpc_fulfill</code> = text-only root RunSSE local fulfill. Tools → gateway + <code>cus-</code>. See <code>planning/cursor_agent_protocol_interception.md</code> and <code>planning/smart_routing_and_local_tools.md</code>.</p>
             <div class="cfg-grid">
               <label class="check" title="Enable the MITM proxy listener. Restart required."><input type="checkbox" id="cfg-mitm-enabled" /> Enabled</label>
               <label title="MITM listen port (CONNECT). Restart required.">Listen port<input type="number" id="cfg-mitm-port" min="1" /></label>

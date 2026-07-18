@@ -69,14 +69,69 @@ html, body {
 }
 .session-meta { color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
 
+.banner {
+  margin: 0 0 32px;
+  padding: 14px 16px;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  max-width: 52rem;
+  border-left: 3px solid var(--accent);
+  background: #f8fafc;
+  color: var(--fg);
+}
+.banner.warn {
+  border-left-color: var(--warn);
+  background: #fffbeb;
+}
+.banner code {
+  font-family: var(--mono);
+  font-size: 0.8em;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 48px;
-  margin-bottom: 56px;
+  margin-bottom: 24px;
 }
 .metric .label { display: block; color: var(--muted); font-size: 0.75rem; letter-spacing: 0.08em; margin-bottom: 10px; }
 .metric .value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+
+.dist-bar {
+  display: flex;
+  height: 6px;
+  margin: 0 0 40px;
+  background: var(--line);
+  overflow: hidden;
+}
+.dist-bar .dist-seg { display: block; height: 100%; min-width: 0; transition: flex-basis 180ms ease; }
+.dist-bar .dist-seg.local { background: var(--ok); }
+.dist-bar .dist-seg.cloud { background: var(--accent); }
+.dist-bar .dist-seg.canned { background: var(--warn); }
+
+.class-rates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 40px;
+  min-height: 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.class-rates .chip-label {
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+}
+.class-rates .chip {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  color: var(--text);
+}
+.class-rates .chip.role {
+  border-style: dashed;
+}
 
 .log-wrap { font-family: var(--mono); font-size: 0.85rem; }
 .log-head, .log-row {

@@ -19,13 +19,15 @@ type RequestEventData struct {
 	SessionID     string  `json:"session_id,omitempty"`
 	ClientSession string  `json:"client_session,omitempty"`
 	Mode          string  `json:"mode,omitempty"`           // gateway | mitm
-	Action        string  `json:"action,omitempty"`         // local | origin_passthrough | blind_tunnel | skip | error
+	Action        string  `json:"action,omitempty"`         // local | cloud | origin_passthrough | canned | error
 	Route         string  `json:"route"`                    // local | cloud
 	Model         string  `json:"model"`
 	OriginalModel string  `json:"original_model,omitempty"`
 	Host          string  `json:"host,omitempty"`
 	Path          string  `json:"path,omitempty"`
 	Rule          string  `json:"rule,omitempty"`
+	Reason        string  `json:"reason,omitempty"` // routing reason (small_offload, must_cloud, …)
+	Role          string  `json:"role,omitempty"`   // plan | exec | research
 	Tokens        int     `json:"tokens"`
 	LatencyMs     float64 `json:"latency_ms"`
 }

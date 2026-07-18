@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,10 +28,34 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("yaml parse error: %w", err)
 	}
 	applyDefaults(cfg)
+	ApplyMITMDebugEnv(cfg)
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ApplyMITMDebugEnv turns on mitm.debug_agent_rpc when GLIDER_MITM_DEBUG_RPC is
+// 1, true, yes, or on (case-insensitive). Does not turn the flag off.
+func ApplyMITMDebugEnv(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("GLIDER_MITM_DEBUG_RPC")))
+	switch v {
+	case "1", "true", "yes", "on":
+		cfg.MITM.DebugAgentRPC = true
+	}
+	f := strings.TrimSpace(strings.ToLower(os.Getenv("GLIDER_MITM_AGENT_RPC_FULFILL")))
+	switch f {
+	case "1", "true", "yes", "on":
+		cfg.MITM.AgentRPCFulfill = true
+	}
+	canned := strings.TrimSpace(strings.ToLower(os.Getenv("GLIDER_MITM_AGENT_RPC_CANNED")))
+	switch canned {
+	case "1", "true", "yes", "on":
+		cfg.MITM.AgentRPCCannedOnError = true
+	}
 }
 
 func applyDefaults(cfg *Config) {

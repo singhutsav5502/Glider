@@ -39,6 +39,15 @@ func writeSSE(w http.ResponseWriter, requestID, model string, chunks <-chan back
 		if m == "" {
 			m = model
 		}
+		delta := map[string]any{}
+		if len(chunk.ToolCalls) > 0 {
+			delta["tool_calls"] = chunk.ToolCalls
+			if chunk.Content != "" {
+				delta["content"] = chunk.Content
+			}
+		} else {
+			delta["content"] = chunk.Content
+		}
 		payload := map[string]any{
 			"id":      id,
 			"object":  "chat.completion.chunk",
@@ -46,10 +55,8 @@ func writeSSE(w http.ResponseWriter, requestID, model string, chunks <-chan back
 			"model":   m,
 			"choices": []map[string]any{
 				{
-					"index": 0,
-					"delta": map[string]any{
-						"content": chunk.Content,
-					},
+					"index":         0,
+					"delta":         delta,
 					"finish_reason": nilOrString(chunk.FinishReason),
 				},
 			},
@@ -72,10 +79,26 @@ func writeSSE(w http.ResponseWriter, requestID, model string, chunks <-chan back
 
 func writeNonStream(w http.ResponseWriter, requestID, model string, chunks <-chan backend.CompletionChunk) error {
 	var content string
+	var toolCalls []backend.ToolCallDelta
+	finishReason := "stop"
 	for chunk := range chunks {
 		content += chunk.Content
+		backend.MergeToolCallDeltas(&toolCalls, chunk.ToolCalls)
 		if chunk.Model != "" {
 			model = chunk.Model
+		}
+		if chunk.FinishReason != "" {
+			finishReason = chunk.FinishReason
+		}
+	}
+	message := map[string]any{
+		"role":    "assistant",
+		"content": content,
+	}
+	if finalized := backend.FinalizeToolCalls(toolCalls); len(finalized) > 0 {
+		message["tool_calls"] = finalized
+		if finishReason == "stop" {
+			finishReason = "tool_calls"
 		}
 	}
 	resp := map[string]any{
@@ -85,12 +108,9 @@ func writeNonStream(w http.ResponseWriter, requestID, model string, chunks <-cha
 		"model":   model,
 		"choices": []map[string]any{
 			{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": content,
-				},
-				"finish_reason": "stop",
+				"index":         0,
+				"message":       message,
+				"finish_reason": finishReason,
 			},
 		},
 	}

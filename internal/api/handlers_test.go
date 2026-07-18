@@ -49,6 +49,31 @@ func TestParseValidCompletionRequest(t *testing.T) {
 	}
 }
 
+func TestParseCompletionRequest_PreservesTools(t *testing.T) {
+	body := []byte(`{
+		"model":"cus-codellama:7b",
+		"messages":[{"role":"user","content":"read it"}],
+		"tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}],
+		"tool_choice":"auto"
+	}`)
+	norm := api.NormalizeAnthropicShapedJSON(body)
+	req, err := api.ParseCompletionRequest(norm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !req.HasTools() {
+		t.Fatal("expected tools preserved")
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(req.Tools, &tools); err != nil || len(tools) != 1 {
+		t.Fatalf("tools=%s err=%v", req.Tools, err)
+	}
+	var tc string
+	if err := json.Unmarshal(req.ToolChoice, &tc); err != nil || tc != "auto" {
+		t.Fatalf("tool_choice=%s err=%v", req.ToolChoice, err)
+	}
+}
+
 // T1.1.2 — Reject malformed request
 func TestRejectMissingMessages(t *testing.T) {
 	h := &api.Handlers{Completer: &mockCompleter{}}
@@ -197,4 +222,34 @@ func TestRequestID(t *testing.T) {
 
 func TestParseCompletionRequest_Context(_ *testing.T) {
 	_ = context.Background()
+}
+
+func TestWriteChatSSE_EmitsToolCalls(t *testing.T) {
+	h := &api.Handlers{Completer: &mockCompleter{chunks: []backend.CompletionChunk{
+		{
+			ID: "chatcmpl-tc",
+			ToolCalls: []backend.ToolCallDelta{{
+				Index: 0, ID: "call_1", Type: "function",
+				Function: &backend.FunctionDelta{Name: "read_file", Arguments: `{"path":"a.go"}`},
+			}},
+			FinishReason: "tool_calls",
+			Model:        "codellama:7b",
+		},
+	}}}
+	srv := httptest.NewServer(api.NewServer("", h).Handler())
+	defer srv.Close()
+	body := `{"model":"cus-codellama:7b","messages":[{"role":"user","content":"read"}],"stream":true,"tools":[{"type":"function","function":{"name":"read_file"}}]}`
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	s := string(raw)
+	if !strings.Contains(s, `"tool_calls"`) || !strings.Contains(s, `read_file`) {
+		t.Fatalf("SSE missing tool_calls: %s", s)
+	}
+	if !strings.Contains(s, `"finish_reason":"tool_calls"`) {
+		t.Fatalf("SSE missing finish_reason tool_calls: %s", s)
+	}
 }

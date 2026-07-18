@@ -3,8 +3,8 @@
 #
 #   glider.exe --config configs/glider.cloud.yaml
 #
-# For Cursor Agent + subscription models, prefer configs/glider.yaml with MITM enabled.
-# Same rule priority: explicit overrides → scripts → thresholds → default cloud.
+# Routing: explicit → task_classifier → scripts → token ceiling → default cloud.
+# See planning/smart_routing_and_local_tools.md
 
 server:
   proxy_port: 8080
@@ -34,6 +34,19 @@ model_aliases:
   "gpt-4o-mini": "codellama:7b"
 
 routing:
+  turn_family_ttl: 90s
+  tool_followup:
+    enabled: true
+    inherit_parent_default: true
+    reevaluate: true
+    local_tool_allowlist: ["read_file", "Read", "grep", "Grep", "Glob", "list_dir"]
+    cloud_tool_denylist: ["Shell", "Write", "Delete", "ApplyPatch"]
+  task_classifier:
+    enabled: true
+    tools_force_cloud: true
+    local_model: "codellama:7b"
+    cloud_backend: "openai"
+    cloud_model: "gpt-4o"
   rules:
     - name: "Explicit Local"
       priority: 100
@@ -96,15 +109,12 @@ cloud:
     tokens_per_minute: 100000
   budget_cap_usd: 50.00
 
+# Ollama-only is fine; add vLLM only if you run it (see configs/glider.yaml comments).
 backends:
   - name: "ollama"
     type: "local"
-    url: "http://localhost:11434"
+    url: "http://127.0.0.1:11434"
     health_check_interval: "30s"
-
-mitm:
-  enabled: false
-  port: 8082
 
 dashboard:
   enabled: true
@@ -112,3 +122,15 @@ dashboard:
 
 transform:
   enabled: false
+
+mitm:
+  enabled: false
+  port: 8082
+  ca_cert: "~/.glider/mitm/ca.crt"
+  ca_key: "~/.glider/mitm/ca.key"
+  hosts:
+    - "api2.cursor.sh"
+    - "api3.cursor.sh"
+    - "api4.cursor.sh"
+    - "*.api5.cursor.sh"
+  passthrough_default: true

@@ -18,11 +18,14 @@ import (
 	"github.com/glider-ai/glider/internal/backend/ollama"
 	"github.com/glider-ai/glider/internal/backend/vllm"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/dashboard"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/glider-ai/glider/internal/transform"
 	"github.com/glider-ai/glider/internal/vram"
 	"github.com/google/uuid"
@@ -40,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Warn("config load failed, using defaults", "err", err)
 		cfg = config.DefaultConfig()
+		config.ApplyMITMDebugEnv(cfg)
 	}
 	applyLogLevel(levelVar, cfg.Server.LogLevel)
 
@@ -54,6 +58,7 @@ func main() {
 
 	reg := backend.NewRegistry()
 	registerBackends(reg, cfg, log)
+	pingBackends(context.Background(), reg, log, true)
 	for _, m := range cfg.Models {
 		_ = reg.RegisterModel(backend.ModelInfo{
 			Name:           m.Name,
@@ -122,18 +127,41 @@ func main() {
 		CloudModel:       "gpt-4o",
 		IsHealthy:        orchestrator.DefaultHealthCheck(reg),
 	})
+	episodeStore := contextkit.NewStore(32)
+	fanCfg := orchestrator.FanOutConfigFromOrchestration(cfg.Orchestration, episodeStore, sessionID)
+	fanOut := &orchestrator.FanOutExecutor{Inner: exec, Config: fanCfg}
+	fanOut.ApplyConfig(fanCfg)
+	var executor orchestrator.Executor = fanOut
+	if fanCfg.Enabled {
+		log.Info("fan_out executor enabled", "max_workers", fanCfg.MaxWorkers, "result_chan", fanCfg.ResultChanSize)
+	}
+	hotSwap := swarm.NewRegistry()
+	_ = hotSwap.Register(&swarm.Module{
+		Name: "fan_out",
+		Kind: swarm.ModuleFanOut,
+		Hot:  true,
+		Apply: func(c *config.Config) error {
+			next := orchestrator.FanOutConfigFromOrchestration(c.Orchestration, episodeStore, sessionID)
+			fanOut.ApplyConfig(next)
+			return nil
+		},
+	})
+	hotSwap.BindProvider(provider)
 
 	transformer := transform.NewTransformer(cfg.Transform, tok)
+	ctxGraph := contextgraph.New(contextgraph.DefaultDir())
+	contextgraph.SetDefault(ctxGraph)
 	completer := &orchestrator.PipelineCompleter{
 		Router: &liveRouter{get: func() router.Router {
 			return enginePtr.Load()
 		}},
-		Executor:     exec,
+		Executor:     executor,
 		Tokenizer:    tok,
 		Transformer:  transformer,
 		MaxContext:   cfg.Thresholds.MaxLocalContextTokens,
 		Metrics:      collector,
 		ModelAliases: cfg.ModelAliases,
+		Graph:        ctxGraph,
 	}
 	provider.Watch(func(c *config.Config) {
 		completer.ModelAliases = c.ModelAliases
@@ -154,6 +182,9 @@ func main() {
 	log.Info("glider gateway listening", "addr", proxy.Addr())
 
 	var mitmProxy *mitm.Proxy
+	var mitmDebug *mitm.AgentRPCDebugger
+	fulfillHub := mitm.NewAgentFulfillHub()
+	fulfillHub.Graph = ctxGraph
 	if cfg.MITM.Enabled {
 		certPath := mitm.ExpandPath(cfg.MITM.CACert)
 		keyPath := mitm.ExpandPath(cfg.MITM.CAKey)
@@ -166,9 +197,37 @@ func main() {
 			os.Exit(1)
 		}
 		interceptor := &mitm.Interceptor{
-			Harness: completer,
-			Metrics: collector,
-			Log:     log,
+			Harness:           completer,
+			Metrics:           collector,
+			Log:               log,
+			AgentRPCFulfill:   cfg.MITM.AgentRPCFulfill,
+			CannedOnError:     cfg.MITM.AgentRPCCannedOnError,
+			CannedText:        cfg.MITM.AgentRPCCannedText,
+			FulfillHub:        fulfillHub,
+		}
+		interceptor.ApplyRoutingPolicy(cfg.Routing)
+		provider.Watch(func(c *config.Config) {
+			interceptor.ApplyRoutingPolicy(c.Routing)
+		})
+		if cfg.MITM.DebugAgentRPC {
+			dumpDir := cfg.MITM.DebugDumpDir
+			if dumpDir == "" {
+				dumpDir = mitm.DefaultDebugDumpDir()
+			}
+			mitmDebug = &mitm.AgentRPCDebugger{
+				Enabled:  true,
+				DumpDir:  dumpDir,
+				Log:      log,
+				Metrics:  collector,
+				RingSize: 128,
+			}
+			interceptor.Debug = mitmDebug
+			log.Info("mitm agent rpc debug enabled", "dump_dir", mitm.ExpandPath(dumpDir))
+		}
+		if cfg.MITM.AgentRPCFulfill {
+			log.Info("mitm agent rpc fulfill experimental enabled",
+				"canned_on_error", cfg.MITM.AgentRPCCannedOnError,
+				"note", "BidiAppend extractâ†’DecideLocalâ†’RunSSE text codec when correlated; else origin")
 		}
 		mitmProxy = &mitm.Proxy{
 			Addr:      fmt.Sprintf(":%d", cfg.MITM.Port),
@@ -177,6 +236,7 @@ func main() {
 			Local:     interceptor,
 			Log:       log,
 			Metrics:   collector,
+			Debug:     mitmDebug,
 		}
 		if err := mitmProxy.Start(); err != nil {
 			log.Error("mitm start failed", "err", err)
@@ -188,6 +248,7 @@ func main() {
 	vramMon := vram.NewDefaultNvidiaSmiMonitor()
 	stopVRAM := make(chan struct{})
 	go pollVRAM(stopVRAM, vramMon, collector, reg, log)
+	go pollBackendHealth(stopVRAM, reg, log)
 
 	var dash *dashboard.Server
 	if cfg.Dashboard.Enabled {
@@ -197,6 +258,9 @@ func main() {
 		dash = dashboard.New(dashAddr, bus, store, models)
 		dash.History = history
 		dash.GPUs = gpuMonitorAdapter{mon: vramMon}
+		dash.Metrics = collector
+		dash.MITMDebug = mitmDebug
+		dash.ContextGraph = ctxGraph
 		if err := dash.Start(); err != nil {
 			log.Warn("dashboard start failed", "err", err)
 		} else {
@@ -320,6 +384,38 @@ func registerBackends(reg *backend.Registry, cfg *config.Config, log *slog.Logge
 	}
 	if len(reg.List()) == 0 {
 		log.Warn("no backends configured; registering default ollama")
-		_ = reg.Register(ollama.New("http://localhost:11434"))
+		_ = reg.Register(ollama.New("http://127.0.0.1:11434"))
+	}
+}
+
+func pingBackends(ctx context.Context, reg *backend.Registry, log *slog.Logger, verbose bool) {
+	if reg == nil {
+		return
+	}
+	for _, b := range reg.List() {
+		hc, ok := b.(backend.HealthChecker)
+		if !ok {
+			continue
+		}
+		if err := hc.Ping(ctx); err != nil {
+			log.Warn("backend unhealthy", "backend", b.Name(), "err", err)
+			continue
+		}
+		if verbose {
+			log.Info("backend healthy", "backend", b.Name())
+		}
+	}
+}
+
+func pollBackendHealth(stop <-chan struct{}, reg *backend.Registry, log *slog.Logger) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			pingBackends(context.Background(), reg, log, false)
+		}
 	}
 }

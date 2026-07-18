@@ -46,6 +46,7 @@ func (b *OpenAIBackend) Complete(ctx context.Context, req *backend.CompletionReq
 		"messages": req.Messages,
 		"stream":   true,
 	}
+	backend.AttachTools(body, req)
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -88,28 +89,9 @@ func streamOpenAIChunks(ctx context.Context, resp *http.Response, ch chan<- back
 			continue
 		}
 		payload := strings.TrimPrefix(line, "data: ")
-		if payload == "[DONE]" {
-			return
-		}
-		var envelope struct {
-			ID      string `json:"id"`
-			Model   string `json:"model"`
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		chunk, ok := backend.ParseOpenAIStreamPayload(payload)
+		if !ok {
 			continue
-		}
-		chunk := backend.CompletionChunk{ID: envelope.ID, Model: envelope.Model}
-		if len(envelope.Choices) > 0 {
-			chunk.Content = envelope.Choices[0].Delta.Content
-			if envelope.Choices[0].FinishReason != nil {
-				chunk.FinishReason = *envelope.Choices[0].FinishReason
-			}
 		}
 		select {
 		case ch <- chunk:

@@ -12,6 +12,8 @@
   let requests = 0;
   let local = 0;
   let cloud = 0;
+  let canned = 0;
+  let lastDist = null; // { local_pct, cloud_pct, canned_pct } from API when available
   let tokenTotal = 0;
   let latencySum = 0;
   let gpuAssignmentDraft = {};
@@ -39,6 +41,8 @@
     requests = 0;
     local = 0;
     cloud = 0;
+    canned = 0;
+    lastDist = null;
     tokenTotal = 0;
     latencySum = 0;
     updateMetricsUI();
@@ -46,21 +50,138 @@
 
   function updateMetricsUI() {
     document.getElementById("m-requests").textContent = requests.toLocaleString();
-    const total = local + cloud || 1;
+    let localPct;
+    let cloudPct;
+    let cannedPct;
+    if (lastDist && lastDist.local_pct != null) {
+      localPct = Number(lastDist.local_pct);
+      cloudPct = Number(lastDist.cloud_pct);
+      cannedPct = Number(lastDist.canned_pct);
+    } else {
+      const total = local + cloud + canned || 1;
+      localPct = Math.round((local / total) * 1000) / 10;
+      cloudPct = Math.round((cloud / total) * 1000) / 10;
+      cannedPct = Math.round((canned / total) * 1000) / 10;
+    }
     document.getElementById("m-split").textContent =
-      `${Math.round((local / total) * 100)}% / ${Math.round((cloud / total) * 100)}%`;
+      `${fmtPct(localPct)}% / ${fmtPct(cloudPct)}% / ${fmtPct(cannedPct)}%`;
+    updateDistBar(localPct, cloudPct, cannedPct);
     document.getElementById("m-tokens").textContent = tokenTotal.toLocaleString();
     document.getElementById("m-latency").textContent =
-      requests ? `${(latencySum / requests).toFixed(1)}ms` : "—";
+      requests ? `${(latencySum / requests).toFixed(1)}ms` : "â€”";
+  }
+
+  function fmtPct(n) {
+    if (!Number.isFinite(n)) return "0";
+    return Number.isInteger(n) ? String(n) : String(n);
+  }
+
+  function updateDistBar(localPct, cloudPct, cannedPct) {
+    const bar = document.getElementById("dist-bar");
+    if (!bar) return;
+    const sum = (localPct || 0) + (cloudPct || 0) + (cannedPct || 0);
+    if (sum <= 0) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    const set = (id, pct) => {
+      const el = document.getElementById(id);
+      if (el) el.style.flex = `${Math.max(0, pct)} 0 0`;
+    };
+    set("dist-local", localPct);
+    set("dist-cloud", cloudPct);
+    set("dist-canned", cannedPct);
+  }
+
+  function applyClassRates(classRates, roleRates) {
+    const el = document.getElementById("class-rates");
+    if (!el) return;
+    const chips = [];
+    const classes = classRates || {};
+    const roles = roleRates || {};
+    const classKeys = Object.keys(classes).sort();
+    const roleKeys = Object.keys(roles).sort();
+    if (!classKeys.length && !roleKeys.length) {
+      el.innerHTML = "";
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    for (const k of classKeys) {
+      chips.push(`<span class="chip" title="routing reason">${esc(k)} ${classes[k]}</span>`);
+    }
+    for (const k of roleKeys) {
+      chips.push(`<span class="chip role" title="task role">${esc(k)} ${roles[k]}</span>`);
+    }
+    el.innerHTML = `<span class="chip-label">CLASS</span>${chips.join("")}`;
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  async function refreshMetricsSnapshot() {
+    if (!liveMode) return;
+    try {
+      const res = await fetch("/api/metrics");
+      if (!res.ok) return;
+      const snap = await res.json();
+      if (snap.distribution) {
+        applyDistribution(snap.distribution, {
+          requests: (snap.distribution.local_count || 0) +
+            (snap.distribution.cloud_count || 0) +
+            (snap.distribution.canned_count || 0) +
+            (snap.distribution.error_count || 0),
+        });
+      }
+      applyClassRates(snap.class_rates, snap.role_rates);
+      if (snap.token_stats && snap.token_stats.total != null) {
+        tokenTotal = snap.token_stats.total;
+        updateMetricsUI();
+      }
+    } catch (_) {}
+  }
+
+  function applyDistribution(dist, opts) {
+    if (!dist) return;
+    local = Number(dist.local_count) || 0;
+    cloud = Number(dist.cloud_count) || 0;
+    canned = Number(dist.canned_count) || 0;
+    lastDist = {
+      local_pct: dist.local_pct,
+      cloud_pct: dist.cloud_pct,
+      canned_pct: dist.canned_pct,
+    };
+    if (opts && opts.requests != null) {
+      requests = Number(opts.requests) || 0;
+    } else {
+      requests = local + cloud + canned + (Number(dist.error_count) || 0);
+    }
+    updateMetricsUI();
+  }
+
+  function isRequestLogRow(data) {
+    const action = data.action || data.route || "";
+    return action === "local" || action === "cloud" || action === "origin_passthrough" || action === "canned" || action === "error";
   }
 
   function addLog(data, opts) {
+    // Tunnel opens / non-LLM skips are counters only â€” omit from Overview table
+    // (also filters historical sessions that recorded decrypt/skip before the fix).
+    if (!isRequestLogRow(data)) {
+      return;
+    }
     const prepend = !opts || opts.prepend !== false;
     const fromLive = !opts || opts.live !== false;
     if (fromLive && liveMode) {
+      lastDist = null;
       requests += 1;
       const action = data.action || data.route || "";
-      if (action === "local" || data.route === "local") local += 1;
+      if (action === "canned") canned += 1;
+      else if (action === "local" || data.route === "local") local += 1;
       if (action === "cloud" || action === "origin_passthrough" || data.route === "cloud") cloud += 1;
       tokenTotal += Number(data.tokens) || 0;
       if (data.latency_ms != null) latencySum += Number(data.latency_ms);
@@ -81,10 +202,12 @@
         : data.original_model;
     }
     if (modelLabel) parts.push(modelLabel);
-    const hostModel = parts.join(" · ") || "—";
-    const rule = data.rule || "—";
-    const latency = data.latency_ms != null ? Number(data.latency_ms).toFixed(1) : "";
-    const tokens = data.tokens != null && data.tokens !== "" ? data.tokens : "";
+    const hostModel = parts.join(" Â· ") || "â€”";
+    const rule = data.rule || "â€”";
+    const hasLatency = data.latency_ms != null && data.latency_ms !== "";
+    const hasTokens = data.tokens != null && data.tokens !== "";
+    const latency = hasLatency ? Number(data.latency_ms).toFixed(1) : "â€”";
+    const tokens = hasTokens ? data.tokens : "â€”";
     row.innerHTML = `<span>${time}</span><span>${data.mode || ""}</span><span>${action}</span><span>${hostModel}</span><span>${rule}</span><span>${latency}</span><span>${tokens}</span>`;
     if (prepend) logEl.prepend(row);
     else logEl.appendChild(row);
@@ -320,11 +443,11 @@
     }
     g.innerHTML = gpus.map((gpu) => {
       if (gpu.error) {
-        return `<div class="gauge"><div class="gauge-label">GPU ${gpu.index} — ${gpu.error}</div></div>`;
+        return `<div class="gauge"><div class="gauge-label">GPU ${gpu.index} â€” ${gpu.error}</div></div>`;
       }
       const usedPct = gpu.total_bytes ? Math.round((gpu.used_bytes / gpu.total_bytes) * 100) : 0;
       return `<div class="gauge">
-        <div class="gauge-label">GPU ${gpu.index} — ${usedPct}% used · ${gpu.used_mb}/${gpu.total_mb} MB</div>
+        <div class="gauge-label">GPU ${gpu.index} â€” ${usedPct}% used Â· ${gpu.used_mb}/${gpu.total_mb} MB</div>
         <div class="gauge-bar"><div class="gauge-used" style="width:${usedPct}%"></div></div>
       </div>`;
     }).join("");
@@ -336,7 +459,7 @@
     gpuAssignmentDraft = { ...(snap.gpu_assignments || {}) };
     const gpuCount = (snap.gpus || []).filter((g) => !g.error).length;
     const options = [];
-    options.push(`<option value="">—</option>`);
+    options.push(`<option value="">â€”</option>`);
     const n = Math.max(gpuCount, 1);
     for (let i = 0; i < n; i++) {
       options.push(`<option value="${i}">${i}</option>`);
@@ -380,7 +503,9 @@
 
   async function loadVRAM() {
     const errEl = document.getElementById("vram-errors");
+    const warnEl = document.getElementById("vram-warnings");
     errEl.hidden = true;
+    if (warnEl) warnEl.hidden = true;
     const res = await fetch("/api/vram");
     if (!res.ok) {
       errEl.hidden = false;
@@ -393,6 +518,10 @@
     if (snap.backend_errors?.length) {
       errEl.hidden = false;
       errEl.textContent = snap.backend_errors.join("; ");
+    }
+    if (warnEl && snap.backend_warnings?.length) {
+      warnEl.hidden = false;
+      warnEl.textContent = "Optional backend unreachable: " + snap.backend_warnings.join("; ");
     }
   }
 
@@ -424,7 +553,7 @@
           <button type="button" class="linkish rule-del" title="Remove this rule">Remove</button>
         </div>
         <div class="rule-card-grid">
-          <label title="explicit: /local /cloud commands · context_size: token threshold · script: Starlark file · always: default fallback · regex: pattern match">Trigger type
+          <label title="explicit: /local /cloud commands Â· context_size: token threshold Â· script: Starlark file Â· always: default fallback Â· regex: pattern match">Trigger type
             <select data-f="trigger.type">
               ${opt("explicit", trig.type)}
               ${opt("context_size", trig.type)}
@@ -438,7 +567,7 @@
           <label title="Starlark script path relative to process cwd">Script file<input data-f="trigger.file" value="${esc(trig.file || "")}" /></label>
           <label title="Comparison operator for context_size (>, >=, <, <=, ==)">Operator<input data-f="trigger.operator" value="${esc(trig.operator || "")}" /></label>
           <label title="Token count threshold for context_size rules">Value<input data-f="trigger.value" type="number" value="${trig.value ?? 0}" /></label>
-          <label title="local = Ollama/vLLM · cloud = BYOK (gateway) or origin passthrough (MITM)">Action target
+          <label title="local = Ollama/vLLM Â· cloud = BYOK (gateway) or origin passthrough (MITM)">Action target
             <select data-f="action.target">
               ${opt("local", act.target)}
               ${opt("cloud", act.target)}
@@ -571,7 +700,7 @@
     (sessions || []).forEach((s) => {
       const optEl = document.createElement("option");
       optEl.value = s.id;
-      const label = s.current ? `Current · ${s.id.slice(0, 12)}…` : `${new Date(s.started_at).toLocaleString()} · ${s.request_count} req`;
+      const label = s.current ? `Current Â· ${s.id.slice(0, 12)}â€¦` : `${new Date(s.started_at).toLocaleString()} Â· ${s.request_count} req`;
       optEl.textContent = label;
       if (s.current) optEl.selected = true;
       sel.appendChild(optEl);
@@ -593,14 +722,19 @@
     if (aggRes.ok) {
       const agg = await aggRes.json();
       const s = agg.session || {};
-      meta.textContent = `${s.request_count || 0} requests · ${s.token_total || 0} tokens · avg ${Number(agg.avg_latency_ms || 0).toFixed(1)}ms`;
+      meta.textContent = `${s.request_count || 0} requests Â· ${s.token_total || 0} tokens Â· avg ${Number(agg.avg_latency_ms || 0).toFixed(1)}ms`;
       if (!isLive) {
-        requests = s.request_count || 0;
-        local = s.local_count || 0;
-        cloud = s.cloud_count || 0;
         tokenTotal = s.token_total || 0;
         latencySum = s.latency_sum_ms || 0;
-        updateMetricsUI();
+        if (agg.distribution) {
+          applyDistribution(agg.distribution, { requests: s.request_count });
+        } else {
+          requests = s.request_count || 0;
+          local = s.local_count || 0;
+          cloud = s.cloud_count || 0;
+          canned = s.canned_count || 0;
+          updateMetricsUI();
+        }
       }
     }
     if (!isLive) {
@@ -608,7 +742,7 @@
       const reqRes = await fetch(`/api/sessions/${encodeURIComponent(id)}/requests?limit=200`);
       if (reqRes.ok) {
         const reqs = await reqRes.json();
-        // API returns newest first; append in reverse so newest ends on top via prepend... already newest first, prepend each would reverse — append in order
+        // API returns newest first; append in reverse so newest ends on top via prepend... already newest first, prepend each would reverse â€” append in order
         reqs.forEach((r) => addLog(r, { live: false, prepend: false }));
       }
     } else if (logEl.children.length === 0) {
@@ -617,17 +751,22 @@
       if (reqRes.ok) {
         const reqs = await reqRes.json();
         reqs.reverse().forEach((r) => addLog(r, { live: false, prepend: true }));
-        // rebuild live counters from aggregates
+        // rebuild live counters from aggregates / distribution (includes origin_passthrough as cloud)
         const aggRes2 = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
         if (aggRes2.ok) {
           const agg = await aggRes2.json();
           const s = agg.session || {};
-          requests = s.request_count || 0;
-          local = s.local_count || 0;
-          cloud = s.cloud_count || 0;
           tokenTotal = s.token_total || 0;
           latencySum = s.latency_sum_ms || 0;
-          updateMetricsUI();
+          if (agg.distribution) {
+            applyDistribution(agg.distribution, { requests: s.request_count });
+          } else {
+            requests = s.request_count || 0;
+            local = s.local_count || 0;
+            cloud = s.cloud_count || 0;
+            canned = s.canned_count || 0;
+            updateMetricsUI();
+          }
         }
       }
     }
@@ -691,7 +830,7 @@
     loadYamlEditor();
   });
 
-  // Quick log-level change from config still goes through full save; also listen for select blur optional — covered by Save.
+  // Quick log-level change from config still goes through full save; also listen for select blur optional â€” covered by Save.
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -699,7 +838,10 @@
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === "request") {
-        if (liveMode) addLog(msg.data || {}, { live: true, prepend: true });
+        if (liveMode) {
+          addLog(msg.data || {}, { live: true, prepend: true });
+          refreshMetricsSnapshot();
+        }
       }
       if (msg.type === "vram_update") {
         const g = document.getElementById("gpu-gauges");
@@ -716,4 +858,5 @@
   loadConfig();
   loadVRAM();
   loadSessions();
+  refreshMetricsSnapshot();
 })();

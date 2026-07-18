@@ -1,17 +1,38 @@
 package config
 
 type Config struct {
-	Server       ServerConfig      `yaml:"server" json:"server"`
-	Thresholds   ThresholdConfig   `yaml:"thresholds" json:"thresholds"`
-	VRAM         VRAMConfig        `yaml:"vram" json:"vram"`
-	Models       []ModelConfig     `yaml:"models" json:"models"`
-	ModelAliases map[string]string `yaml:"model_aliases" json:"model_aliases"`
-	Routing      RoutingConfig     `yaml:"routing" json:"routing"`
-	Cloud        CloudConfig       `yaml:"cloud" json:"cloud"`
-	Backends     []BackendConfig   `yaml:"backends" json:"backends"`
-	Dashboard    DashboardConfig   `yaml:"dashboard" json:"dashboard"`
-	Transform    TransformConfig   `yaml:"transform" json:"transform"`
-	MITM         MITMConfig        `yaml:"mitm" json:"mitm"`
+	Server         ServerConfig         `yaml:"server" json:"server"`
+	Thresholds     ThresholdConfig      `yaml:"thresholds" json:"thresholds"`
+	VRAM           VRAMConfig           `yaml:"vram" json:"vram"`
+	Models         []ModelConfig        `yaml:"models" json:"models"`
+	ModelAliases   map[string]string    `yaml:"model_aliases" json:"model_aliases"`
+	Routing        RoutingConfig        `yaml:"routing" json:"routing"`
+	Orchestration  OrchestrationConfig  `yaml:"orchestration,omitempty" json:"orchestration,omitempty"`
+	Cloud          CloudConfig          `yaml:"cloud" json:"cloud"`
+	Backends       []BackendConfig      `yaml:"backends" json:"backends"`
+	Dashboard      DashboardConfig      `yaml:"dashboard" json:"dashboard"`
+	Transform      TransformConfig      `yaml:"transform" json:"transform"`
+	MITM           MITMConfig           `yaml:"mitm" json:"mitm"`
+}
+
+// OrchestrationConfig holds swarm/fan-out feature flags (foundation; default off).
+type OrchestrationConfig struct {
+	FanOut      FanOutConfig      `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	Concurrency ConcurrencyConfig `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+}
+
+// FanOutConfig enables StrategyFanOut on the gateway executor (max 2–4 workers).
+type FanOutConfig struct {
+	Enabled    bool `yaml:"enabled" json:"enabled"`
+	MaxWorkers int  `yaml:"max_workers,omitempty" json:"max_workers,omitempty"`
+}
+
+// ConcurrencyConfig sizes backpressure channels for swarm/fan-out helpers.
+// Zero values fall back to swarm package defaults.
+type ConcurrencyConfig struct {
+	WorkerQueueSize int `yaml:"worker_queue_size,omitempty" json:"worker_queue_size,omitempty"`
+	ResultChanSize  int `yaml:"result_chan_size,omitempty" json:"result_chan_size,omitempty"`
+	MaxInflight     int `yaml:"max_inflight,omitempty" json:"max_inflight,omitempty"`
 }
 
 type MITMConfig struct {
@@ -21,6 +42,24 @@ type MITMConfig struct {
 	CAKey              string   `yaml:"ca_key" json:"ca_key"`
 	Hosts              []string `yaml:"hosts" json:"hosts"`
 	PassthroughDefault bool     `yaml:"passthrough_default" json:"passthrough_default"`
+	// DebugAgentRPC enables Path B R&D observability: structured logs, optional body
+	// dumps under ~/.glider/mitm-debug/, and GET /api/mitm/debug/recent.
+	// Also enabled when env GLIDER_MITM_DEBUG_RPC is 1/true/yes (see ApplyMITMDebugEnv).
+	DebugAgentRPC bool   `yaml:"debug_agent_rpc" json:"debug_agent_rpc"`
+	DebugDumpDir  string `yaml:"debug_dump_dir,omitempty" json:"debug_dump_dir,omitempty"`
+	// AgentRPCFulfill enables experimental Path B: BidiAppend context_envelope
+	// extract → DecideLocal → RunSSE text fulfill when correlated. Fail-soft to
+	// origin when wait times out or encode fails. Default false (safe).
+	// Also: GLIDER_MITM_AGENT_RPC_FULFILL=1 (see ApplyMITMDebugEnv).
+	AgentRPCFulfill bool `yaml:"agent_rpc_fulfill" json:"agent_rpc_fulfill"`
+	// AgentRPCCannedOnError, when fulfill is on and CompleteLocal fails (e.g. Ollama
+	// down), writes a canned RunSSE text stream instead of origin passthrough.
+	// Lets Cursor UI acceptance of the Path B codec be tested without a local backend.
+	// Also: GLIDER_MITM_AGENT_RPC_CANNED=1. Default false (safe).
+	AgentRPCCannedOnError bool `yaml:"agent_rpc_canned_on_error" json:"agent_rpc_canned_on_error"`
+	// AgentRPCCannedText is the synthetic reply used when canned-on-error fires.
+	// Empty → default "pong from glider (canned Path B)".
+	AgentRPCCannedText string `yaml:"agent_rpc_canned_text,omitempty" json:"agent_rpc_canned_text,omitempty"`
 }
 
 type ServerConfig struct {
@@ -58,15 +97,88 @@ type ModelConfig struct {
 
 type RoutingConfig struct {
 	Rules []RuleConfig `yaml:"rules" json:"rules"`
+	// TaskClassifier injects heuristic rules (tools → cloud, must-cloud keywords,
+	// small-local keywords) when Enabled. Priorities default below explicit /cloud
+	// (99) and above context_size (10). See planning/smart_routing_and_local_tools.md.
+	TaskClassifier TaskClassifierConfig `yaml:"task_classifier,omitempty" json:"task_classifier,omitempty"`
+	// TurnFamilyTTL is how long a DecideLocal / explicit turn family stays open for
+	// reply-summary / title follow-ons (e.g. "90s"). Empty → 90s. Not conversation-wide.
+	// See planning/routing_session_policy.md.
+	TurnFamilyTTL string `yaml:"turn_family_ttl,omitempty" json:"turn_family_ttl,omitempty"`
+	// ToolFollowup controls per-tool-step re-decide for child RunSSE / tool loops
+	// after a parent cloud|local decision. Path B logs would_local and fulfills
+	// when HasRunSSEToolCodec; otherwise origin. Path A routes allowlisted tools locally.
+	ToolFollowup ToolFollowupConfig `yaml:"tool_followup,omitempty" json:"tool_followup,omitempty"`
+}
+
+// ToolFollowupConfig is the configurable methodology for tool-step routing after a
+// parent turn decision (see planning/routing_session_policy.md).
+type ToolFollowupConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// InheritParentDefault starts from the parent turn's cloud|local decision.
+	// Nil → true.
+	InheritParentDefault *bool `yaml:"inherit_parent_default,omitempty" json:"inherit_parent_default,omitempty"`
+	// Reevaluate allows local offload of safe tools even when parent was cloud.
+	// Nil → true when Enabled.
+	Reevaluate *bool `yaml:"reevaluate,omitempty" json:"reevaluate,omitempty"`
+	// LocalToolAllowlist lists tool names (case-insensitive) or glob-ish prefixes
+	// that may run local when reevaluate is on (e.g. read_file, grep, Glob).
+	LocalToolAllowlist []string `yaml:"local_tool_allowlist,omitempty" json:"local_tool_allowlist,omitempty"`
+	// CloudToolDenylist forces cloud/origin when any tool matches (Shell, Write, …).
+	CloudToolDenylist []string `yaml:"cloud_tool_denylist,omitempty" json:"cloud_tool_denylist,omitempty"`
+}
+
+// InheritParentOrDefault is true unless explicitly set false.
+func (c ToolFollowupConfig) InheritParentOrDefault() bool {
+	if c.InheritParentDefault == nil {
+		return true
+	}
+	return *c.InheritParentDefault
+}
+
+// ReevaluateOrDefault is true when Enabled and Reevaluate is nil or true.
+func (c ToolFollowupConfig) ReevaluateOrDefault() bool {
+	if !c.Enabled {
+		return false
+	}
+	if c.Reevaluate == nil {
+		return true
+	}
+	return *c.Reevaluate
+}
+
+// TaskClassifierConfig controls built-in task-shape routing (M1).
+type TaskClassifierConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// ToolsForceCloud routes any request with tools[] to cloud/origin (default true).
+	// Set false to allow local + tool passthrough to Ollama (models must support tools).
+	ToolsForceCloud *bool `yaml:"tools_force_cloud,omitempty" json:"tools_force_cloud,omitempty"`
+	// MustCloudPatterns / SmallLocalPatterns override built-in regex lists when non-empty.
+	MustCloudPatterns  []string `yaml:"must_cloud_patterns,omitempty" json:"must_cloud_patterns,omitempty"`
+	SmallLocalPatterns []string `yaml:"small_local_patterns,omitempty" json:"small_local_patterns,omitempty"`
+	LocalModel         string   `yaml:"local_model,omitempty" json:"local_model,omitempty"`
+	CloudBackend       string   `yaml:"cloud_backend,omitempty" json:"cloud_backend,omitempty"`
+	CloudModel         string   `yaml:"cloud_model,omitempty" json:"cloud_model,omitempty"`
+	ToolsPriority      int      `yaml:"tools_priority,omitempty" json:"tools_priority,omitempty"`
+	MustCloudPriority  int      `yaml:"must_cloud_priority,omitempty" json:"must_cloud_priority,omitempty"`
+	SmallLocalPriority int      `yaml:"small_local_priority,omitempty" json:"small_local_priority,omitempty"`
+}
+
+// ToolsForceCloudOrDefault is true unless explicitly set false.
+func (c TaskClassifierConfig) ToolsForceCloudOrDefault() bool {
+	if c.ToolsForceCloud == nil {
+		return true
+	}
+	return *c.ToolsForceCloud
 }
 
 type RuleConfig struct {
-	Name     string        `yaml:"name" json:"name"`
-	Priority int           `yaml:"priority" json:"priority"`
+	Name     string `yaml:"name" json:"name"`
+	Priority int    `yaml:"priority" json:"priority"`
 	// Enabled defaults to true when omitted (nil). Set false to keep the rule in config but skip it.
-	Enabled  *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Trigger  TriggerConfig `yaml:"trigger" json:"trigger"`
-	Action   ActionConfig  `yaml:"action" json:"action"`
+	Enabled *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Trigger TriggerConfig `yaml:"trigger" json:"trigger"`
+	Action  ActionConfig  `yaml:"action" json:"action"`
 }
 
 // IsEnabled reports whether the rule should participate in routing.
@@ -155,7 +267,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Backends: []BackendConfig{
-			{Name: "ollama", Type: "local", URL: "http://localhost:11434", HealthCheckInterval: "30s"},
+			{Name: "ollama", Type: "local", URL: "http://127.0.0.1:11434", HealthCheckInterval: "30s"},
 		},
 		Cloud: CloudConfig{
 			Providers: []CloudProviderConfig{
@@ -166,15 +278,22 @@ func DefaultConfig() *Config {
 		},
 		Dashboard: DashboardConfig{Enabled: true},
 		MITM: MITMConfig{
-			Enabled:            false,
-			Port:               8082,
-			CACert:             "",
-			CAKey:              "",
-			Hosts:              []string{"api2.cursor.sh", "api3.cursor.sh", "api4.cursor.sh", "*.api5.cursor.sh"},
-			PassthroughDefault: true,
+			Enabled:               false,
+			Port:                  8082,
+			CACert:                "",
+			CAKey:                 "",
+			Hosts:                 []string{"api2.cursor.sh", "api3.cursor.sh", "api4.cursor.sh", "*.api5.cursor.sh"},
+			PassthroughDefault:    true,
+			DebugAgentRPC:         false,
+			AgentRPCFulfill:       false,
+			AgentRPCCannedOnError: false,
 		},
 		ModelAliases: map[string]string{},
 		Routing: RoutingConfig{
+			TaskClassifier: TaskClassifierConfig{
+				Enabled:    true,
+				LocalModel: "codellama:7b",
+			},
 			Rules: []RuleConfig{
 				{
 					Name:     "Explicit Local",

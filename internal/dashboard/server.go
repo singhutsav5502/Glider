@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/metrics"
+	"github.com/glider-ai/glider/internal/mitm"
+	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/gorilla/websocket"
 )
 
@@ -24,7 +26,26 @@ type Server struct {
 	Models   ModelController
 	History  *metrics.HistoryStore
 	GPUs     GPUInfoProvider
+	Metrics  *metrics.Collector
+	// MITMDebug is optional Path B R&D observer (GET /api/mitm/debug/recent).
+	MITMDebug MITMDebugSource
+	// ContextGraph is optional turn-family event log (GET /api/context/turns/{id}).
+	ContextGraph ContextGraphSource
 	upgrader websocket.Upgrader
+}
+
+// MITMDebugSource exposes recent agent RPC observations (implemented by mitm.AgentRPCDebugger).
+type MITMDebugSource interface {
+	Recent(limit int) []mitm.RPCObservation
+	PathCounts() map[string]int
+}
+
+// ContextGraphSource exposes orchestrator context turn views.
+type ContextGraphSource interface {
+	Turn(id string) (contextgraph.TurnView, bool)
+	RecentTurns(limit int) []contextgraph.TurnView
+	RecentEvents(limit int) []contextgraph.Event
+	Stats() contextgraph.StoreStats
 }
 
 func New(addr string, bus *metrics.Bus, cfg ConfigStore, models ModelController) *Server {
@@ -100,6 +121,41 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		s.handleSession(w, r)
+	})
+	mux.HandleFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleGetMetrics(w, r)
+	})
+	mux.HandleFunc("/api/mitm/debug/recent", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleMITMDebugRecent(w, r)
+	})
+	mux.HandleFunc("/api/context/recent", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextRecent(w, r)
+	})
+	mux.HandleFunc("/api/context/turns", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextTurns(w, r)
+	})
+	mux.HandleFunc("/api/context/turns/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleContextTurn(w, r)
 	})
 	mux.HandleFunc("/ws", s.handleWS)
 

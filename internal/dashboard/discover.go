@@ -47,6 +47,7 @@ type VRAMSnapshot struct {
 	HeadroomMB      int               `json:"headroom_mb"`
 	MaxLoadedModels int               `json:"max_loaded_models"`
 	BackendErrors   []string          `json:"backend_errors,omitempty"`
+	BackendWarnings []string          `json:"backend_warnings,omitempty"`
 	Catalog         []string          `json:"catalog"`
 }
 
@@ -64,7 +65,9 @@ func (n nvidiaProvider) AllMemoryInfo() ([]vram.GPUMemoryInfo, error) {
 }
 
 // DiscoverModels probes configured backends and merges with config + registry.
-func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Registry) (models []DiscoveredModel, catalog config.ModelCatalog, backendErrs []string) {
+// When at least one local backend responds, unreachable peers are returned as
+// warnings (optional backends) rather than hard errors.
+func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Registry) (models []DiscoveredModel, catalog config.ModelCatalog, backendErrs, backendWarns []string) {
 	byName := map[string]*DiscoveredModel{}
 	catalog = config.NewModelCatalog()
 
@@ -133,6 +136,8 @@ func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Regist
 		}
 	}
 
+	var probeFails []string
+	liveOK := false
 	if cfg != nil {
 		clientTimeout := 4 * time.Second
 		for _, b := range cfg.Backends {
@@ -142,8 +147,9 @@ func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Regist
 				ob := ollama.New(b.URL)
 				tags, err := ob.ListTags(bctx)
 				if err != nil {
-					backendErrs = append(backendErrs, "ollama("+b.URL+"): "+err.Error())
+					probeFails = append(probeFails, "ollama("+b.URL+"): "+err.Error())
 				} else {
+					liveOK = true
 					for _, tag := range tags {
 						upsert(tag, b.Name, "ollama", true)
 					}
@@ -163,8 +169,9 @@ func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Regist
 				vb := vllm.New(b.URL)
 				ids, err := vb.ListModels(bctx)
 				if err != nil {
-					backendErrs = append(backendErrs, "vllm("+b.URL+"): "+err.Error())
+					probeFails = append(probeFails, "vllm("+b.URL+"): "+err.Error())
 				} else {
+					liveOK = true
 					for _, id := range ids {
 						upsert(id, b.Name, "vllm", true)
 					}
@@ -172,6 +179,12 @@ func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Regist
 			}
 			cancel()
 		}
+	}
+
+	if liveOK {
+		backendWarns = probeFails
+	} else {
+		backendErrs = probeFails
 	}
 
 	models = make([]DiscoveredModel, 0, len(byName))
@@ -184,7 +197,7 @@ func DiscoverModels(ctx context.Context, cfg *config.Config, reg *backend.Regist
 		}
 		return models[i].Name < models[j].Name
 	})
-	return models, catalog, backendErrs
+	return models, catalog, backendErrs, backendWarns
 }
 
 func collectGPUStatus(provider GPUInfoProvider) []GPUStatus {

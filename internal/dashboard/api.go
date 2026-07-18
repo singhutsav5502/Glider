@@ -12,6 +12,9 @@ import (
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/metrics"
+	"github.com/glider-ai/glider/internal/mitm"
 	"gopkg.in/yaml.v3"
 )
 
@@ -123,7 +126,7 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	_, catalog, _ := s.discover(ctx)
+	_, catalog, _, _ := s.discover(ctx)
 	gpus := collectGPUStatus(s.GPUs)
 	gpuCount := 0
 	for _, g := range gpus {
@@ -195,7 +198,7 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	_, catalog, backendErrs := s.discover(ctx)
+	_, catalog, backendErrs, backendWarns := s.discover(ctx)
 	gpus := collectGPUStatus(s.GPUs)
 	gpuCount := 0
 	for _, g := range gpus {
@@ -208,6 +211,7 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 		GPUCount: gpuCount,
 		Soft:     true,
 	})
+	res.Warnings = append(res.Warnings, backendWarns...)
 	res.Warnings = append(res.Warnings, backendErrs...)
 	writeJSON(w, res)
 }
@@ -215,20 +219,21 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	models, _, errs := s.discover(ctx)
+	models, _, errs, warns := s.discover(ctx)
 	if len(models) == 0 && s.Models != nil {
 		// Fallback: registry-only list for older clients.
 		writeJSON(w, s.Models.ListModels())
 		return
 	}
 	type wrap struct {
-		Models []DiscoveredModel `json:"models"`
-		Errors []string          `json:"errors,omitempty"`
+		Models   []DiscoveredModel `json:"models"`
+		Errors   []string          `json:"errors,omitempty"`
+		Warnings []string          `json:"warnings,omitempty"`
 	}
 	// Keep backward compatible: if Accept wants bare array historically tests decode []ModelInfo.
 	// Tests expect []backend.ModelInfo from registry. Prefer discovered when rich=1 or always return discovered as primary.
 	if r.URL.Query().Get("rich") == "1" || r.URL.Query().Get("format") == "rich" {
-		writeJSON(w, wrap{Models: models, Errors: errs})
+		writeJSON(w, wrap{Models: models, Errors: errs, Warnings: warns})
 		return
 	}
 	if s.Models != nil && len(models) == 0 {
@@ -242,7 +247,7 @@ func (s *Server) handleGetModels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetVRAM(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	models, catalog, errs := s.discover(ctx)
+	models, catalog, errs, warns := s.discover(ctx)
 	cfg := &config.Config{}
 	if s.Config != nil {
 		cfg = s.Config.Get()
@@ -252,6 +257,7 @@ func (s *Server) handleGetVRAM(w http.ResponseWriter, r *http.Request) {
 		Models:          models,
 		GPUAssignments:  map[string]int{},
 		BackendErrors:   errs,
+		BackendWarnings: warns,
 		Catalog:         catalog.Names(),
 	}
 	if cfg != nil {
@@ -386,7 +392,185 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, agg)
 }
 
-func (s *Server) discover(ctx context.Context) ([]DiscoveredModel, config.ModelCatalog, []string) {
+func (s *Server) handleMITMDebugRecent(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+			if limit > 500 {
+				limit = 500
+			}
+		}
+	}
+	type payload struct {
+		Enabled      bool                     `json:"enabled"`
+		DumpDir      string                   `json:"dump_dir,omitempty"`
+		Recent       []mitm.RPCObservation    `json:"recent"`
+		PathCounts   map[string]int           `json:"path_counts"`
+		Metrics      map[string]int           `json:"metrics,omitempty"`
+		Distribution *metrics.Distribution    `json:"distribution,omitempty"`
+		ContextTurns []contextgraph.TurnView  `json:"context_turns,omitempty"`
+	}
+	out := payload{
+		Enabled:    false,
+		Recent:     []mitm.RPCObservation{},
+		PathCounts: map[string]int{},
+	}
+	if s.MITMDebug != nil {
+		out.Enabled = true
+		out.Recent = s.MITMDebug.Recent(limit)
+		if out.Recent == nil {
+			out.Recent = []mitm.RPCObservation{}
+		}
+		out.PathCounts = s.MITMDebug.PathCounts()
+		if out.PathCounts == nil {
+			out.PathCounts = map[string]int{}
+		}
+		if dbg, ok := s.MITMDebug.(*mitm.AgentRPCDebugger); ok && dbg != nil {
+			out.DumpDir = dbg.DumpDir
+			if out.DumpDir == "" {
+				out.DumpDir = mitm.DefaultDebugDumpDir()
+			} else {
+				out.DumpDir = mitm.ExpandPath(out.DumpDir)
+			}
+		}
+	}
+	if s.Metrics != nil {
+		// Expose mitm skip/intercept counters for Path B R&D.
+		all := s.Metrics.GetRouteCounts()
+		out.Metrics = make(map[string]int)
+		for k, v := range all {
+			if strings.HasPrefix(k, "action:") || strings.HasPrefix(k, "mode:mitm") {
+				out.Metrics[k] = v
+			}
+		}
+		dist := s.Metrics.GetDistribution()
+		out.Distribution = &dist
+	}
+	if s.ContextGraph != nil {
+		out.ContextTurns = s.ContextGraph.RecentTurns(10)
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleContextRecent(w http.ResponseWriter, r *http.Request) {
+	turnLimit := 20
+	eventLimit := 50
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			turnLimit = n
+			if turnLimit > 100 {
+				turnLimit = 100
+			}
+		}
+	}
+	if q := r.URL.Query().Get("events"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			eventLimit = n
+			if eventLimit > 500 {
+				eventLimit = 500
+			}
+		}
+	}
+	type payload struct {
+		Turns         []contextgraph.TurnView `json:"turns"`
+		RecentEvents  []contextgraph.Event    `json:"recent_events"`
+		Stats         contextgraph.StoreStats `json:"stats"`
+	}
+	out := payload{
+		Turns:        []contextgraph.TurnView{},
+		RecentEvents: []contextgraph.Event{},
+		Stats:        contextgraph.StoreStats{ByKind: map[string]int{}},
+	}
+	if s.ContextGraph != nil {
+		out.Turns = s.ContextGraph.RecentTurns(turnLimit)
+		if out.Turns == nil {
+			out.Turns = []contextgraph.TurnView{}
+		}
+		out.RecentEvents = s.ContextGraph.RecentEvents(eventLimit)
+		if out.RecentEvents == nil {
+			out.RecentEvents = []contextgraph.Event{}
+		}
+		out.Stats = s.ContextGraph.Stats()
+		if out.Stats.ByKind == nil {
+			out.Stats.ByKind = map[string]int{}
+		}
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleContextTurns(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+			if limit > 100 {
+				limit = 100
+			}
+		}
+	}
+	type payload struct {
+		Turns []contextgraph.TurnView  `json:"turns"`
+		Stats contextgraph.StoreStats  `json:"stats"`
+	}
+	out := payload{
+		Turns: []contextgraph.TurnView{},
+		Stats: contextgraph.StoreStats{ByKind: map[string]int{}},
+	}
+	if s.ContextGraph != nil {
+		out.Turns = s.ContextGraph.RecentTurns(limit)
+		if out.Turns == nil {
+			out.Turns = []contextgraph.TurnView{}
+		}
+		out.Stats = s.ContextGraph.Stats()
+		if out.Stats.ByKind == nil {
+			out.Stats.ByKind = map[string]int{}
+		}
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleContextTurn(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/context/turns/")
+	id = strings.Trim(id, "/")
+	if id == "" {
+		http.Error(w, "missing turn id", http.StatusBadRequest)
+		return
+	}
+	if s.ContextGraph == nil {
+		http.Error(w, "context graph not enabled", http.StatusNotFound)
+		return
+	}
+	view, ok := s.ContextGraph.Turn(id)
+	if !ok {
+		http.Error(w, "turn not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, view)
+}
+
+func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
+	var snap metrics.Snapshot
+	if s.Metrics == nil {
+		snap = metrics.Snapshot{
+			Distribution: metrics.ComputeDistribution(nil),
+			RouteCounts:  map[string]int{},
+		}
+	} else {
+		snap = s.Metrics.GetSnapshot()
+	}
+	// Optional companion: contextgraph turn-route tallies (does not replace distribution %).
+	if s.ContextGraph != nil {
+		if rt, ok := s.ContextGraph.(interface{ RouteTallies() map[string]int }); ok {
+			if m := rt.RouteTallies(); len(m) > 0 {
+				snap.ContextRoutes = m
+			}
+		}
+	}
+	writeJSON(w, snap)
+}
+
+func (s *Server) discover(ctx context.Context) ([]DiscoveredModel, config.ModelCatalog, []string, []string) {
 	var cfg *config.Config
 	if s.Config != nil {
 		cfg = s.Config.Get()

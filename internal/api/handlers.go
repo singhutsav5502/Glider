@@ -52,6 +52,8 @@ func (h *Handlers) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body = NormalizeAnthropicShapedJSON(body)
+
 	var req *backend.CompletionRequest
 	var responsesMode bool
 	if LooksLikeResponses(body) {
@@ -59,6 +61,9 @@ func (h *Handlers) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		responsesMode = true
 	} else {
 		req, err = ParseCompletionRequest(body)
+	}
+	if err == nil && req != nil {
+		req.Model = NormalizeGatewayModel(req.Model)
 	}
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
@@ -105,11 +110,13 @@ func (h *Handlers) Responses(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid body: "+err.Error(), "invalid_request_error")
 		return
 	}
+	body = NormalizeAnthropicShapedJSON(body)
 	req, err := ResponsesToCompletion(body)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 		return
 	}
+	req.Model = NormalizeGatewayModel(req.Model)
 	req.Metadata.RequestID = RequestIDFromContext(r.Context())
 	if req.Metadata.Priority == 0 {
 		req.Metadata.Priority = backend.PriorityHigh

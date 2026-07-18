@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
+	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/router"
 	"github.com/glider-ai/glider/internal/transform"
@@ -32,6 +33,9 @@ type PipelineCompleter struct {
 	MaxContext   int
 	Metrics      *metrics.Collector
 	ModelAliases map[string]string
+	// Graph is optional; nil → contextgraph.Default(). Classifier / explicit
+	// decisions emit EventRouteDecided without owning contextgraph internals.
+	Graph *contextgraph.Store
 }
 
 func (p *PipelineCompleter) Complete(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
@@ -41,6 +45,37 @@ func (p *PipelineCompleter) Complete(r *http.Request, req *backend.CompletionReq
 // CompleteLocal is the MITM entry: same harness as Complete, but non-local → ErrOriginPassthrough.
 func (p *PipelineCompleter) CompleteLocal(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	return p.Handle(r, req, CompleteOptions{OriginPassthrough: true})
+}
+
+// DecideLocal runs alias → tokenize → route without executing a backend.
+// Used by Path B Bidi extract so local intent can arm AgentFulfillHub for RunSSE.
+func (p *PipelineCompleter) DecideLocal(r *http.Request, req *backend.CompletionRequest) (*backend.RoutingDecision, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+	ApplyModelAlias(req, p.ModelAliases)
+	if p.Tokenizer != nil {
+		req.Metadata.EstimatedTokens = p.Tokenizer.EstimateRequestTokens(req)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("nil request context")
+	}
+	decision, err := p.Router.Route(r.Context(), req)
+	if err != nil {
+		p.emitOrchEvent(contextgraph.EventError, req, "", map[string]string{"where": "route", "err": err.Error()})
+		return nil, err
+	}
+	if decision.BackendName == "" {
+		decision.BackendName = ResolveBackendName(decision)
+	}
+	if decision.Model != "" {
+		req.Model = decision.Model
+	}
+	if decision.Adapter != "" {
+		req.Metadata.Adapter = decision.Adapter
+	}
+	p.emitRouteDecided(req, decision, "decide_local")
+	return decision, nil
 }
 
 // Handle runs alias → tokenize → route → (optional origin passthrough) → transform → execute.
@@ -67,7 +102,8 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 	}
 	decision, err := p.Router.Route(r.Context(), req)
 	if err != nil {
-		p.record(req, mode, "error", "", host, path, "", start)
+		p.record(req, mode, "error", "", host, path, nil, start)
+		p.emitOrchEvent(contextgraph.EventError, req, "orch", map[string]string{"where": "route", "err": err.Error()})
 		return nil, err
 	}
 	if decision.BackendName == "" {
@@ -79,9 +115,13 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 	if decision.Adapter != "" {
 		req.Metadata.Adapter = decision.Adapter
 	}
+	p.emitRouteDecided(req, decision, mode)
 
 	if opts.OriginPassthrough && !IsLocalTarget(decision.Target) {
-		p.record(req, mode, "origin_passthrough", decision.Target, host, path, decision.RuleName, start)
+		p.record(req, mode, "origin_passthrough", decision.Target, host, path, decision, start)
+		p.emitOrchEvent(contextgraph.EventOriginPassthrough, req, decision.Target, map[string]string{
+			"rule": decision.RuleName, "route": decision.Target, "source": mode,
+		})
 		return nil, ErrOriginPassthrough
 	}
 
@@ -95,11 +135,19 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 
 	ch, err := p.Executor.Execute(r.Context(), decision, req)
 	if err != nil {
-		p.record(req, mode, "error", decision.Target, host, path, decision.RuleName, start)
+		p.record(req, mode, "error", decision.Target, host, path, decision, start)
+		p.emitOrchEvent(contextgraph.EventError, req, decision.Target, map[string]string{
+			"where": "execute", "err": err.Error(), "rule": decision.RuleName,
+		})
 		return nil, err
 	}
 
 	if p.Metrics == nil {
+		if IsLocalTarget(decision.Target) {
+			p.emitOrchEvent(contextgraph.EventFulfilledLocal, req, "local", map[string]string{
+				"rule": decision.RuleName, "source": mode,
+			})
+		}
 		return ch, nil
 	}
 
@@ -113,14 +161,84 @@ func (p *PipelineCompleter) Handle(r *http.Request, req *backend.CompletionReque
 		if !IsLocalTarget(decision.Target) {
 			action = "cloud"
 		}
-		p.record(req, mode, action, decision.Target, host, path, decision.RuleName, start)
+		p.record(req, mode, action, decision.Target, host, path, decision, start)
+		if IsLocalTarget(decision.Target) {
+			p.emitOrchEvent(contextgraph.EventFulfilledLocal, req, "local", map[string]string{
+				"rule": decision.RuleName, "source": mode,
+			})
+		}
 	}()
 	return out, nil
 }
 
-func (p *PipelineCompleter) record(req *backend.CompletionRequest, mode, action, route, host, path, rule string, start time.Time) {
+func (p *PipelineCompleter) graph() *contextgraph.Store {
+	if p != nil && p.Graph != nil {
+		return p.Graph
+	}
+	return nil
+}
+
+// emitRouteDecided hooks classifier / explicit / script decisions into the
+// contextgraph event log when Graph is wired (Append only). Skips when Graph
+// is nil so tests / callers without a store do not pollute contextgraph.Default.
+func (p *PipelineCompleter) emitRouteDecided(req *backend.CompletionRequest, decision *backend.RoutingDecision, source string) {
+	if p == nil || decision == nil || req == nil {
+		return
+	}
+	g := p.graph()
+	if g == nil {
+		return
+	}
+	attrs := map[string]string{
+		"route":  decision.Target,
+		"source": source,
+		"rule":   decision.RuleName,
+	}
+	if decision.Reason != "" {
+		attrs["reason"] = decision.Reason
+	}
+	if decision.Role != "" {
+		attrs["role"] = decision.Role
+	}
+	if decision.Model != "" {
+		attrs["model"] = decision.Model
+	}
+	reqID := req.Metadata.RequestID
+	g.Append(contextgraph.Event{
+		Kind:      contextgraph.EventRouteDecided,
+		TurnID:    reqID,
+		RequestID: reqID,
+		Actor:     decision.Target,
+		Attrs:     attrs,
+	})
+}
+
+func (p *PipelineCompleter) emitOrchEvent(kind contextgraph.EventKind, req *backend.CompletionRequest, actor string, attrs map[string]string) {
+	if p == nil || req == nil {
+		return
+	}
+	reqID := req.Metadata.RequestID
+	if reqID == "" {
+		return
+	}
+	p.graph().Append(contextgraph.Event{
+		Kind:      kind,
+		TurnID:    reqID,
+		RequestID: reqID,
+		Actor:     actor,
+		Attrs:     attrs,
+	})
+}
+
+func (p *PipelineCompleter) record(req *backend.CompletionRequest, mode, action, route, host, path string, decision *backend.RoutingDecision, start time.Time) {
 	if p.Metrics == nil || req == nil {
 		return
+	}
+	rule, reason, role := "", "", ""
+	if decision != nil {
+		rule = decision.RuleName
+		reason = decision.Reason
+		role = decision.Role
 	}
 	model := req.Model
 	orig := req.Metadata.OriginalModel
@@ -136,6 +254,8 @@ func (p *PipelineCompleter) record(req *backend.CompletionRequest, mode, action,
 		Host:          host,
 		Path:          path,
 		Rule:          rule,
+		Reason:        reason,
+		Role:          role,
 		Tokens:        tokens,
 		Latency:       time.Since(start),
 	})

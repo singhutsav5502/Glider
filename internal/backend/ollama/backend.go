@@ -57,6 +57,11 @@ func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) 
 	if req.MaxTokens != nil {
 		body["max_tokens"] = *req.MaxTokens
 	}
+	// Pass tools through when present. Ollama OpenAI-compat accepts tools for models
+	// that support tool-calling. Models without tools reject with a tools-unsupported
+	// error → FallbackChain tries BYOK cloud (documented Path A fallback).
+	// Stream tool_calls are parsed via ParseOpenAIStreamPayload (M2 bridge).
+	backend.AttachTools(body, req)
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -75,7 +80,12 @@ func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("ollama error: status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		trimmed := strings.TrimSpace(string(msg))
+		err := fmt.Errorf("ollama error: status %d: %s", resp.StatusCode, trimmed)
+		if req.HasTools() && backend.IsToolsUnsupported(err) {
+			return nil, &backend.ToolsUnsupportedError{Backend: b.name, Message: trimmed}
+		}
+		return nil, err
 	}
 
 	ch := make(chan backend.CompletionChunk, 16)
@@ -89,31 +99,9 @@ func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) 
 				continue
 			}
 			payload := strings.TrimPrefix(line, "data: ")
-			if payload == "[DONE]" {
-				return
-			}
-			var envelope struct {
-				ID      string `json:"id"`
-				Model   string `json:"model"`
-				Choices []struct {
-					Delta struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-					FinishReason *string `json:"finish_reason"`
-				} `json:"choices"`
-			}
-			if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+			chunk, ok := backend.ParseOpenAIStreamPayload(payload)
+			if !ok {
 				continue
-			}
-			chunk := backend.CompletionChunk{
-				ID:    envelope.ID,
-				Model: envelope.Model,
-			}
-			if len(envelope.Choices) > 0 {
-				chunk.Content = envelope.Choices[0].Delta.Content
-				if envelope.Choices[0].FinishReason != nil {
-					chunk.FinishReason = *envelope.Choices[0].FinishReason
-				}
 			}
 			select {
 			case ch <- chunk:

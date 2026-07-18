@@ -2,6 +2,7 @@ package mitm
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/glider-ai/glider/internal/cursorrpc"
 	"github.com/glider-ai/glider/internal/metrics"
 )
 
@@ -35,6 +37,8 @@ type Proxy struct {
 	PassthroughOnly bool // if true, never call Local
 	// TLSClientConfig is used when dialing the real upstream (tests may set InsecureSkipVerify).
 	TLSClientConfig *tls.Config
+	// Debug optionally peeks RunSSE (and similar) response bodies during origin passthrough.
+	Debug *AgentRPCDebugger
 
 	ln     net.Listener
 	mu     sync.Mutex
@@ -127,29 +131,20 @@ func (p *Proxy) handleCONNECT(client net.Conn, br *bufio.Reader, req *http.Reque
 	_ = client.SetDeadline(time.Time{})
 
 	if p.Authority != nil && p.Hosts != nil && p.Hosts.Match(host) {
-		p.Log.Info("mitm decrypt CONNECT", "host", host, "addr", hostport)
-		p.observeCONNECT("decrypt", host)
+		// CONNECT opens are tunnel lifecycle, not LLM requests — Debug only; no request-log row.
+		p.Log.Debug("mitm decrypt CONNECT", "host", host, "addr", hostport)
+		if p.Metrics != nil {
+			p.Metrics.IncAction("mitm", "decrypt")
+		}
 		p.mitmSession(client, br, host, hostport)
 		return
 	}
 	// Blind tunnel for non-allowlisted hosts.
 	p.Log.Debug("mitm blind tunnel CONNECT", "host", host, "addr", hostport)
-	p.observeCONNECT("blind_tunnel", host)
-	p.blindTunnel(client, br, hostport)
-}
-
-func (p *Proxy) observeCONNECT(action, host string) {
-	if p.Metrics == nil {
-		return
+	if p.Metrics != nil {
+		p.Metrics.IncAction("mitm", "blind_tunnel")
 	}
-	p.Metrics.Record(metrics.RequestRecord{
-		ID:     fmt.Sprintf("connect_%d", time.Now().UnixNano()),
-		Mode:   "mitm",
-		Action: action,
-		Route:  action,
-		Host:   host,
-		Path:   "CONNECT",
-	})
+	p.blindTunnel(client, br, hostport)
 }
 
 func (p *Proxy) blindTunnel(client net.Conn, br *bufio.Reader, hostport string) {
@@ -202,6 +197,9 @@ func (p *Proxy) mitmSession(client net.Conn, br *bufio.Reader, host, hostport st
 	}
 	defer tlsClient.Close()
 
+	connectSession := fmt.Sprintf("c%x", time.Now().UnixNano())
+	p.Log.Debug("mitm decrypt session", "host", host, "connect_session", connectSession)
+
 	for {
 		_ = tlsClient.SetDeadline(time.Now().Add(p.DialTimeout))
 		req, err := http.ReadRequest(bufio.NewReader(tlsClient))
@@ -209,6 +207,7 @@ func (p *Proxy) mitmSession(client net.Conn, br *bufio.Reader, host, hostport st
 			return
 		}
 		_ = tlsClient.SetDeadline(time.Time{})
+		req = req.WithContext(WithConnectSession(req.Context(), connectSession))
 
 		if !p.PassthroughOnly && p.Local != nil {
 			rw := &responseCapture{conn: tlsClient, header: http.Header{}}
@@ -278,6 +277,9 @@ func (p *Proxy) passthroughHTTPS(client net.Conn, req *http.Request, host, hostp
 		return err
 	}
 	defer resp.Body.Close()
+	if p.Debug != nil && p.Debug.Enabled {
+		resp.Body = wrapResponsePeek(resp.Body, req, resp, p.Debug)
+	}
 	if err := resp.Write(client); err != nil {
 		return err
 	}
@@ -325,11 +327,11 @@ func (b *bufConn) Read(p []byte) (int, error) {
 
 // responseCapture implements http.ResponseWriter over a raw TLS conn.
 type responseCapture struct {
-	conn       net.Conn
-	header     http.Header
-	status     int
+	conn        net.Conn
+	header      http.Header
+	status      int
 	wroteHeader bool
-	wrote      bool
+	wrote       bool
 }
 
 func (r *responseCapture) Header() http.Header { return r.header }
@@ -361,3 +363,79 @@ func (r *responseCapture) Write(p []byte) (int, error) {
 
 // Ensure responseCapture implements http.Flusher for SSE.
 func (r *responseCapture) Flush() {}
+
+// wrapResponsePeek tees the first N response body bytes for debug ObserveResponse
+// without blocking the client copy. Fires once when peek fills or on Close.
+func wrapResponsePeek(body io.ReadCloser, req *http.Request, resp *http.Response, dbg *AgentRPCDebugger) io.ReadCloser {
+	if body == nil || dbg == nil || !dbg.Enabled || req == nil {
+		return body
+	}
+	path := ""
+	if req.URL != nil {
+		path = req.URL.Path
+	}
+	// Only peek Agent-ish response streams (RunSSE is the critical one).
+	if !cursorrpc.IsRunSSEPath(path) && ClassifyPath(path) != PathAgentRPC {
+		return body
+	}
+	return &responsePeekCloser{
+		r:    body,
+		max:  cursorrpc.MaxRunSSEResponsePeek,
+		req:  req,
+		resp: resp,
+		dbg:  dbg,
+		buf:  &bytes.Buffer{},
+	}
+}
+
+type responsePeekCloser struct {
+	r     io.ReadCloser
+	max   int
+	req   *http.Request
+	resp  *http.Response
+	dbg   *AgentRPCDebugger
+	buf   *bytes.Buffer
+	fired bool
+	mu    sync.Mutex
+}
+
+func (p *responsePeekCloser) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.mu.Lock()
+		if p.buf.Len() < p.max {
+			remain := p.max - p.buf.Len()
+			if remain > n {
+				remain = n
+			}
+			_, _ = p.buf.Write(b[:remain])
+			if p.buf.Len() >= p.max {
+				p.fireLocked()
+			}
+		}
+		p.mu.Unlock()
+	}
+	return n, err
+}
+
+func (p *responsePeekCloser) Close() error {
+	p.mu.Lock()
+	p.fireLocked()
+	p.mu.Unlock()
+	return p.r.Close()
+}
+
+func (p *responsePeekCloser) fireLocked() {
+	if p.fired || p.dbg == nil {
+		return
+	}
+	p.fired = true
+	peek := append([]byte(nil), p.buf.Bytes()...)
+	status := 0
+	ct := ""
+	if p.resp != nil {
+		status = p.resp.StatusCode
+		ct = p.resp.Header.Get("Content-Type")
+	}
+	p.dbg.ObserveResponse(p.req, status, ct, peek)
+}

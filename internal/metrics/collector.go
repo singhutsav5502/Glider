@@ -18,6 +18,7 @@ type Collector struct {
 	latencies []time.Duration
 
 	localReqs          int
+	localTokens        int // tokens on local + canned turns (tokens_saved_est)
 	cloudCostPerReqUSD float64
 	actualCostUSD      float64
 
@@ -67,21 +68,55 @@ type RequestRecord struct {
 	ID            string
 	ClientSession string // optional client/correlation id from request metadata
 	Mode          string // gateway | mitm
-	Action        string // local | origin_passthrough | blind_tunnel | skip | error
+	Action        string // local | cloud | origin_passthrough | canned | error (completion outcomes)
 	Route         string // local | cloud
 	Model         string
 	OriginalModel string
 	Host          string
 	Path          string
 	Rule          string
+	Reason        string // routing reason chip (small_offload, must_cloud, tools_present, …)
+	Role          string // plan | exec | research
 	Tokens        int
 	Latency       time.Duration
 	ActualUSD     float64
 }
 
+// IncAction bumps mode/action counters without publishing a request-log / history row.
+// Use for tunnel lifecycle (decrypt, blind_tunnel) and non-LLM skip paths.
+func (c *Collector) IncAction(mode, action string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if action != "" {
+		c.routeCounts["action:"+action]++
+	}
+	if mode != "" {
+		c.routeCounts["mode:"+mode]++
+	}
+}
+
+// IsRequestLogAction reports whether action belongs in the Overview request log
+// (LLM/harness outcomes), as opposed to tunnel opens or non-LLM skips.
+func IsRequestLogAction(action string) bool {
+	switch action {
+	case "local", "cloud", "origin_passthrough", "canned", "error":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Collector) Record(rec RequestRecord) {
 	if rec.Action == "" {
 		rec.Action = rec.Route
+	}
+	// Tunnel lifecycle / non-LLM skips use IncAction; never publish fake 0-metric rows.
+	if rec.Action != "" && !IsRequestLogAction(rec.Action) {
+		c.IncAction(rec.Mode, rec.Action)
+		return
 	}
 	c.mu.Lock()
 	c.routeCounts[rec.Route]++
@@ -90,6 +125,12 @@ func (c *Collector) Record(rec RequestRecord) {
 	}
 	if rec.Mode != "" {
 		c.routeCounts["mode:"+rec.Mode]++
+	}
+	if rec.Reason != "" {
+		c.routeCounts["class:"+rec.Reason]++
+	}
+	if rec.Role != "" {
+		c.routeCounts["role:"+rec.Role]++
 	}
 	c.tokenTotal += rec.Tokens
 	c.tokenN++
@@ -100,8 +141,9 @@ func (c *Collector) Record(rec RequestRecord) {
 		c.tokenMax = rec.Tokens
 	}
 	c.latencies = append(c.latencies, rec.Latency)
-	if rec.Route == "local" || rec.Action == "local" {
+	if rec.Route == "local" || rec.Action == "local" || rec.Action == "canned" {
 		c.localReqs++
+		c.localTokens += rec.Tokens
 	}
 	c.actualCostUSD += rec.ActualUSD
 	sessionID := c.sessionID
@@ -141,6 +183,8 @@ func (c *Collector) Record(rec RequestRecord) {
 				Host:          rec.Host,
 				Path:          rec.Path,
 				Rule:          rec.Rule,
+				Reason:        rec.Reason,
+				Role:          rec.Role,
 				Tokens:        rec.Tokens,
 				LatencyMs:     latencyMs,
 			},

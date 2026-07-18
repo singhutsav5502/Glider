@@ -14,8 +14,10 @@ import (
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
+	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/dashboard"
 	"github.com/glider-ai/glider/internal/metrics"
+	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/gorilla/websocket"
 )
 
@@ -520,8 +522,20 @@ func TestIntroConfigLoads(t *testing.T) {
 	if len(cfg.Cloud.Providers) < 2 {
 		t.Fatal("expected openai+anthropic placeholders")
 	}
-	if len(cfg.Backends) < 2 {
-		t.Fatal("expected ollama+vllm backends")
+	if len(cfg.Backends) < 1 {
+		t.Fatal("expected at least ollama backend")
+	}
+	hasOllama := false
+	for _, b := range cfg.Backends {
+		if b.Name == "ollama" {
+			hasOllama = true
+			if !strings.Contains(b.URL, "127.0.0.1") {
+				t.Fatalf("ollama URL should prefer 127.0.0.1, got %q", b.URL)
+			}
+		}
+	}
+	if !hasOllama {
+		t.Fatal("expected ollama backend in intro config")
 	}
 	var hasScript, hasExplicit, hasDefault bool
 	for _, r := range cfg.Routing.Rules {
@@ -550,5 +564,206 @@ func TestIntroConfigLoads(t *testing.T) {
 		if !found {
 			t.Fatalf("missing mitm host %q in %v", h, cfg.MITM.Hosts)
 		}
+	}
+}
+
+func TestMITMDebugRecentAPI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "glider.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  proxy_port: 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := config.NewProvider(loaded, path)
+	reg := backend.NewRegistry()
+	bus := metrics.NewBus()
+	collector := metrics.NewCollector(bus)
+	collector.IncAction("mitm", "agent_rpc_opaque")
+	store := &dashboard.FileConfigStore{Provider: p, Path: path}
+	models := &dashboard.RegistryModelController{Registry: reg}
+	s := dashboard.New(":0", bus, store, models)
+	s.Metrics = collector
+
+	dumpDir := t.TempDir()
+	dbg := &mitm.AgentRPCDebugger{Enabled: true, DumpDir: dumpDir, RingSize: 8}
+	req := httptest.NewRequest(http.MethodPost, "https://api2.cursor.sh/aiserver.v1.BidiService/BidiAppend", nil)
+	req.Header.Set("Content-Type", "application/connect+proto")
+	dbg.Observe(req, []byte{0, 0, 0, 0, 1, 'x'}, "agent_rpc_opaque")
+	s.MITMDebug = dbg
+
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/api/mitm/debug/recent?limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var body struct {
+		Enabled      bool                  `json:"enabled"`
+		Recent       []mitm.RPCObservation `json:"recent"`
+		PathCounts   map[string]int        `json:"path_counts"`
+		Metrics      map[string]int        `json:"metrics"`
+		Distribution *struct {
+			LocalPct float64 `json:"local_pct"`
+			CloudPct float64 `json:"cloud_pct"`
+		} `json:"distribution"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Enabled || len(body.Recent) != 1 {
+		t.Fatalf("body=%+v", body)
+	}
+	if body.Metrics["action:agent_rpc_opaque"] != 1 {
+		t.Fatalf("metrics=%v", body.Metrics)
+	}
+	if body.Distribution == nil {
+		t.Fatal("expected distribution on debug/recent when Metrics set")
+	}
+
+	// GET /api/metrics
+	collector.Record(metrics.RequestRecord{Action: "local", Route: "local", Tokens: 5})
+	collector.Record(metrics.RequestRecord{Action: "origin_passthrough", Route: "cloud", Tokens: 5})
+	mresp, err := http.Get(ts.URL + "/api/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mresp.Body.Close()
+	var snap metrics.Snapshot
+	if err := json.NewDecoder(mresp.Body).Decode(&snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.Distribution.LocalCount != 1 || snap.Distribution.CloudCount != 1 {
+		t.Fatalf("snapshot=%+v", snap.Distribution)
+	}
+
+	s2 := dashboard.New(":0", bus, store, models)
+	ts2 := httptest.NewServer(s2.Handler())
+	t.Cleanup(ts2.Close)
+	resp2, err := http.Get(ts2.URL + "/api/mitm/debug/recent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var body2 struct {
+		Enabled bool `json:"enabled"`
+	}
+	_ = json.NewDecoder(resp2.Body).Decode(&body2)
+	if body2.Enabled {
+		t.Fatal("expected enabled=false without debugger")
+	}
+}
+
+func TestContextAPIRecentAndTurn(t *testing.T) {
+	ts, _, _, _ := setupDash(t)
+	// Without graph: empty recent
+	resp, err := http.Get(ts.URL + "/api/context/recent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var empty struct {
+		Turns []any `json:"turns"`
+		Stats struct {
+			Turns int `json:"turns"`
+		} `json:"stats"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&empty); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Turns) != 0 {
+		t.Fatalf("want empty turns, got %d", len(empty.Turns))
+	}
+
+	g := contextgraph.New("")
+	g.Append(contextgraph.Event{
+		Kind:      contextgraph.EventTurnOpened,
+		TurnID:    "turn-api-1",
+		RequestID: "turn-api-1",
+		Attrs:     map[string]string{"route": "cloud", "source": "explicit_cloud"},
+	})
+	g.Append(contextgraph.Event{
+		Kind:      contextgraph.EventSummaryRequested,
+		TurnID:    "turn-api-1",
+		RequestID: "sum-api",
+		Actor:     "cloud",
+	})
+	g.BindRequest("turn-api-1", "sum-api")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "glider.yaml")
+	_ = os.WriteFile(path, []byte("server:\n  proxy_port: 8080\n"), 0o644)
+	loaded, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := config.NewProvider(loaded, path)
+	reg := backend.NewRegistry()
+	bus := metrics.NewBus()
+	store := &dashboard.FileConfigStore{Provider: p, Path: path}
+	models := &dashboard.RegistryModelController{Registry: reg}
+	srv := dashboard.New(":0", bus, store, models)
+	srv.ContextGraph = g
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+
+	resp2, err := http.Get(hs.URL + "/api/context/recent?limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var recent struct {
+		Turns []struct {
+			ID    string `json:"id"`
+			Route string `json:"route"`
+			Stats *struct {
+				EventCount int `json:"event_count"`
+			} `json:"stats"`
+		} `json:"turns"`
+		Stats struct {
+			Turns      int            `json:"turns"`
+			CloudTurns int            `json:"cloud_turns"`
+			ByKind     map[string]int `json:"by_kind"`
+		} `json:"stats"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&recent); err != nil {
+		t.Fatal(err)
+	}
+	if recent.Stats.Turns < 1 || recent.Stats.CloudTurns < 1 {
+		t.Fatalf("stats=%+v", recent.Stats)
+	}
+	if len(recent.Turns) < 1 || recent.Turns[0].Route != "cloud" {
+		t.Fatalf("turns=%+v", recent.Turns)
+	}
+
+	resp3, err := http.Get(hs.URL + "/api/context/turns/sum-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != 200 {
+		t.Fatalf("status=%d", resp3.StatusCode)
+	}
+	var turn struct {
+		ID     string `json:"id"`
+		Route  string `json:"route"`
+		Events []any  `json:"events"`
+		Stats  *struct {
+			EventCount int  `json:"event_count"`
+			CloudLive  bool `json:"cloud_live"`
+		} `json:"stats"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&turn); err != nil {
+		t.Fatal(err)
+	}
+	if turn.ID != "turn-api-1" || turn.Stats == nil || turn.Stats.EventCount < 2 {
+		t.Fatalf("turn=%+v", turn)
 	}
 }

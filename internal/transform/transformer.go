@@ -125,7 +125,9 @@ func cloneRequest(req *backend.CompletionRequest) *backend.CompletionRequest {
 
 func truncateMessage(msg backend.Message, maxTokens int, tok *Tokenizer) backend.Message {
 	if maxTokens <= 4 {
-		return backend.Message{Role: msg.Role, Content: ""}
+		out := msg
+		out.Content = ""
+		return out
 	}
 	contentBudget := maxTokens - 4
 	content := msg.Content
@@ -142,5 +144,7 @@ func truncateMessage(msg backend.Message, maxTokens int, tok *Tokenizer) backend
 			high = mid - 1
 		}
 	}
-	return backend.Message{Role: msg.Role, Content: content[:low]}
+	out := msg
+	out.Content = content[:low]
+	return out
 }
