@@ -1,7 +1,7 @@
 :root {
-  --bg: #0f1419;
-  --bg2: #161d27;
-  --panel: #1a2330;
+  --bg: #0c1218;
+  --bg2: #141c26;
+  --panel: #182230;
   --line: #2a3646;
   --text: #e8eef5;
   --muted: #8b9bb0;
@@ -11,6 +11,8 @@
   --font: "DM Sans", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", "Consolas", monospace;
   --max: 52rem;
+  --radius: 8px;
+  --space: 1.25rem;
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }

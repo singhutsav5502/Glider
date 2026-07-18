@@ -870,7 +870,7 @@
   const DEFAULT_STAGES = ["router", "planner", "actor", "critic", "memory"];
   const SAMPLE_STAGES = ["router", "planner", "actor", "critic", "memory"];
   /** Loop API StageKind values only (see internal/loop/stages.go). */
-  const STAGE_KINDS = ["router", "planner", "actor", "critic", "memory"];
+  const STAGE_KINDS = ["router", "planner", "actor", "critic", "memory", "human_gate"];
   let liveBoardTimer = null;
   let liveWsConnected = false;
   let hotswapGenCache = {};
@@ -883,6 +883,9 @@
   let stageSelectedUid = null;
   let stageSelectedEdgeId = null;
   let stageLiveStatus = {};
+  let stageLivePath = []; // node ids/kinds on DecisionRoute path
+  let stageLiveEdges = {}; // edge id -> ok|running|next|fail
+  let stageLiveCurrent = "";
   let stageUidSeq = 0;
   let swarmThreads = [];
   /** thread uids linked from orchestrator */
@@ -1343,6 +1346,18 @@
       style: { "border-color": "#2563eb", "border-width": 2.5 },
     },
     {
+      selector: "node.status-waiting",
+      style: { "border-color": "#b45309", "border-width": 2.5, "background-color": "#fffbeb" },
+    },
+    {
+      selector: "node.route-path",
+      style: { "background-color": "#ecfdf5" },
+    },
+    {
+      selector: "node.route-current",
+      style: { "border-color": "#2563eb", "border-width": 3, "background-color": "#dbeafe" },
+    },
+    {
       selector: "node.eh-handle",
       style: {
         height: 12,
@@ -1379,7 +1394,7 @@
       },
     },
     {
-      selector: "edge.feedback",
+      selector: "edge.feedback, edge.on_fail, edge.escalate",
       style: {
         "curve-style": "unbundled-bezier",
         "control-point-distances": [60],
@@ -1387,6 +1402,14 @@
         "line-style": "dashed",
         "line-color": "#b45309",
         "target-arrow-color": "#b45309",
+      },
+    },
+    {
+      selector: "edge.conditional, edge.budget_exceeded",
+      style: {
+        "line-style": "dotted",
+        "line-color": "#7c3aed",
+        "target-arrow-color": "#7c3aed",
       },
     },
     {
@@ -1398,16 +1421,16 @@
       },
     },
     {
-      selector: "edge.status-ok",
-      style: { "line-color": "#16a34a", "target-arrow-color": "#16a34a" },
+      selector: "edge.status-ok, edge.route-taken",
+      style: { "line-color": "#16a34a", "target-arrow-color": "#16a34a", width: 2.2 },
     },
     {
       selector: "edge.status-fail",
       style: { "line-color": "#b91c1c", "target-arrow-color": "#b91c1c" },
     },
     {
-      selector: "edge.status-running",
-      style: { "line-color": "#2563eb", "target-arrow-color": "#2563eb" },
+      selector: "edge.status-running, edge.route-next",
+      style: { "line-color": "#2563eb", "target-arrow-color": "#2563eb", width: 2.2 },
     },
     {
       selector: ".eh-preview, .eh-ghost-edge",
@@ -1702,6 +1725,7 @@
   function statusBadgeClass(status) {
     const s = String(status || "idle").toLowerCase();
     if (s === "running") return "running";
+    if (s === "waiting_human") return "waiting";
     if (s === "failed") return "failed";
     if (s === "completed") return "completed";
     if (s === "stopped") return "stopped";
@@ -1840,8 +1864,9 @@
     const w = host?.clientWidth || 640;
     const h = host?.clientHeight || 420;
     const n = stageNodes.length;
+    const pathSet = new Set(stageLivePath || []);
     const nodes = stageNodes.map((node, i) => {
-      const live = stageLiveStatus[node.kind] || "idle";
+      const live = stageLiveStatus[node.id] || stageLiveStatus[node.kind] || "idle";
       let x = typeof node.x === "number" ? node.x : null;
       let y = typeof node.y === "number" ? node.y : null;
       if (x == null || y == null) {
@@ -1850,6 +1875,11 @@
         y = p.y;
         node.x = x;
         node.y = y;
+      }
+      const classes = ["status-" + live];
+      if (pathSet.has(node.id) || pathSet.has(node.uid) || pathSet.has(node.kind)) classes.push("route-path");
+      if (stageLiveCurrent && (stageLiveCurrent === node.id || stageLiveCurrent === node.uid || stageLiveCurrent === node.kind)) {
+        classes.push("route-current");
       }
       return {
         group: "nodes",
@@ -1860,7 +1890,7 @@
           status: live,
         },
         position: { x, y },
-        classes: "status-" + live,
+        classes: classes.join(" "),
       };
     });
     const uidSet = new Set(stageNodes.map((n) => n.uid));
@@ -1868,8 +1898,11 @@
       .filter((e) => uidSet.has(e.source) && uidSet.has(e.target))
       .map((e) => {
         const tgt = stageNodes.find((n) => n.uid === e.target);
-        const st = stageLiveStatus[tgt?.kind] || "idle";
-        const classes = [e.kind === "feedback" ? "feedback" : "", "status-" + st].filter(Boolean).join(" ");
+        const st = stageLiveStatus[tgt?.id] || stageLiveStatus[tgt?.kind] || "idle";
+        const routeSt = stageLiveEdges[e.id] || "";
+        const kindClass = e.kind && e.kind !== "flow" ? e.kind : "";
+        const routeClass = routeSt === "taken" ? "route-taken" : routeSt === "next" ? "route-next" : "";
+        const classes = [kindClass, "status-" + st, routeClass].filter(Boolean).join(" ");
         return {
           group: "edges",
           data: {
@@ -1913,7 +1946,9 @@
     const e = stageEdges.find((x) => x.id === stageSelectedEdgeId);
     if (!e) return;
     pushStageHistory();
-    e.kind = e.kind === "feedback" ? "flow" : "feedback";
+    const cycle = ["flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded"];
+    const i = Math.max(0, cycle.indexOf(e.kind || "flow"));
+    e.kind = cycle[(i + 1) % cycle.length];
     if (e.kind === "flow") reorderStagesFromFlowEdges();
     renderStageGraph();
     showHoopsOk("Edge is now " + e.kind);
@@ -2534,19 +2569,35 @@
 
   function applyStageLiveFromHoop(st) {
     stageLiveStatus = {};
+    stageLivePath = [];
+    stageLiveEdges = {};
+    stageLiveCurrent = "";
     const status = String(st.status || "").toLowerCase();
     const last = (st.outcomes || []).length ? st.outcomes[st.outcomes.length - 1] : null;
     const prog = st.progress || {};
-    if (status === "running") {
+    stageLiveCurrent = prog.current || prog.stage_id || prog.stage_kind || "";
+    if (Array.isArray(prog.path_taken)) stageLivePath = prog.path_taken.slice();
+    (prog.edges_taken || []).forEach((eid) => { stageLiveEdges[eid] = "taken"; });
+    (prog.next_edges || []).forEach((eid) => { stageLiveEdges[eid] = "next"; });
+    // Also match edges by source->target when ids differ from canvas.
+    (prog.branch_choices || []).forEach((b) => {
+      if (b.selected && b.edge_id) stageLiveEdges[b.edge_id] = "taken";
+      else if (b.edge_id && !stageLiveEdges[b.edge_id]) stageLiveEdges[b.edge_id] = "next";
+    });
+    if (status === "running" || status === "waiting_human") {
       (st.spec?.stages || []).forEach((s) => {
         if (s.enabled === false || s.disabled) return;
         stageLiveStatus[s.kind] = "pending";
         if (s.id) stageLiveStatus[s.id] = "pending";
       });
-      const cur = prog.stage_kind || prog.stage_id;
+      (stageLivePath || []).forEach((id) => {
+        stageLiveStatus[id] = "ok";
+      });
+      const cur = prog.stage_kind || prog.stage_id || stageLiveCurrent;
       if (cur) {
-        stageLiveStatus[cur] = "running";
-        if (prog.stage_id) stageLiveStatus[prog.stage_id] = "running";
+        const paint = status === "waiting_human" ? "waiting" : "running";
+        stageLiveStatus[cur] = paint;
+        if (prog.stage_id) stageLiveStatus[prog.stage_id] = paint;
       }
     } else if (last?.stages?.length) {
       last.stages.forEach((s) => {
@@ -2930,15 +2981,31 @@
         const evalGoal = esc(st.spec?.eval?.goal || "");
         const score = st.last_eval_score != null ? Number(st.last_eval_score).toFixed(2) : "--";
         const prog = st.progress || {};
-        const progLine = isRunning && (prog.phase || prog.stage_kind)
-          ? `<p class="hint hoop-progress">Cycle #${prog.iteration || st.iteration || "?"} | ${esc(prog.phase || "")} | ${esc(prog.stage_kind || prog.stage_id || "")}${prog.note ? " | " + esc(String(prog.note).slice(0, 60)) : ""}</p>`
+        const showProg = (isRunning || status === "waiting_human") && (prog.phase || prog.stage_kind || prog.current);
+        const routeBits = [];
+        if (prog.topology) routeBits.push(prog.topology);
+        if ((prog.path_taken || []).length) routeBits.push("path " + prog.path_taken.length);
+        if ((prog.next_edges || []).length) routeBits.push("next " + prog.next_edges.length);
+        const progLine = showProg
+          ? `<p class="hint hoop-progress">Cycle #${prog.iteration || st.iteration || "?"} | ${esc(prog.phase || "")} | ${esc(prog.stage_kind || prog.stage_id || prog.current || "")}${prog.note ? " | " + esc(String(prog.note).slice(0, 60)) : ""}${routeBits.length ? " | " + esc(routeBits.join(" / ")) : ""}</p>`
+          : "";
+        const gate = st.gate || {};
+        const hitlBox = status === "waiting_human"
+          ? `<div class="hoop-hitl">
+              <p class="hint">Waiting for human: ${esc((gate.reason || "approval required").slice(0, 120))}</p>
+              <label class="span2">Comment <input type="text" class="hoop-hitl-comment" data-id="${id}" placeholder="optional note" /></label>
+              <span class="hoop-actions">
+                <button type="button" class="linkish hoop-approve" data-id="${id}">Approve + resume</button>
+                <button type="button" class="linkish hoop-reject" data-id="${id}">Reject</button>
+              </span>
+            </div>`
           : "";
         let lastOut = "No cycles yet";
         if (last) {
           const bit = (last.summary || last.err || (last.success ? "ok" : "fail") || "").slice(0, 80);
           lastOut = `#${last.iteration} ${last.success ? "ok" : "fail"} * ${bit}`;
         }
-        return `<div class="hoop-card ${isRunning ? "is-running" : ""}" data-id="${id}" data-status="${esc(status)}">
+        return `<div class="hoop-card ${isRunning ? "is-running" : ""} ${status === "waiting_human" ? "is-waiting" : ""}" data-id="${id}" data-status="${esc(status)}">
           <div class="hoop-card-head">
             <strong>${name}</strong>
             <span class="status-badge ${badge}">${esc(status)}</span>
@@ -2952,6 +3019,7 @@
             </span>
           </div>
           ${progLine}
+          ${hitlBox}
           <p class="hoop-last-outcome" title="Last outcome">${esc(lastOut)}</p>
           <p class="hint" style="margin:8px 0">Goal: ${esc((st.spec?.goal || st.spec?.prompt || "").slice(0, 160))}</p>
           ${evalGoal ? `<p class="hint" style="margin:0 0 8px">Eval: ${evalGoal}</p>` : ""}
@@ -2962,6 +3030,8 @@
       el.querySelectorAll(".hoop-start").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "start")));
       el.querySelectorAll(".hoop-stop").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "stop")));
       el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", () => deleteHoop(b.dataset.id)));
+      el.querySelectorAll(".hoop-approve").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, true)));
+      el.querySelectorAll(".hoop-reject").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, false)));
       el.querySelectorAll(".hoop-card").forEach((card) => {
         card.addEventListener("click", (ev) => {
           if (ev.target.closest("button")) return;
@@ -2989,7 +3059,26 @@
       showHoopsError(await res.text());
       return;
     }
-    if (action === "start") setAgentLogFocus("hoop", id);
+    if (action === "start" || action === "resume") setAgentLogFocus("hoop", id);
+    showHoopsOk(action + " " + id);
+    lastHoopsSnap = "";
+    await loadHoops();
+    if (isLiveLoopTabActive()) refreshLiveBoard();
+  }
+
+  async function hoopGate(id, approve) {
+    const input = document.querySelector(`.hoop-hitl-comment[data-id="${CSS.escape(id)}"]`);
+    const comment = input ? String(input.value || "") : "";
+    const action = approve ? "approve" : "reject";
+    const res = await fetch("/api/loops/" + encodeURIComponent(id) + "/" + action, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment, resume: !!approve, actor: "dashboard" }),
+    });
+    if (!res.ok) {
+      showHoopsError(await res.text());
+      return;
+    }
     showHoopsOk(action + " " + id);
     lastHoopsSnap = "";
     await loadHoops();

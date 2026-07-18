@@ -192,6 +192,7 @@
                       <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
                       <div class="stage-chip" draggable="true" data-kind="critic" title="Add critic">critic</div>
                       <div class="stage-chip" draggable="true" data-kind="memory" title="Add memory">memory</div>
+                      <div class="stage-chip" draggable="true" data-kind="human_gate" title="Add human gate">human_gate</div>
                       <div class="stage-chip stage-chip-code" data-kind="__code__" title="Add code stage">+ code</div>
                     </div>
                   </div>
@@ -326,6 +327,7 @@
                   <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
                   <div class="stage-chip" draggable="true" data-kind="critic" title="Add critic">critic</div>
                   <div class="stage-chip" draggable="true" data-kind="memory" title="Add memory">memory</div>
+                  <div class="stage-chip" draggable="true" data-kind="human_gate" title="Add human gate">human_gate</div>
                   <div class="stage-chip stage-chip-code" data-kind="__code__" title="Add code stage (custom id/prompt)">+ code</div>
                 </div>
               </div>
@@ -387,7 +389,7 @@
         <dialog id="stage-edit-dialog" class="stage-edit-dialog">
           <form id="stage-edit-form" class="stage-edit-form">
             <h3 id="stage-edit-title">Code stage</h3>
-            <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router. Id, name, and prompt make each stage concrete.</p>
+            <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router / human_gate. Id, name, and prompt make each stage concrete.</p>
             <div class="cfg-grid">
               <label>Kind
                 <select id="stage-edit-kind" required>
@@ -396,6 +398,7 @@
                   <option value="critic">critic</option>
                   <option value="memory">memory</option>
                   <option value="router">router</option>
+                  <option value="human_gate">human_gate</option>
                 </select>
               </label>
               <label>Id<input type="text" id="stage-edit-id" placeholder="actor_impl" required /></label>

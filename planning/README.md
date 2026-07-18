@@ -19,6 +19,10 @@
 | [loop_swarm_gap_analysis.md](loop_swarm_gap_analysis.md) | Overnight code gap table (loop / swarm / graph UX) |
 | [graph_feature_gaps.md](graph_feature_gaps.md) | **Graph gaps vs prior art** (LangGraph, Temporal, Slate, Anthropic, …) |
 | [enterprise_orchestrator_mvp.md](enterprise_orchestrator_mvp.md) | **Enterprise orchestrator MVP** — usage areas, strategy, MVP vs later |
+| [orchestrator_overnight_plan.md](orchestrator_overnight_plan.md) | Overnight SM / HITL / tools / MCP checklist |
+| [tools_catalog.md](tools_catalog.md) | Builtin + MCP + plugin tool catalog |
+| [graphify_context_notes.md](graphify_context_notes.md) | Graphify research vs contextgraph |
+| [remaining_gaps.md](remaining_gaps.md) | **Honest leftover gaps** after overnight run |
 | [swarm_orchestration.md](swarm_orchestration.md) | Swarm/FanOut honesty + hot-swap (+ canvas companion) |
 | [cursor_prior_art.md](cursor_prior_art.md) | **Archival** external prior art (Glider Path B text is novel) |
 | [cursor_agent_rpc_debug_findings.md](cursor_agent_rpc_debug_findings.md) | **Archival** live capture / wire notes (shrunk) |

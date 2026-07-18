@@ -1,0 +1,138 @@
+kind: hoop
+id: clone-repo-security-audit
+name: Clone + code quality / security audit
+goal: |
+  Clone a target repository into the workspace, then produce a structured audit covering
+  code quality and security. Target is configurable: pass repo=<url> in the goal or use
+  the default demo URL in the planner prompt. Output sections: Scope, Clone result,
+  Quality findings, Security findings, Priority fixes, Residual risk.
+route: local
+learning: true
+max_iterations: 3
+autonomy: L1
+human_gate: true
+graph_version: "1"
+topology: loop
+fail_policy: stop
+eval:
+  goal: |
+    Audit has Scope, Quality findings, Security findings, Priority fixes;
+    SCORE >= 0.75; no invented CVEs
+  min_score: 0.75
+  on_fail_n: 2
+stop_conditions:
+  on_success_n: 1
+  max_latency_ms: 300000
+stages:
+  - id: memory_load
+    kind: memory
+    name: Load audit context
+  - id: router
+    kind: router
+    name: Route
+    route: local
+  - id: plan_audit
+    kind: planner
+    name: Plan clone + audit
+    tools:
+      - name: datetime
+        kind: builtin
+      - name: context_query
+        kind: builtin
+    prompt: |
+      You are the audit planner. Produce a SHORT plan:
+      1) Resolve target repo URL or path from GOAL (look for repo= or https://)
+      2) Clone or refresh into workspace dir audit-target (git_clone)
+      3) Fan-out quality vs security vs secrets review
+      4) Merge findings; human_gate before critic if high severity suspected
+      Do not invent vulnerabilities. Prefer tools over guesses.
+  - id: clone_fetch
+    kind: actor
+    name: Clone / inventory
+    tools:
+      - name: git_clone
+        kind: builtin
+      - name: fs_list
+        kind: builtin
+      - name: code_grep
+        kind: builtin
+      - name: git_log
+        kind: builtin
+    prompt: |
+      Execute the PLAN clone/inventory steps using available tools.
+      Summarize tree top-level, recent commits, and languages observed.
+      If clone fails, document the error and continue with fs_list on workspace.
+  - id: parallel_audit
+    kind: actor
+    name: Parallel quality + security
+    parallel: 3
+    roles: [research, exec, plan]
+    tools:
+      - name: code_grep
+        kind: builtin
+      - name: fs_search
+        kind: builtin
+      - name: context_query
+        kind: builtin
+    prompt: |
+      You are one auditor under the PLAN and clone inventory.
+      - research: security (authz, injection, secrets patterns, unsafe shell)
+      - exec: code quality (error handling, tests, complexity hotspots)
+      - plan: process risks + suggested fix order
+      Use shared_context and tools. Cite file paths. No invented CVEs.
+      Label ROLE: <name>.
+  - id: human_gate
+    kind: human_gate
+    name: Operator review gate
+  - id: critic
+    kind: critic
+    name: Audit completeness critic
+    eval_min: 0.75
+    prompt: |
+      You are the checker. Score whether the merged audit is actionable and honest.
+      Penalize invented CVEs, missing Priority fixes, or empty Scope.
+      SCORE: <0.0-1.0>
+      REASON: <one short sentence>
+  - id: memory_persist
+    kind: memory
+    name: Persist audit
+graph_edges:
+  - id: e1
+    source: memory_load
+    target: router
+    kind: flow
+  - id: e2
+    source: router
+    target: plan_audit
+    kind: flow
+  - id: e3
+    source: plan_audit
+    target: clone_fetch
+    kind: flow
+  - id: e4
+    source: clone_fetch
+    target: parallel_audit
+    kind: flow
+  - id: e5
+    source: parallel_audit
+    target: human_gate
+    kind: flow
+  - id: e6
+    source: human_gate
+    target: critic
+    kind: flow
+    guard: human_approved
+  - id: e7
+    source: critic
+    target: memory_persist
+    kind: flow
+  - id: e8
+    source: critic
+    target: plan_audit
+    kind: feedback
+  - id: e9
+    source: critic
+    target: human_gate
+    kind: on_fail
+    guard: score_below
+    threshold: 0.75

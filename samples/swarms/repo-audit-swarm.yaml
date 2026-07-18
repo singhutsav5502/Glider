@@ -1,0 +1,11 @@
+kind: swarm
+id: repo-audit-swarm
+name: Repo audit swarm (quality + security + secrets)
+prompt: |
+  Audit the workspace (or audit-target/ if present) for code quality, security,
+  and secrets exposure. Cite paths. No invented CVEs. Produce a merged brief with
+  Severity, Findings by role, and Priority fixes.
+roles: [research, exec, plan]
+max_workers: 3
+prefer_local: true
+enabled: true

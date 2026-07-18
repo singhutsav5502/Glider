@@ -52,6 +52,10 @@
           <td>SOC2 change-control pack; parallel pack writers; auditor critic; evidence gaps</td>
         </tr>
         <tr>
+          <td><code>clone-repo-security-audit.yaml</code></td>
+          <td>git_clone + tools; parallel quality/security; human_gate; on_fail; shared context_query</td>
+        </tr>
+        <tr>
           <td><code>escalation-policy.yaml</code></td>
           <td>Severity matrix + paging ladder; parallel author; on-call critic</td>
         </tr>
@@ -83,6 +87,7 @@
       <table>
         <tr><th>File</th><th>Roles</th></tr>
         <tr><td><code>samples/swarms/security-review-swarm.yaml</code></td><td>threat / authz / secrets / blast</td></tr>
+        <tr><td><code>samples/swarms/repo-audit-swarm.yaml</code></td><td>research / exec / plan (quality + security)</td></tr>
         <tr><td><code>samples/swarms/multi-team-release-train-swarm.yaml</code></td><td>platform / app / qa / sre</td></tr>
         <tr><td><code>samples/swarms/data-pipeline-qa-swarm.yaml</code></td><td>schema / freshness / pii / rollback</td></tr>
         <tr><td><code>samples/swarms/code-review-swarm.yaml</code></td><td>plan / security / tests / docs</td></tr>

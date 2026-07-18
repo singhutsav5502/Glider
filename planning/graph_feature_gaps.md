@@ -99,11 +99,11 @@ Sources: [Slate introduction](https://docs.randomlabs.ai/en/getting-started/intr
 
 | Gap | Notes |
 |-----|-------|
-| **Conditional / policy edges** | Need kinds beyond `flow`/`feedback` (e.g. `on_fail`, `escalate`, `budget_exceeded`) |
-| **HITL wait node** | Visible “paused for human” with resume; not only escalate status |
-| **Failure narrative on merge** | Swarm fan-in must show which roles failed on the graph |
-| **Mid-cycle stage progress** | Paint running stage consistently for hoop (gap analysis already P0) |
-| **Versioned graph snapshots** | Who changed edges; rollback template version for audits |
+| **Conditional / policy edges** | **Done 2026-07-19** — `on_fail`/`escalate`/`conditional`/`budget_exceeded` + SM guards |
+| **HITL wait node** | **Done 2026-07-19** — `human_gate` stage + `waiting_human` + approve/resume API (not Temporal-durable) |
+| **Failure narrative on merge** | Partial — CritiqueMerge annotates; Cytoscape labels still thin |
+| **Mid-cycle stage progress** | **Done** — Progress + DecisionRoute paint |
+| **Versioned graph snapshots** | **Done MVP** — `graph_version` + `GET …/snapshot` |
 
 ### P1 — parity with modern orchestrators
 

@@ -20,6 +20,7 @@ ollama serve
 | `enterprise-incident-command.yaml` | SEV command channel: 3 parallel workstreams + safety critic + feedback |
 | `compliance-evidence-pack.yaml` | SOC2 change-control evidence pack + auditor critic |
 | `escalation-policy.yaml` | On-call escalation policy (severity matrix + paging ladder) |
+| `clone-repo-security-audit.yaml` | Clone repo + parallel quality/security audit + HITL gate + tools |
 | `incident-triage.yaml` | Lighter on-call runbook (parallel actors + critic) |
 | `research-synthesize.yaml` | Research → synthesize → critique |
 | `release-changelog.yaml` | Release checklist / changelog |
@@ -33,6 +34,7 @@ ollama serve
 | File | Roles |
 |------|-------|
 | `security-review-swarm.yaml` | threat / authz / secrets / blast |
+| `repo-audit-swarm.yaml` | research / exec / plan — quality + security + secrets |
 | `multi-team-release-train-swarm.yaml` | platform / app / qa / sre |
 | `data-pipeline-qa-swarm.yaml` | schema / freshness / pii / rollback |
 | `code-review-swarm.yaml` | plan / security / tests / docs |
