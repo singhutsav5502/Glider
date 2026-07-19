@@ -6,29 +6,35 @@ import (
 	"time"
 )
 
-// Provenance tags an edge/fact as extracted from source vs inferred by Glider.
-// Inspired by Graphify's EXTRACTED / INFERRED edge labels (see planning/graphify_context_notes.md).
+// Provenance tags an edge/fact as extracted from source vs inferred by Glider
+// vs observed at runtime. Inspired by Graphify EXTRACTED / INFERRED labels;
+// RUNTIME covers hoop/swarm orchestration writes (see planning/slate_weave_graphify_plan.md).
 type Provenance string
 
 const (
 	ProvenanceExtracted Provenance = "EXTRACTED"
 	ProvenanceInferred  Provenance = "INFERRED"
+	ProvenanceRuntime   Provenance = "RUNTIME"
 )
 
-// Fact is a lightweight queryable node/edge annotation on the event log.
+// Fact is a lightweight queryable node/edge for the structural entity layer.
+// RecordFact upserts into the entity store and appends a FactRecorded event.
 type Fact struct {
 	ID         string            `json:"id"`
-	Kind       string            `json:"kind"` // entity|relation|note
+	Kind       string            `json:"kind"` // entity|edge|thread|wave|episode|worker|note|relation
 	Label      string            `json:"label"`
 	TurnID     string            `json:"turn_id,omitempty"`
 	Provenance Provenance        `json:"provenance,omitempty"`
 	Attrs      map[string]string `json:"attrs,omitempty"`
 	At         time.Time         `json:"at,omitempty"`
+	From       string            `json:"from,omitempty"`
+	To         string            `json:"to,omitempty"`
+	Relation   string            `json:"relation,omitempty"`
 }
 
-// Query searches recent events (and optional turn) for a substring match.
+// Query searches the dual-layer context: append-only events AND entity/edge store.
 // Returns a human-readable summary for agent tools / relevancy hints.
-// Graphify inspiration: prefer structured lookup over re-reading entire logs.
+// Graphify methodology: one query surface over structured graph + provenance tags.
 func (s *Store) Query(turnID, q string, limit int) string {
 	if s == nil {
 		return ""
@@ -37,6 +43,25 @@ func (s *Store) Query(turnID, q string, limit int) string {
 		limit = 20
 	}
 	q = strings.TrimSpace(strings.ToLower(q))
+	var hits []string
+
+	// Layer 1: structural entities / edges.
+	ents := s.Entities(turnID, 200)
+	for i := len(ents) - 1; i >= 0 && len(hits) < limit; i-- {
+		e := ents[i]
+		blob := strings.ToLower(e.Kind + " " + e.Label + " " + e.TurnID + " " + e.From + " " + e.To + " " + e.Relation + " " + attrsBlob(e.Attrs))
+		if q != "" && !strings.Contains(blob, q) {
+			continue
+		}
+		prov := e.Provenance
+		if prov == "" {
+			prov = ProvenanceInferred
+		}
+		hits = append(hits, fmt.Sprintf("[entity:%s] %s id=%s kind=%s turn=%s %s",
+			prov, e.Label, e.ID, e.Kind, e.TurnID, attrsBlob(e.Attrs)))
+	}
+
+	// Layer 2: runtime event log.
 	var events []Event
 	if turnID != "" {
 		if v, ok := s.Turn(turnID); ok {
@@ -45,19 +70,26 @@ func (s *Store) Query(turnID, q string, limit int) string {
 	} else {
 		events = s.RecentEvents(200)
 	}
-	var hits []string
 	for i := len(events) - 1; i >= 0 && len(hits) < limit; i-- {
 		ev := events[i]
 		blob := strings.ToLower(string(ev.Kind) + " " + ev.TurnID + " " + ev.Actor + " " + attrsBlob(ev.Attrs))
 		if q != "" && !strings.Contains(blob, q) {
 			continue
 		}
-		prov := ProvenanceExtracted
-		if ev.Attrs != nil && ev.Attrs["provenance"] == string(ProvenanceInferred) {
-			prov = ProvenanceInferred
+		prov := ProvenanceRuntime
+		if ev.Attrs != nil {
+			switch ev.Attrs["provenance"] {
+			case string(ProvenanceInferred):
+				prov = ProvenanceInferred
+			case string(ProvenanceExtracted):
+				prov = ProvenanceExtracted
+			case string(ProvenanceRuntime):
+				prov = ProvenanceRuntime
+			}
 		}
-		hits = append(hits, fmt.Sprintf("[%s] %s turn=%s %s", prov, ev.Kind, ev.TurnID, attrsBlob(ev.Attrs)))
+		hits = append(hits, fmt.Sprintf("[event:%s] %s turn=%s %s", prov, ev.Kind, ev.TurnID, attrsBlob(ev.Attrs)))
 	}
+
 	if len(hits) == 0 {
 		return fmt.Sprintf("context_query: no hits for %q (turn=%s)", q, turnID)
 	}
@@ -94,7 +126,8 @@ func (s *Store) RelevancyScore(turnID string) float64 {
 	return clamp01(score)
 }
 
-// RecordFact appends a Fact as an event with provenance attrs (Graphify-style).
+// RecordFact upserts into the entity/edge store and appends a FactRecorded event.
+// Production path for hoop/swarm structural writes (not a stub index).
 func (s *Store) RecordFact(turnID string, f Fact) {
 	if s == nil {
 		return
@@ -105,11 +138,54 @@ func (s *Store) RecordFact(turnID string, f Fact) {
 	if f.Provenance == "" {
 		f.Provenance = ProvenanceInferred
 	}
+	if f.Kind == "" {
+		f.Kind = KindEntity
+	}
+	if f.ID == "" {
+		f.ID = fmt.Sprintf("fact-%d", f.At.UnixNano())
+	}
+	if turnID != "" {
+		f.TurnID = turnID
+	}
+	kind := f.Kind
+	if kind == "relation" {
+		kind = KindEdge
+	}
+	ent := Entity{
+		ID:         f.ID,
+		Kind:       kind,
+		Label:      f.Label,
+		TurnID:     f.TurnID,
+		Provenance: f.Provenance,
+		From:       f.From,
+		To:         f.To,
+		Relation:   f.Relation,
+		Attrs:      f.Attrs,
+		At:         f.At,
+	}
+	if ent.Kind == KindEdge && ent.Relation == "" && f.Label != "" {
+		ent.Relation = f.Label
+	}
+
+	s.mu.Lock()
+	s.upsertEntityLocked(ent)
+	s.mu.Unlock()
+
 	attrs := map[string]string{
 		"fact_id":    f.ID,
 		"fact_kind":  f.Kind,
 		"label":      f.Label,
 		"provenance": string(f.Provenance),
+		"layer":      "entity",
+	}
+	if f.From != "" {
+		attrs["from"] = f.From
+	}
+	if f.To != "" {
+		attrs["to"] = f.To
+	}
+	if f.Relation != "" {
+		attrs["relation"] = f.Relation
 	}
 	for k, v := range f.Attrs {
 		attrs[k] = v
@@ -123,24 +199,49 @@ func (s *Store) RecordFact(turnID string, f Fact) {
 	})
 }
 
-// PathSummary lists events linking from→to labels within a turn (lightweight path).
+// PathSummary prefers entity edges (from→to), then falls back to event label scan.
 func (s *Store) PathSummary(turnID, from, to string) string {
 	if s == nil {
 		return ""
 	}
+	fromL := strings.ToLower(strings.TrimSpace(from))
+	toL := strings.ToLower(strings.TrimSpace(to))
+	var steps []string
+
+	ents := s.Entities(turnID, 500)
+	// Direct edges whose endpoints match labels or ids.
+	for _, e := range ents {
+		if e.Kind != KindEdge {
+			continue
+		}
+		blob := strings.ToLower(e.From + " " + e.To + " " + e.Relation + " " + e.Label + " " + attrsBlob(e.Attrs))
+		fromHit := fromL == "" || strings.Contains(blob, fromL) || strings.EqualFold(e.From, from) || labelMatch(ents, e.From, fromL)
+		toHit := toL == "" || strings.Contains(blob, toL) || strings.EqualFold(e.To, to) || labelMatch(ents, e.To, toL)
+		if fromHit && toHit {
+			rel := e.Relation
+			if rel == "" {
+				rel = e.Label
+			}
+			steps = append(steps, fmt.Sprintf("%s -[%s/%s]-> %s", e.From, rel, e.Provenance, e.To))
+		}
+	}
+	if len(steps) > 0 {
+		return strings.Join(steps, " | ")
+	}
+
 	v, ok := s.Turn(turnID)
 	if !ok {
+		if turnID == "" {
+			return fmt.Sprintf("path: no link %s -> %s", from, to)
+		}
 		return "path: turn not found"
 	}
-	from = strings.ToLower(from)
-	to = strings.ToLower(to)
-	var steps []string
 	for _, ev := range v.Events {
 		blob := strings.ToLower(attrsBlob(ev.Attrs) + " " + string(ev.Kind))
-		if from != "" && strings.Contains(blob, from) {
+		if fromL != "" && strings.Contains(blob, fromL) {
 			steps = append(steps, fmt.Sprintf("from~ %s", ev.Kind))
 		}
-		if to != "" && strings.Contains(blob, to) {
+		if toL != "" && strings.Contains(blob, toL) {
 			steps = append(steps, fmt.Sprintf("to~ %s", ev.Kind))
 		}
 	}
@@ -148,6 +249,18 @@ func (s *Store) PathSummary(turnID, from, to string) string {
 		return fmt.Sprintf("path: no link %s -> %s", from, to)
 	}
 	return strings.Join(steps, " | ")
+}
+
+func labelMatch(ents []Entity, id, wantLower string) bool {
+	if wantLower == "" || id == "" {
+		return false
+	}
+	for _, e := range ents {
+		if e.ID == id && strings.Contains(strings.ToLower(e.Label), wantLower) {
+			return true
+		}
+	}
+	return false
 }
 
 func attrsBlob(m map[string]string) string {

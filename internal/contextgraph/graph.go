@@ -1,6 +1,7 @@
-// Package contextgraph is the MVP orchestrator context layer: an append-only
-// event log plus an ephemeral in-memory turn index used for sticky routing and
-// debug/analytics. See planning/context_management.md.
+// Package contextgraph is the orchestrator context layer: an append-only event
+// log plus a structural entity/edge store (Graphify-inspired dual-layer Query)
+// and an ephemeral turn index for sticky routing. Persist under ~/.glider/context.
+// See planning/context_management.md and planning/slate_weave_graphify_plan.md.
 package contextgraph
 
 import (
@@ -84,6 +85,7 @@ type TurnView struct {
 type StoreStats struct {
 	Turns       int            `json:"turns"`
 	Events      int            `json:"events"`
+	Entities    int            `json:"entities"`
 	CloudTurns  int            `json:"cloud_turns"`
 	LocalTurns  int            `json:"local_turns"`
 	OpenRuns    int            `json:"open_runs"`
@@ -91,14 +93,16 @@ type StoreStats struct {
 	Sessions    int            `json:"sessions"`
 }
 
-// Store is the MVP: append-only events + turn index. Optional JSONL persistence
-// under Dir (typically ~/.glider/context).
+// Store is the dual-layer context: append-only event log + structural entity/edge
+// index. Optional JSONL persistence under Dir (typically ~/.glider/context).
+// See planning/slate_weave_graphify_plan.md.
 type Store struct {
 	mu        sync.Mutex
 	events    []Event
 	turns     map[string]*turnIndex // turnID → index
 	byReq     map[string]string     // requestID → turnID
 	bySession map[string]string     // connect_session → turnID (latest)
+	entities  map[string]*Entity    // structural layer (Graphify-style)
 	Dir       string                // empty → memory only
 	Max       int                   // ring cap for events (0 → 4096)
 	Grace     time.Duration         // cloud sticky grace after last activity
@@ -125,6 +129,7 @@ func New(dir string) *Store {
 		turns:     make(map[string]*turnIndex),
 		byReq:     make(map[string]string),
 		bySession: make(map[string]string),
+		entities:  make(map[string]*Entity),
 		Dir:       dir,
 		Max:       4096,
 		Grace:     DefaultCloudGrace,
@@ -600,9 +605,13 @@ func (s *Store) Stats() StoreStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := StoreStats{
-		Turns:  len(s.turns),
-		Events: len(s.events),
-		ByKind: make(map[string]int),
+		Turns:    len(s.turns),
+		Events:   len(s.events),
+		Entities: len(s.entities),
+		ByKind:   make(map[string]int),
+	}
+	if s.entities == nil {
+		st.Entities = 0
 	}
 	st.Sessions = len(s.bySession)
 	now := time.Now()

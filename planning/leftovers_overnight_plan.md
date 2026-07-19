@@ -57,8 +57,8 @@
 ## P1 (if time)
 
 - [x] Docs page for tools/MCP install (GitHub docker/http) — `planning/tools_mcp.md`
+- [x] Persist Fact index separately (partial) — entities.jsonl + dual-layer Query (see slate_weave_graphify_plan.md)
 - [ ] Stronger empty states for unbound agent log
-- [ ] Persist Fact index separately (partial)
 
 ## Explicitly deferred (honest)
 
@@ -66,7 +66,7 @@
 - SIEM / hash-chained audit
 - Temporal-class multi-day durable HITL
 - tree-sitter / codebase knowledge graph
-- Slate thread weaving / dynamic subagent spawn
+- Full Slate dynamic subagent spawn (P0 shipped: durable threads + multi-wave weave)
 
 ---
 

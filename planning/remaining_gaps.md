@@ -1,8 +1,8 @@
 # Remaining gaps after leftovers overnight (2026-07-19)
 
-Honest leftover list after live MCP transport, LLM tool loop, mid-cycle HITL, swarm SM route, governance budgets, tools/MCP UI, and redundancy collapse.
+Honest leftover list after live MCP transport, LLM tool loop, mid-cycle HITL, swarm SM route, governance budgets, tools/MCP UI, redundancy collapse, **and** dual-layer context + durable multi-wave threads (P0).
 
-See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_mcp.md](./tools_mcp.md).
+See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_mcp.md](./tools_mcp.md), [slate_weave_graphify_plan.md](./slate_weave_graphify_plan.md).
 
 ---
 
@@ -23,6 +23,8 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 | Stage tools/MCP editor + edge-kind modal | Shipped |
 | Dedicated dashboard MCP tab + `/api/mcp/*` (live Manager) | Shipped |
 | nodetools StubMCP removed (alias-only facade) | Shipped |
+| Dual-layer contextgraph (events + entity/edges; EXTRACTED\|INFERRED\|RUNTIME) | Shipped; persist `~/.glider/context/entities.jsonl`; `Query`/`context_query` searches both |
+| Durable swarm threads + multi-wave FanOut + concatenate/critic weave | Shipped; `~/.glider/swarm/threads/`; hoop/swarm write thread/wave/episode facts |
 
 ---
 
@@ -38,15 +40,16 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 - SSO / RBAC / multi-tenant control plane
 - SIEM / hash-chained audit export
 - Temporal-class multi-day durable HITL (beyond process-local cursor JSON)
-- tree-sitter / codebase knowledge graph
-- Slate-style episode thread weaving / dynamic subagent spawn from planner
+- tree-sitter / codebase knowledge graph (Graphify-adjacent P2 ingest)
+- Full Slate dynamic subagent spawn from planner (P0 = durable threads + multi-wave weave only)
 - Chargeback UI for budgets (spend is tracked; no billing UI)
-- Richer `PathSummary` entity graph / separate Fact index persistence
+- LLM critic / richer episode schema after CritiqueMerge (P1 weave quality)
 
 ### Minor polish (non-blocking)
 
 - [ ] Stronger empty states for unbound agent log (partial)
 - [x] Dedicated docs/site HTML page for tools/MCP (`docs/site/mcp.html`)
+- [x] Dual-layer context note on `docs/site/context.html`
 
 ---
 
@@ -56,4 +59,5 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 go test ./internal/statemachine/ ./internal/tools/ ./internal/mcp/ ./internal/plugin/ ./internal/contextgraph/ ./internal/loop/ ./internal/swarm/ ./internal/dashboard/ -count=1
 # Live GitHub (optional):
 # $env:GITHUB_TOKEN="ghp_..."; go run ./cmd/glider -config configs/glider.local.yaml
+# Multi-wave swarm: POST /api/swarm/run {"prompt":"...","waves":2}
 ```

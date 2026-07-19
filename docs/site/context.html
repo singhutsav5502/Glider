@@ -34,15 +34,17 @@
     <main class="prose">
       <div class="badge">Memory</div>
       <h1>Context management</h1>
-      <p>Hybrid MVP: <strong>append-only event log</strong> (source of truth) + <strong>in-memory turn graph</strong> for sticky routing and analytics.</p>
+      <p>Hybrid: <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge store</strong> (Graphify-style structural layer) + in-memory turn index for sticky routing.</p>
 
       <h2>Why</h2>
-      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: “is this still part of turn family X?”</p>
+      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: “is this still part of turn family X?” Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (thread / wave / episode) without dumping transcripts.</p>
 
       <h2>Storage</h2>
       <ul>
         <li><strong>Hot</strong> — <code>internal/contextgraph.Store</code> keyed by turn_family / request_uuid / connect_session</li>
-        <li><strong>Warm</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
+        <li><strong>Warm events</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
+        <li><strong>Entities</strong> — <code>~/.glider/context/entities.jsonl</code> (threads, waves, workers, edges; provenance EXTRACTED | INFERRED | RUNTIME)</li>
+        <li><strong>Durable swarm threads</strong> — <code>~/.glider/swarm/threads/*.json</code> (multi-wave FanOut + weave)</li>
         <li><strong>Episodes</strong> — compact outcomes for local prompts (<code>contextkit</code>)</li>
       </ul>
 
@@ -54,7 +56,7 @@
 GET /api/context/turns/{id}
 GET /api/context/episodes
 GET /api/context/export</pre>
-      <p>Full write-up: <code>planning/context_management.md</code></p>
+      <p>Plan: <code>planning/slate_weave_graphify_plan.md</code>. Full write-up: <code>planning/context_management.md</code></p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>
