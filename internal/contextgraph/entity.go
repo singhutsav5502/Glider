@@ -35,6 +35,8 @@ const (
 	RelContains      = "contains"
 	RelConflictsWith = "conflicts_with"
 	RelSeeds         = "seeds"
+	RelDefines       = "defines"
+	RelCalls         = "calls"
 )
 
 // Entity is a durable node or edge in the structural context layer.

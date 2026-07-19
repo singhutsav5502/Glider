@@ -5,13 +5,15 @@ import (
 	"strings"
 )
 
-// QueryOpts filters dual-layer search (Graphify methodology: query / path / neighborhood).
+// QueryOpts filters dual-layer search (Graphify methodology: query / path / neighborhood / explain).
 type QueryOpts struct {
 	TurnID       string
 	Keyword      string
 	From         string     // path endpoint (label or id substring)
 	To           string     // path endpoint
 	Neighborhood string     // entity id — include 1-hop neighbors
+	Explain      string     // entity id — Graphify-style explain narrative
+	Communities  bool       // include community detection summary
 	Provenance   Provenance // empty = any
 	Limit        int
 }
@@ -29,6 +31,33 @@ func (s *Store) QueryWith(opts QueryOpts) string {
 	turnID := strings.TrimSpace(opts.TurnID)
 	wantProv := opts.Provenance
 	var hits []string
+
+	if eid := strings.TrimSpace(opts.Explain); eid != "" {
+		hits = append(hits, s.Explain(turnID, eid))
+		if len(hits) >= limit {
+			return strings.Join(hits, "\n")
+		}
+	}
+
+	if opts.Communities {
+		coms := s.DetectCommunities(turnID, 8)
+		if len(coms) == 0 {
+			hits = append(hits, "[communities] none (need ≥2 linked entities)")
+		} else {
+			for _, c := range coms {
+				hits = append(hits, fmt.Sprintf("[community] %s size=%d hubs=%s", c.ID, c.Size, strings.Join(c.Hubs, ",")))
+				if len(hits) >= limit {
+					break
+				}
+			}
+			for _, g := range s.GodNodes(turnID, 5) {
+				hits = append(hits, "[god_node] "+g)
+				if len(hits) >= limit {
+					break
+				}
+			}
+		}
+	}
 
 	if opts.From != "" || opts.To != "" {
 		path := s.PathSummary(turnID, opts.From, opts.To)
@@ -187,6 +216,10 @@ func ParseQueryInput(input string) QueryOpts {
 			}
 		case "neigh", "neighborhood":
 			opts.Neighborhood = val
+		case "explain":
+			opts.Explain = val
+		case "communities", "community":
+			opts.Communities = val == "1" || strings.EqualFold(val, "true") || val == ""
 		case "limit":
 			var n int
 			fmt.Sscanf(val, "%d", &n)
@@ -198,7 +231,7 @@ func ParseQueryInput(input string) QueryOpts {
 		}
 	}
 	opts.Keyword = strings.Join(kw, " ")
-	if opts.Keyword == "" && opts.TurnID != "" && opts.From == "" && opts.Neighborhood == "" && opts.Provenance == "" {
+	if opts.Keyword == "" && opts.TurnID != "" && opts.From == "" && opts.Neighborhood == "" && opts.Provenance == "" && opts.Explain == "" && !opts.Communities {
 		opts.Keyword = opts.TurnID
 		opts.TurnID = ""
 	}

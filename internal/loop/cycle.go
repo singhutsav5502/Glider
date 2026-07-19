@@ -254,7 +254,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 								"provenance": string(contextgraph.ProvenanceExtracted),
 							},
 						})
-						// Lightweight file-tree EXTRACTED index after successful clone/audit path.
+						// Lightweight file-tree + symbol EXTRACTED index after successful clone/audit path.
 						if tr.OK && (tr.Name == "git_clone" || tr.Name == "fs_list") {
 							if root := extractClonedPath(tr.Output); root != "" {
 								if n, err := m.Graph.IndexFileTree(turnID, root, 4, 200); err == nil && n > 0 {
@@ -264,6 +264,17 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 										Actor:  "loop",
 										Attrs: map[string]string{
 											"root": root, "nodes": fmt.Sprintf("%d", n),
+											"provenance": string(contextgraph.ProvenanceExtracted),
+										},
+									})
+								}
+								if n, err := m.Graph.IndexSymbols(turnID, root, 100); err == nil && n > 0 {
+									m.Graph.Append(contextgraph.Event{
+										Kind:   contextgraph.EventKind("SymbolsIndexed"),
+										TurnID: turnID,
+										Actor:  "loop",
+										Attrs: map[string]string{
+											"root": root, "symbols": fmt.Sprintf("%d", n),
 											"provenance": string(contextgraph.ProvenanceExtracted),
 										},
 									})
