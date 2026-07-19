@@ -53,6 +53,11 @@ func main() {
 	for _, p := range paths {
 		spec, err := loop.ReadHoopYAMLFile(p)
 		if err != nil {
+			// samples/hoops may include swarm_template YAML; skip those for -dir.
+			if strings.Contains(err.Error(), "expected hoop") {
+				fmt.Printf("skip %s (%v)\n", p, err)
+				continue
+			}
 			fatal(fmt.Errorf("%s: %w", p, err))
 		}
 		if err := upsert(client, *base, spec); err != nil {

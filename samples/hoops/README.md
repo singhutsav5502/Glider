@@ -43,16 +43,18 @@ ollama serve
 ## Load / run
 
 ```powershell
-# Create via API (mirrors YAML)
+# Seed ALL sample hoops + swarm templates (idempotent; does not Start)
+powershell -File scripts\seed-samples.ps1
+# Optional: start every hoop after load
+powershell -File scripts\seed-samples.ps1 -Start
+
+# Create one hoop via API (mirrors YAML)
 go run ./scripts/loadhoop -file samples/hoops/enterprise-incident-command.yaml -start
 
-# Install directory
+# Install hoop directory only
 go run ./scripts/loadhoop -dir samples/hoops
 
-# Swarm template into ~/.glider/hoops
-Copy-Item samples\swarms\*.yaml $env:USERPROFILE\.glider\hoops\
-# or POST /api/swarm/templates from Dashboard
-
+# Single sample: load + start
 powershell -File scripts\run-sample-hoop.ps1 -Name enterprise-incident-command
 ```
 

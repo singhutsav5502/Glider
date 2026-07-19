@@ -1,6 +1,6 @@
 # Swarm templates
 
-Reusable fan-out recipes (`kind: swarm_template`). Copy into `~/.glider/hoops/` or save via Dashboard → Hoops & Swarm → Templates.
+Reusable fan-out recipes (`kind: swarm_template`). Seed all samples with `powershell -File scripts\seed-samples.ps1` (writes into `~/.glider/hoops/`), or copy manually / save via Dashboard → Hoops & Swarm → Templates.
 
 | File | Description |
 |------|-------------|

@@ -123,8 +123,14 @@ GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
       <pre>scripts/examples/fan_out_sample.star
 # Match prompts containing "fanout" / "multi-agent review" → strategy fan_out</pre>
 
-      <h2>Install all hoops</h2>
-      <pre>go run ./scripts/loadhoop -dir samples/hoops
+      <h2>Seed all samples</h2>
+      <pre># Idempotent: upserts every samples/hoops + samples/swarms YAML
+# Hoops → dashboard API; swarms → ~/.glider/hoops (Glider must be running)
+powershell -File scripts\seed-samples.ps1
+powershell -File scripts\seed-samples.ps1 -Start   # also start each hoop
+
+# Or hoops only / one-shot start
+go run ./scripts/loadhoop -dir samples/hoops
 powershell -File scripts\run-sample-hoop.ps1 -Name incident-triage</pre>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
