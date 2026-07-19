@@ -1,6 +1,6 @@
 # Slate weave + Graphify dual-layer context
 
-> Plan + P0 ship note **2026-07-19**. Answers: *why deferred weave?* and *can we unify event-log + Graphify-style graph?*  
+> Plan + ship note **2026-07-19**. Answers: *why deferred weave?* and *can we unify event-log + Graphify-style graph?*  
 > Prior art: [swarm_orchestration.md](./swarm_orchestration.md), [remaining_gaps.md](./remaining_gaps.md), [graphify_context_notes.md](./graphify_context_notes.md), [context_management.md](./context_management.md).  
 > External: [Slate / Random Labs](https://randomlabs.ai/blog/slate) · [Graphify](https://github.com/Graphify-Labs/graphify)
 
@@ -48,11 +48,11 @@ Graphify builds a **queryable knowledge graph** (not vector RAG): structural ext
 
 `Store.Query` / `context_query` searches **both** layers. `PathSummary` prefers entity edges, falls back to event scan. Hoop + swarm **RecordFact** thread/wave/episode nodes so wave N+1 can pull prior outputs without re-reading transcripts.
 
-We still **defer** tree-sitter codebase indexing, Leiden communities, and full Graphify `explain` UX — those are repo-knowledge features, not orchestrator MVP.
+We still **defer** tree-sitter codebase indexing, Leiden communities, and full Graphify `explain` UX — those are repo-knowledge features, not orchestrator MVP. P1 adds **lightweight file-tree EXTRACTED** indexing (dirs/files only) as a bridge.
 
 ---
 
-## 3. Architecture (P0 target)
+## 3. Architecture (P0+P1 target)
 
 ```
                     ┌─────────────────────────────────────┐
@@ -60,9 +60,10 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
                     │  ┌─────────────┐  ┌───────────────┐ │
   hoop / swarm ────►│  │ event log   │  │ entity/edges  │ │
   FanOut waves ────►│  │ (RUNTIME)   │  │ EXTRACTED /   │ │
-                    │  │             │  │ INFERRED /    │ │
-  context_query ◄───│  │ Query ∪     │  │ RUNTIME       │ │
-  PathSummary  ◄────│  │ PathSummary │  │               │ │
+  file-tree audit ─►│  │             │  │ INFERRED /    │ │
+                    │  │ QueryOpts ∪ │  │ RUNTIME       │ │
+  context_query ◄───│  │ PathSummary │  │ + file/dir    │ │
+  PathSummary  ◄────│  │ Neighbor    │  │               │ │
                     │  └─────────────┘  └───────────────┘ │
                     │         persist ~/.glider/context/  │
                     └─────────────────────────────────────┘
@@ -70,8 +71,8 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
                     ┌─────────────────┴──────────────────┐
                     │  swarm.ThreadStore (~/.glider/     │
                     │  swarm/threads/*.json)             │
-                    │  wave N → merge → graph facts →    │
-                    │  wave N+1 prompt seed → weave      │
+                    │  List / Resume / weave policies    │
+                    │  planner SubTasks → waves          │
                     └────────────────────────────────────┘
 ```
 
@@ -79,7 +80,7 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 
 ## 4. Phases
 
-### P0 — foundation (this ship)
+### P0 — foundation (shipped)
 
 - [x] Dual-layer `Query` (events + entities); provenance EXTRACTED | INFERRED | RUNTIME
 - [x] Persist entities under `~/.glider/context/`; warm-load with events
@@ -87,17 +88,41 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 - [x] Durable swarm threads on disk; multi-wave FanOut; weave = concatenate + CritiqueMerge
 - [x] `context_query` hits both layers; remaining_gaps + docs note
 
-### P1 — weave quality
+### P1 — weave quality + Graphify query depth (this ship)
 
-- [ ] LLM critic optional after CritiqueMerge; episode schema richer (tool-call digest)
-- [ ] Dashboard thread timeline (waves as nodes)
-- [ ] Wave prompts from planner stage (still bounded, no free spawn)
+#### Weave
 
-### P2 — Slate-adjacent + Graphify-adjacent
+- [x] **Planner → SubTasks** — parse planner/plan-role output into bounded `SubTask` prompts; wave N uses SubTask i (still capped, no free spawn)
+- [x] **Multi-wave from template** — YAML `waves` + `weave_policy` + optional `subtasks` / `decompose: true`
+- [x] **Thread List / Resume** — `ThreadStore.List`; resume after process restart continues next wave(s) with same `thread_id`
+- [x] **Weave policies** beyond concat:
+  - [x] `concatenate` — baseline join of wave merges
+  - [x] `role_weighted` — weight plan/research/exec/critic summaries
+  - [x] `critic` — CritiqueMerge ranking across waves (P0 path)
+  - [x] `conflict_callouts` — flag disagreeing worker summaries (token overlap / polarity cues)
+- [x] **Dashboard/API** — `GET /api/swarm/threads`, `GET /api/swarm/threads/{id}`, `POST .../resume`; weave status on swarm graph
+- [x] **Per-thread/wave agent logs** — log attrs `thread` + `wave`; agent-log focus by thread id
+- [x] **Sample** — `samples/swarms/multi-wave-weave.yaml`
+- [x] **Episode digest** — artifact digest fields on woven episode
 
-- [ ] Dynamic subagent spawn from planner (policy-capped)
-- [ ] Optional tree-sitter / codebase graph as third ingest into same entity store
+#### Graphify-style context
+
+- [x] **Richer kinds** — `file`, `dir`, `subtask`, `conflict`, `symbol` (label-only); edges `contains`, `conflicts_with`, `seeds`
+- [x] **QueryOpts** — keyword + `from`/`to` path + neighborhood (1-hop) + provenance filter
+- [x] **PathSummary in prod** — hoop cycle + swarm weave seed use PathSummary for decision narrative
+- [x] **File-tree EXTRACTED** — `IndexFileTree(root)` when auditing a repo path (depth/file caps); post-`git_clone` + `/api/context/index-tree`
+- [x] **Hoop/swarm dual R/W** — writes + Query used by relevancy SM hint path
+- [x] **`context_query` filters** — parse `prov=RUNTIME path=a->b neigh=id ...` in tool input
+- [x] **Docs** — deep update `docs/site/context.html` (dual-layer, weave, query filters)
+
+### P2 — Slate-adjacent + Graphify-adjacent (deferred)
+
+- [ ] Dynamic subagent spawn from planner (policy-capped N; free-form role invent)
+- [ ] Optional LLM critic after CritiqueMerge (real model pass, not heuristic)
+- [ ] tree-sitter / codebase AST graph as third ingest into same entity store
+- [ ] Leiden communities / god-node reports / `explain` UX
 - [ ] Temporal-class multi-day HITL still separate (process-local cursor ≠ weave)
+- [ ] Dashboard Cytoscape timeline of durable thread waves (richer than status paint)
 
 ---
 
@@ -105,10 +130,12 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 
 | Piece | Path |
 |-------|------|
-| Dual-layer store | `internal/contextgraph/` (`graph.go`, `entity.go`, `query.go`) |
-| Durable threads + waves | `internal/swarm/thread.go`, `waves.go` |
+| Dual-layer store | `internal/contextgraph/` (`graph.go`, `entity.go`, `query.go`, `filetree.go`) |
+| Durable threads + waves + weave policies | `internal/swarm/thread.go`, `waves.go`, `weave.go`, `decompose.go` |
 | Graph sink (facts + events) | `internal/dashboard/swarm_api.go` |
-| Hoop writes | `internal/loop/cycle.go` |
+| Hoop writes + PathSummary | `internal/loop/cycle.go` |
+| Tool filters | `internal/tools/builtins.go` (`context_query`) |
+| Sample | `samples/swarms/multi-wave-weave.yaml` |
 | Docs | `docs/site/context.html` |
 
 ---
@@ -116,5 +143,8 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 ## 6. Verify
 
 ```powershell
-go test ./internal/contextgraph/ ./internal/swarm/ ./internal/loop/ ./internal/dashboard/ -count=1
+go test ./internal/contextgraph/ ./internal/swarm/ ./internal/loop/ ./internal/dashboard/ ./internal/tools/ -count=1
+# Multi-wave: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"conflict_callouts"}
+# Resume:     POST /api/swarm/threads/{id}/resume {"waves":1}
+# Threads:    GET  /api/swarm/threads
 ```
