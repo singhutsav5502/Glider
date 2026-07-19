@@ -1,6 +1,6 @@
 # Remaining gaps after leftovers overnight (2026-07-19)
 
-Honest leftover list after live MCP transport, LLM tool loop, mid-cycle HITL, swarm SM route, governance budgets, tools/MCP UI, redundancy collapse, dual-layer context + durable multi-wave threads (P0), **and** P1 weave policies + Graphify query depth.
+Honest leftover list after live MCP transport, LLM tool loop, mid-cycle HITL, swarm SM route, governance budgets, tools/MCP UI, redundancy collapse, dual-layer context + durable multi-wave threads (P0), P1 weave policies + Graphify query depth, **and** P2 free-spawn / LLM critic / symbol ingest / communities / wave timeline.
 
 See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_mcp.md](./tools_mcp.md), [slate_weave_graphify_plan.md](./slate_weave_graphify_plan.md).
 
@@ -32,6 +32,11 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 | PathSummary in prod (hoop cycle + wave seed) | Shipped |
 | File-tree EXTRACTED indexing (`IndexFileTree` + post-clone + `/api/context/index-tree`) | Shipped + tests |
 | Richer entity kinds (file/dir/subtask/conflict/symbol) + contains/conflicts_with/seeds | Shipped |
+| Free/dynamic subagent spawn (`free_spawn`, role invent, capped ≤4) | Shipped + tests |
+| LLM critic weave (`llm_critic` + Completer CriticFn) | Shipped + tests |
+| Symbol/AST EXTRACTED ingest (Go parser + JS/TS/Python regex; SymbolIndexer) | Shipped + tests; post-clone |
+| Community MVP + explain/path UX (API + context_query filters) | Shipped + tests |
+| Cytoscape durable-thread wave timeline | Shipped (View paints waves→workers→woven) |
 
 ---
 
@@ -42,17 +47,14 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 - [ ] **Live GitHub MCP against real network** — requires operator PAT + docker/network; Glider connects when `GITHUB_TOKEN` / `GITHUB_PERSONAL_ACCESS_TOKEN` / `GH_TOKEN` is set. CI cannot assert live GitHub without secrets.
 - [ ] **Hosted Copilot MCP quirks** — session headers / toolset filters may need field tweaks against production once a PAT is available.
 
-### Product decisions (intentionally deferred) — P2
+### Still deferred (enterprise / multi-day — why)
 
-- SSO / RBAC / multi-tenant control plane
-- SIEM / hash-chained audit export
-- Temporal-class multi-day durable HITL (beyond process-local cursor JSON)
-- tree-sitter / codebase AST knowledge graph (Graphify-adjacent P2 ingest)
-- Full Slate dynamic subagent spawn from planner (P1 = bounded SubTasks from plan text only)
-- Optional LLM critic after CritiqueMerge (heuristic critic/conflict policies ship in P1)
-- Leiden communities / god-node reports / Graphify `explain` UX
-- Chargeback UI for budgets (spend is tracked; no billing UI)
-- Rich Cytoscape timeline of durable thread waves (list/resume + status paint ship in P1)
+- **SSO / RBAC / multi-tenant control plane** — needs IdP + tenancy model; out of local gateway scope
+- **SIEM / hash-chained audit export** — needs retention/compliance product decisions
+- **Temporal-class multi-day durable HITL** — process-local `MachineCursor` ≠ workflow engine; multi-day pause needs Temporal/Cadence-class durability
+- **Full Leiden communities at repo scale** — connected-component MVP + god-nodes ship; Leiden needs denser EXTRACTED graph + dependency
+- **Live tree-sitter grammars on Windows** — deferred behind pragmatic `SymbolIndexer` (Go/JS/TS/Python work today)
+- **Chargeback UI for budgets** — spend tracked; no billing product
 
 ### Minor polish (non-blocking)
 
@@ -68,7 +70,11 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 go test ./internal/statemachine/ ./internal/tools/ ./internal/mcp/ ./internal/plugin/ ./internal/contextgraph/ ./internal/loop/ ./internal/swarm/ ./internal/dashboard/ -count=1
 # Live GitHub (optional):
 # $env:GITHUB_TOKEN="ghp_..."; go run ./cmd/glider -config configs/glider.local.yaml
-# Multi-wave swarm: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"conflict_callouts","decompose":true}
+# Multi-wave swarm: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"conflict_callouts","decompose":true,"free_spawn":true}
+# LLM critic: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"llm_critic"}
 # Threads: GET /api/swarm/threads ; POST /api/swarm/threads/{id}/resume {"waves":1}
 # Index tree: POST /api/context/index-tree {"root":".","turn_id":"audit"}
+# Index symbols: POST /api/context/index-symbols {"root":".","turn_id":"audit"}
+# Explain: GET /api/context/explain?turn_id=audit&id=...
+# Communities: GET /api/context/communities?turn_id=audit
 ```

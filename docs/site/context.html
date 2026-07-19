@@ -66,26 +66,38 @@
 
       <h2>Query surface</h2>
       <p><code>Store.Query</code> / <code>QueryWith</code> / tool <code>context_query</code> search <strong>both</strong> layers. Filters:</p>
-      <pre>context_query: &lt;turn_id&gt; [prov=RUNTIME|EXTRACTED|INFERRED] [path=from-&gt;to] [neigh=id] keyword&hellip;
+      <pre>context_query: &lt;turn_id&gt; [prov=RUNTIME|EXTRACTED|INFERRED] [path=from-&gt;to] [neigh=id] [explain=id] [communities=1] keyword&hellip;
 
 Examples:
   t-abc wave
   t-abc prov=EXTRACTED readme
   t-abc path=wave-0-&gt;wave-1
   t-abc neigh=thr-1-wave-0
+  t-abc explain=sym:demo.go#Helper
+  t-abc communities=1
   prov=RUNTIME EpisodeMerged</pre>
       <p><code>PathSummary(turn, from, to)</code> prefers entity edges, falls back to event scan. Used in production by hoop cycle narratives and multi-wave prompt seeding.</p>
-      <p>Optional file-tree ingest: <code>POST /api/context/index-tree</code> or automatic after successful <code>git_clone</code> in a hoop (EXTRACTED dir/file + contains edges).</p>
+      <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP (not full Leiden).</p>
+      <p>Ingest:</p>
+      <ul>
+        <li>File-tree: <code>POST /api/context/index-tree</code> or post-<code>git_clone</code> (EXTRACTED dir/file + contains)</li>
+        <li>Symbols: <code>POST /api/context/index-symbols</code> — Go via <code>go/parser</code>, JS/TS/Python via regex; <code>SymbolIndexer</code> interface ready for tree-sitter</li>
+      </ul>
 
       <h2>Weave (Slate-inspired)</h2>
       <ul>
-        <li><strong>Policies</strong> — concatenate | role_weighted | critic | conflict_callouts</li>
+        <li><strong>Policies</strong> — concatenate | role_weighted | critic | conflict_callouts | llm_critic</li>
         <li><strong>Planner decompose</strong> — numbered plan lines become bounded SubTasks for later waves</li>
+        <li><strong>Free spawn</strong> — <code>free_spawn: true</code> invents worker roles from <code>[role:]</code> / <code>role=</code> / <code>@role</code> lines (capped ≤4)</li>
         <li><strong>Resume</strong> — <code>GET /api/swarm/threads</code>, <code>POST /api/swarm/threads/{id}/resume</code></li>
+        <li><strong>Wave timeline</strong> — Durable thread View paints Cytoscape wave→worker timeline on the Graph editor</li>
         <li><strong>Sample</strong> — <code>samples/swarms/multi-wave-weave.yaml</code></li>
       </ul>
       <pre>POST /api/swarm/run
-{"prompt":"&hellip;","waves":3,"weave_policy":"conflict_callouts","decompose":true}
+{"prompt":"&hellip;","waves":3,"weave_policy":"conflict_callouts","decompose":true,"free_spawn":true}
+
+POST /api/swarm/run
+{"prompt":"&hellip;","waves":2,"weave_policy":"llm_critic"}
 
 POST /api/swarm/threads/{id}/resume
 {"waves":1}</pre>
@@ -108,6 +120,9 @@ GET  /api/context/turns/{id}
 GET  /api/context/episodes
 GET  /api/context/export
 POST /api/context/index-tree
+POST /api/context/index-symbols
+GET  /api/context/communities?turn_id=
+GET  /api/context/explain?turn_id=&amp;id=
 GET  /api/swarm/threads
 GET  /api/swarm/threads/{id}
 POST /api/swarm/threads/{id}/resume</pre>

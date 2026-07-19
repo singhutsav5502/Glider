@@ -260,9 +260,11 @@
                 <option value="concatenate">concatenate</option>
                 <option value="role_weighted">role_weighted</option>
                 <option value="conflict_callouts">conflict_callouts</option>
+                <option value="llm_critic">llm_critic</option>
               </select>
             </label>
             <label class="check"><input type="checkbox" id="swarm-decompose" /> Decompose planner</label>
+            <label class="check"><input type="checkbox" id="swarm-free-spawn" /> Free spawn roles</label>
             <div class="span2 cfg-actions">
               <button type="submit">Run swarm</button>
             </div>
@@ -272,9 +274,10 @@
 
         <fieldset class="cfg-section" style="margin-top:28px">
           <legend>Durable threads</legend>
-          <p class="hint" style="margin:0 0 10px">List / resume multi-wave threads after process restart. Weave status paints on the swarm graph.</p>
+          <p class="hint" style="margin:0 0 10px">List / resume multi-wave threads. View paints a Cytoscape wave timeline on the Graph editor swarm canvas.</p>
           <div class="cfg-actions" style="margin-bottom:10px">
             <button type="button" id="swarm-threads-refresh">Refresh threads</button>
+            <button type="button" id="swarm-timeline-clear" class="linkish">Clear wave timeline</button>
           </div>
           <div id="swarm-threads" class="hoops-list"></div>
         </fieldset>

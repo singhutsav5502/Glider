@@ -115,14 +115,17 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 - [x] **`context_query` filters** — parse `prov=RUNTIME path=a->b neigh=id ...` in tool input
 - [x] **Docs** — deep update `docs/site/context.html` (dual-layer, weave, query filters)
 
-### P2 — Slate-adjacent + Graphify-adjacent (deferred)
+### P2 — Slate-adjacent + Graphify-adjacent (shipped 2026-07-19)
 
-- [ ] Dynamic subagent spawn from planner (policy-capped N; free-form role invent)
-- [ ] Optional LLM critic after CritiqueMerge (real model pass, not heuristic)
-- [ ] tree-sitter / codebase AST graph as third ingest into same entity store
-- [ ] Leiden communities / god-node reports / `explain` UX
-- [ ] Temporal-class multi-day HITL still separate (process-local cursor ≠ weave)
-- [ ] Dashboard Cytoscape timeline of durable thread waves (richer than status paint)
+- [x] Dynamic subagent spawn from planner (`free_spawn`; role invent via `[role:]` / `role=` / `@role`; capped ≤4)
+- [x] Optional LLM critic after CritiqueMerge (`llm_critic` policy + `CriticFn` / Completer)
+- [x] Lightweight symbol/AST EXTRACTED ingest (Go `go/parser` + JS/TS/Python regex; `SymbolIndexer` for tree-sitter later)
+- [x] Community detection MVP + `explain` UX (connected components + god-nodes; API + `context_query`)
+- [x] Dashboard Cytoscape timeline of durable thread waves (View → wave→worker→woven)
+- [ ] Temporal-class multi-day HITL — **deferred** (process-local cursor ≠ weave; needs Temporal/Cadence-class durability)
+- [ ] SSO / RBAC / SIEM — **deferred** (enterprise control plane)
+- [ ] Full Leiden at repo scale — **deferred** (MVP communities ship; Leiden needs denser graph + dependency)
+- [ ] Live tree-sitter grammars on Windows — **deferred** behind `SymbolIndexer` interface
 
 ---
 
@@ -130,7 +133,7 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 
 | Piece | Path |
 |-------|------|
-| Dual-layer store | `internal/contextgraph/` (`graph.go`, `entity.go`, `query.go`, `filetree.go`) |
+| Dual-layer store | `internal/contextgraph/` (`graph.go`, `entity.go`, `query.go`, `filetree.go`, `symbols.go`, `communities.go`) |
 | Durable threads + waves + weave policies | `internal/swarm/thread.go`, `waves.go`, `weave.go`, `decompose.go` |
 | Graph sink (facts + events) | `internal/dashboard/swarm_api.go` |
 | Hoop writes + PathSummary | `internal/loop/cycle.go` |
@@ -144,7 +147,11 @@ We still **defer** tree-sitter codebase indexing, Leiden communities, and full G
 
 ```powershell
 go test ./internal/contextgraph/ ./internal/swarm/ ./internal/loop/ ./internal/dashboard/ ./internal/tools/ -count=1
-# Multi-wave: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"conflict_callouts"}
+# Multi-wave: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"conflict_callouts","decompose":true,"free_spawn":true}
+# LLM critic: POST /api/swarm/run {"prompt":"...","waves":2,"weave_policy":"llm_critic"}
 # Resume:     POST /api/swarm/threads/{id}/resume {"waves":1}
 # Threads:    GET  /api/swarm/threads
+# Symbols:    POST /api/context/index-symbols {"root":".","turn_id":"audit"}
+# Explain:    GET  /api/context/explain?turn_id=audit&id=sym:...
+# Communities:GET  /api/context/communities?turn_id=audit
 ```

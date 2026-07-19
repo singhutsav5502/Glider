@@ -894,6 +894,7 @@
   let stageLiveCurrent = "";
   let stageUidSeq = 0;
   let swarmThreads = [];
+  let swarmWaveTimeline = null; // durable thread wave timeline overlay for Cytoscape
   /** thread uids linked from orchestrator */
   let swarmLinks = [];
   let swarmSelectedUid = null;
@@ -3052,6 +3053,9 @@
   }
 
   function buildSwarmCyElements() {
+    if (swarmWaveTimeline && Array.isArray(swarmWaveTimeline.waves)) {
+      return buildWaveTimelineElements(swarmWaveTimeline);
+    }
     const host = document.getElementById("swarm-graph-host");
     const w = Math.max(host?.clientWidth || 560, 320);
     const h = Math.max(host?.clientHeight || 280, 240);
@@ -3116,6 +3120,108 @@
       }
     }
     return els;
+  }
+
+  function buildWaveTimelineElements(st) {
+    const host = document.getElementById("swarm-graph-host");
+    const w = Math.max(host?.clientWidth || 560, 320);
+    const h = Math.max(host?.clientHeight || 280, 240);
+    const waves = st.waves || [];
+    const policy = String(st.weave_policy || "weave").slice(0, 16);
+    const els = [
+      {
+        group: "nodes",
+        data: {
+          id: "thr",
+          label: "thread\n" + String(st.id || "?").slice(0, 14),
+        },
+        position: { x: 80, y: h / 2 },
+        classes: "orch",
+        selectable: false,
+      },
+    ];
+    const n = Math.max(waves.length, 1);
+    waves.forEach((wv, i) => {
+      const x = 180 + ((w - 260) * (n === 1 ? 0.5 : i / Math.max(n - 1, 1)));
+      const wid = "wave-" + (wv.index != null ? wv.index : i);
+      const fail = (wv.results || []).some((r) => r.err);
+      const stLabel = fail ? "fail" : "ok";
+      const sum = String((wv.merged && wv.merged.summary) || "").slice(0, 40);
+      els.push({
+        group: "nodes",
+        data: {
+          id: wid,
+          label: "wave " + (wv.index != null ? wv.index : i) + "\n" + stLabel,
+          status: stLabel,
+          summary: sum,
+        },
+        position: { x, y: h / 2 - 20 },
+        classes: "status-" + stLabel,
+      });
+      const prev = i === 0 ? "thr" : ("wave-" + (waves[i - 1].index != null ? waves[i - 1].index : i - 1));
+      els.push({
+        group: "edges",
+        data: { id: "wf-" + wid, source: prev, target: wid, kind: "follows" },
+        classes: "status-" + stLabel,
+      });
+      (wv.results || []).slice(0, 4).forEach((r, ri) => {
+        const rid = wid + "-w" + ri;
+        const rst = r.err ? "fail" : "ok";
+        els.push({
+          group: "nodes",
+          data: {
+            id: rid,
+            label: String(r.role || r.worker_id || "w").slice(0, 10) + "\n" + rst,
+            status: rst,
+          },
+          position: { x: x - 30 + ri * 28, y: h / 2 + 70 },
+          classes: "status-" + rst,
+        });
+        els.push({
+          group: "edges",
+          data: { id: "we-" + rid, source: wid, target: rid, kind: "flow" },
+          classes: "status-" + rst,
+        });
+      });
+    });
+    if (st.merged_summary || st.merged) {
+      els.push({
+        group: "nodes",
+        data: {
+          id: "woven",
+          label: policy + "\nwoven",
+        },
+        position: { x: w - 90, y: h / 2 },
+        classes: "status-ok",
+        selectable: false,
+      });
+      const lastWave = waves.length
+        ? ("wave-" + (waves[waves.length - 1].index != null ? waves[waves.length - 1].index : waves.length - 1))
+        : "thr";
+      els.push({
+        group: "edges",
+        data: { id: "weave-edge", source: lastWave, target: "woven", kind: "merged_into" },
+        classes: "feedback",
+      });
+    }
+    return els;
+  }
+
+  function paintWaveTimeline(st) {
+    swarmWaveTimeline = st;
+    const empty = document.getElementById("swarm-graph-empty");
+    const host = document.getElementById("swarm-graph-host");
+    if (host) host.classList.add("has-nodes");
+    if (empty) empty.hidden = true;
+    renderSwarmGraph();
+    document.querySelector('.open-graph-editor[data-graph-focus="swarm"]')?.click();
+    showHoopsOk("Wave timeline: " + (st.id || "thread"));
+  }
+
+  function clearWaveTimeline() {
+    swarmWaveTimeline = null;
+    renderSwarmGraph();
+    showHoopsOk("Cleared wave timeline");
   }
 
   function ensureSwarmCy() {
@@ -3214,8 +3320,9 @@
   function renderSwarmGraph() {
     const host = document.getElementById("swarm-graph-host");
     const empty = document.getElementById("swarm-graph-empty");
-    if (host) host.classList.toggle("has-nodes", swarmThreads.length > 0);
-    if (empty) empty.hidden = swarmThreads.length > 0;
+    const has = swarmWaveTimeline ? true : swarmThreads.length > 0;
+    if (host) host.classList.toggle("has-nodes", has);
+    if (empty) empty.hidden = has;
     if (!cyAvailable()) return;
     if (!isGraphsTabActive() && !swarmCy) return;
     ensureSwarmCy();
@@ -3226,13 +3333,16 @@
       swarmCy.elements().remove();
       swarmCy.add(els);
       swarmCy.nodes().unselect();
-      if (swarmSelectedUid) {
+      if (swarmSelectedUid && !swarmWaveTimeline) {
         const sel = swarmCy.getElementById(swarmSelectedUid);
         if (sel.nonempty()) sel.select();
       }
     });
     suppressEdgeSync = false;
     swarmCy.resize();
+    if (swarmWaveTimeline) {
+      try { swarmCy.fit(undefined, 36); } catch (_) {}
+    }
   }
 
   function editSelectedSwarmThread() {
@@ -3732,6 +3842,7 @@
         waves: Number(document.getElementById("swarm-waves")?.value) || 1,
         weave_policy: document.getElementById("swarm-weave-policy")?.value || "critic",
         decompose: !!document.getElementById("swarm-decompose")?.checked,
+        free_spawn: !!document.getElementById("swarm-free-spawn")?.checked,
       };
       const res = await fetch("/api/swarm/run", {
         method: "POST",
@@ -3853,6 +3964,12 @@
           const out = document.getElementById("swarm-result");
           if (out) { out.hidden = false; out.textContent = text; }
           setAgentLogFocus("swarm", b.dataset.id);
+          try {
+            const st = JSON.parse(text);
+            if (st && Array.isArray(st.waves)) {
+              paintWaveTimeline(st);
+            }
+          } catch (_) {}
         });
       });
     } catch (e) {
@@ -3860,6 +3977,7 @@
     }
   }
   document.getElementById("swarm-threads-refresh")?.addEventListener("click", () => refreshSwarmThreads());
+  document.getElementById("swarm-timeline-clear")?.addEventListener("click", () => clearWaveTimeline());
   refreshSwarmThreads();
 
   const tplForm = document.getElementById("tpl-form");
