@@ -88,6 +88,8 @@ type Runner struct {
 	Opts         Options
 	WorkerFn     WorkerFn
 	Graph        GraphSink
+	GraphCtx     GraphContext // dual-layer context for multi-wave seed + facts
+	Threads      *ThreadStore // durable thread/wave state on disk
 	Episodes     *contextkit.Store
 	Templates    *TemplateStore
 	SessionID    string

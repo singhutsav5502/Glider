@@ -494,6 +494,18 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			Actor:     "loop",
 			Attrs:     attrs,
 		})
+		g.RecordEpisodeFact(turnID, epID, "loop-cycle", summary)
+		g.RecordFact(turnID, contextgraph.Fact{
+			ID:         "thread-hoop-" + st.Spec.ID,
+			Kind:       contextgraph.KindThread,
+			Label:      "hoop " + st.Spec.ID,
+			Provenance: contextgraph.ProvenanceRuntime,
+			Attrs: map[string]string{
+				"loop_id":    st.Spec.ID,
+				"iteration":  fmt.Sprintf("%d", iter),
+				"episode_id": epID,
+			},
+		})
 	}
 
 	outcome := IterationOutcome{
@@ -745,6 +757,21 @@ func (m *Manager) completeParallel(ctx context.Context, st *LoopState, mod Modul
 		TurnID:     turnID,
 	})
 	merged := swarm.CritiqueMerge(results)
+	if g := m.Graph; g != nil {
+		ws := make([]contextgraph.WaveWorker, len(results))
+		for i, r := range results {
+			ws[i] = contextgraph.WaveWorker{
+				WorkerID: r.WorkerID,
+				Role:     string(r.Role),
+				Model:    r.Model,
+				Summary:  r.Episode.Summary,
+				OK:       r.Err == nil,
+			}
+		}
+		threadID := "hoop-" + st.Spec.ID
+		g.RecordThreadWave(turnID, threadID, st.Iteration, merged.ID, merged.Summary, ws)
+		g.RecordEpisodeFact(turnID, merged.ID, "hoop-parallel-merge", merged.Summary)
+	}
 	tokens := merged.Tokens
 	if tokens == 0 {
 		tokens = len(merged.Summary) / 4

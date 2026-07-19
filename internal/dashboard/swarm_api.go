@@ -67,12 +67,17 @@ func (s *Server) handleSwarmRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
-	var req swarm.RunRequest
+	var req swarm.RunWavesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	resp, err := s.Swarm.Run(r.Context(), req)
+	var resp *swarm.RunResponse
+	if req.Waves > 1 {
+		resp, err = s.Swarm.RunWaves(r.Context(), req)
+	} else {
+		resp, err = s.Swarm.Run(r.Context(), req.RunRequest)
+	}
 	if err != nil && resp == nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -175,6 +180,14 @@ func NewGraphSwarmSink(g *contextgraph.Store) swarm.GraphSink {
 	return graphSwarmSink{g: g}
 }
 
+// NewGraphContext adapts contextgraph.Store to swarm.GraphContext (dual-layer).
+func NewGraphContext(g *contextgraph.Store) swarm.GraphContext {
+	if g == nil {
+		return nil
+	}
+	return graphContext{g: g}
+}
+
 // graphSwarmSink adapts contextgraph.Store to swarm.GraphSink.
 type graphSwarmSink struct {
 	g *contextgraph.Store
@@ -185,10 +198,11 @@ func (s graphSwarmSink) AppendTurn(turnID, workerID, role, model string, ok bool
 		return
 	}
 	attrs := map[string]string{
-		"worker_id": workerID,
-		"role":      role,
-		"model":     model,
-		"ok":        strconv.FormatBool(ok),
+		"worker_id":  workerID,
+		"role":       role,
+		"model":      model,
+		"ok":         strconv.FormatBool(ok),
+		"provenance": string(contextgraph.ProvenanceRuntime),
 	}
 	if summary != "" {
 		if len(summary) > 160 {
@@ -202,4 +216,51 @@ func (s graphSwarmSink) AppendTurn(turnID, workerID, role, model string, ok bool
 		Actor:  "swarm",
 		Attrs:  attrs,
 	})
+	// Structural layer: worker entity + optional episode link.
+	wid := turnID + "-" + workerID
+	s.g.RecordFact(turnID, contextgraph.Fact{
+		ID:         wid,
+		Kind:       contextgraph.KindWorker,
+		Label:      workerID,
+		Provenance: contextgraph.ProvenanceRuntime,
+		Attrs:      attrs,
+	})
+}
+
+type graphContext struct {
+	g *contextgraph.Store
+}
+
+func (c graphContext) Query(turnID, q string, limit int) string {
+	if c.g == nil {
+		return ""
+	}
+	return c.g.Query(turnID, q, limit)
+}
+
+func (c graphContext) WaveOutputs(turnID string, waveIndex int, limit int) []string {
+	if c.g == nil {
+		return nil
+	}
+	return c.g.WaveOutputs(turnID, waveIndex, limit)
+}
+
+func (c graphContext) RecordThreadWave(turnID, threadID string, waveIndex int, mergedID, mergedSummary string, workers []swarm.WaveWorkerOut) {
+	if c.g == nil {
+		return
+	}
+	ws := make([]contextgraph.WaveWorker, len(workers))
+	for i, w := range workers {
+		ws[i] = contextgraph.WaveWorker{
+			WorkerID: w.WorkerID, Role: w.Role, Model: w.Model, Summary: w.Summary, OK: w.OK,
+		}
+	}
+	c.g.RecordThreadWave(turnID, threadID, waveIndex, mergedID, mergedSummary, ws)
+}
+
+func (c graphContext) RecordEpisodeFact(turnID, episodeID, label, summary string) {
+	if c.g == nil {
+		return
+	}
+	c.g.RecordEpisodeFact(turnID, episodeID, label, summary)
 }

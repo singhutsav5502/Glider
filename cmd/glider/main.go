@@ -222,6 +222,11 @@ func main() {
 	} else if n > 0 {
 		log.Info("contextgraph warm-loaded", "events", n, "days", warmDays)
 	}
+	if n, err := ctxGraph.LoadEntities(); err != nil {
+		log.Warn("contextgraph entity load failed", "err", err)
+	} else if n > 0 {
+		log.Info("contextgraph entities loaded", "lines", n)
+	}
 	retainDays := cfg.Context.RetainDays
 	if retainDays <= 0 {
 		retainDays = 14
@@ -235,6 +240,8 @@ func main() {
 	fanCfg.Graph = ctxGraph
 	fanOut.ApplyConfig(fanCfg)
 	swarmRunner.Graph = dashboard.NewGraphSwarmSink(ctxGraph)
+	swarmRunner.GraphCtx = dashboard.NewGraphContext(ctxGraph)
+	swarmRunner.Threads = swarm.NewThreadStore("")
 	completer := &orchestrator.PipelineCompleter{
 		Router: &liveRouter{get: func() router.Router {
 			return enginePtr.Load()
