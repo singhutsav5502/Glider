@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/glider-ai/glider/internal/api"
 	"github.com/glider-ai/glider/internal/agentlog"
+	"github.com/glider-ai/glider/internal/api"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/backend/cloud"
 	"github.com/glider-ai/glider/internal/backend/ollama"
@@ -24,9 +24,9 @@ import (
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/dashboard"
 	"github.com/glider-ai/glider/internal/loop"
+	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
-	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/plugin"
 	"github.com/glider-ai/glider/internal/router"
@@ -420,12 +420,13 @@ func main() {
 		})
 		loopMgr.Logs = agentLogs
 		mcpMgr := mcp.NewManager()
-		if err := mcpMgr.Configure(mcp.DefaultGitHubConfig()); err != nil {
+		if err := mcpMgr.Configure(mcp.DefaultGitHubConfig(), mcp.DefaultGitHubStdioConfig()); err != nil {
 			log.Warn("mcp configure", "err", err)
 		}
 		if _, err := mcpMgr.Connect(context.Background(), mcp.DefaultGitHubConfig()); err != nil {
-			log.Warn("mcp github connect (set GITHUB_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN for live tools)", "err", err)
+			log.Warn("mcp github connect (set GITHUB_PERSONAL_ACCESS_TOKEN / GITHUB_TOKEN / GH_TOKEN for live tools)", "err", err)
 		}
+		dash.MCP = mcpMgr
 		plugReg := plugin.NewMemRegistry(&plugin.SimpleHost{Root: "."})
 		allowShell := cfg.Orchestration.Tools.AllowShell
 		toolReg := tools.NewRegistry(tools.Options{

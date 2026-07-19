@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/agentlog"
-	"github.com/glider-ai/glider/internal/metrics"
-	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/loop"
+	"github.com/glider-ai/glider/internal/mcp"
+	"github.com/glider-ai/glider/internal/metrics"
+	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/gorilla/websocket"
 )
@@ -23,14 +24,14 @@ import (
 var staticFS embed.FS
 
 type Server struct {
-	addr     string
-	http     *http.Server
-	Bus      *metrics.Bus
-	Config   ConfigStore
-	Models   ModelController
-	History  *metrics.HistoryStore
-	GPUs     GPUInfoProvider
-	Metrics  *metrics.Collector
+	addr    string
+	http    *http.Server
+	Bus     *metrics.Bus
+	Config  ConfigStore
+	Models  ModelController
+	History *metrics.HistoryStore
+	GPUs    GPUInfoProvider
+	Metrics *metrics.Collector
 	// MITMDebug is optional Path B R&D observer (GET /api/mitm/debug/recent).
 	MITMDebug MITMDebugSource
 	// ContextGraph is optional turn-family event log (GET /api/context/turns/{id}).
@@ -53,6 +54,8 @@ type Server struct {
 	HoopsDir string
 	// DocsDir optional static docs root (e.g. docs/site). Served at /docs/.
 	DocsDir string
+	// MCP is optional live MCP manager (GET /api/mcp/*, connect/disconnect/tools).
+	MCP      *mcp.Manager
 	upgrader websocket.Upgrader
 }
 
@@ -248,6 +251,9 @@ func (s *Server) Handler() http.Handler {
 		s.handleSwarmTemplate(w, r)
 	})
 	mux.HandleFunc("/api/agent-logs", s.handleAgentLogs)
+	mux.HandleFunc("/api/mcp/servers", s.handleMCPServers)
+	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)
+	mux.HandleFunc("/api/mcp/github", s.handleMCPGitHub)
 	mux.HandleFunc("/ws", s.handleWS)
 
 	if dir := strings.TrimSpace(s.DocsDir); dir != "" {

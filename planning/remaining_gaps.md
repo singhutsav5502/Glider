@@ -21,6 +21,7 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 | Swarm FanOut via `TopologySwarm` + DecisionRoute progress | Shipped; merge-failure narrative on response + UI |
 | Soft/hard token/latency/cost/RPM + tool denylist | Shipped (enforce stop/degrade) |
 | Stage tools/MCP editor + edge-kind modal | Shipped |
+| Dedicated dashboard MCP tab + `/api/mcp/*` (live Manager) | Shipped |
 | nodetools StubMCP removed (alias-only facade) | Shipped |
 
 ---
@@ -45,7 +46,7 @@ See also: [leftovers_overnight_plan.md](./leftovers_overnight_plan.md), [tools_m
 ### Minor polish (non-blocking)
 
 - [ ] Stronger empty states for unbound agent log (partial)
-- [ ] Dedicated docs/site HTML page for tools/MCP (planning note exists: `tools_mcp.md`)
+- [x] Dedicated docs/site HTML page for tools/MCP (`docs/site/mcp.html`)
 
 ---
 

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tools &amp; MCP · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <span class="nav-section">C4</span>
+      <a href="c1-context.html">C1</a>
+      <a href="c2-containers.html">C2</a>
+      <a href="c3-components.html">C3</a>
+      <a href="c4-code.html">C4</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="architecture-deep.html">Deep dive</a>
+      <a href="data-flow.html">Data flow</a>
+      <a href="modules.html">Modules</a>
+      <a href="concurrency.html">Concurrency</a>
+      <a href="routing.html">Routing</a>
+      <a href="context.html">Context</a>
+      <a href="path-a-b.html">Path A / B</a>
+      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a class="active" href="mcp.html">Tools &amp; MCP</a>
+      <a href="samples.html">Samples</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Tools</div>
+      <h1>Tools &amp; MCP</h1>
+      <p>
+        Glider unifies builtins and Model Context Protocol (MCP) servers under
+        <code>internal/tools</code>. Hoop stages and swarm workers declare
+        <code>tools:</code> refs; the registry dispatches them (and feeds results into the model when the agentic tool loop is active).
+      </p>
+
+      <h2>GitHub token (env only)</h2>
+      <p>Never put a PAT in YAML or hoop specs. Set one of these in the Glider process environment (first non-empty wins):</p>
+      <pre>GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # preferred
+GITHUB_TOKEN=ghp_...
+GH_TOKEN=ghp_...</pre>
+      <p>Config validation rejects inline <code>auth.token</code>; use <code>token_env</code> only.</p>
+
+      <h2>GitHub MCP endpoints</h2>
+      <table>
+        <tr><th>Mode</th><th>Server id</th><th>How</th></tr>
+        <tr>
+          <td>HTTP (hosted Copilot MCP)</td>
+          <td><code>github</code></td>
+          <td><code>https://api.githubcopilot.com/mcp/</code> — Glider connects at startup when a token is set</td>
+        </tr>
+        <tr>
+          <td>Docker stdio</td>
+          <td><code>github-stdio</code></td>
+          <td><code>docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server</code> — connect from the dashboard MCP tab</td>
+        </tr>
+      </table>
+
+      <h2>Dashboard MCP UI</h2>
+      <ol>
+        <li>Open Dashboard → <strong>MCP</strong> tab (<code>http://127.0.0.1:8081</code>).</li>
+        <li>Check <strong>GitHub MCP</strong> card: token configured? HTTP / stdio connected?</li>
+        <li>Use Connect / Disconnect / Reconnect / Refresh on each server row.</li>
+        <li>Click a row (or Tools) to load the tools catalog (live when connected; GitHub falls back to a documented catalog).</li>
+      </ol>
+
+      <h2>Binding tools on stages / nodes</h2>
+      <ol>
+        <li>Graph editor → select a stage → <strong>Edit</strong>.</li>
+        <li>Check MCP servers and optionally specific tools (empty tool picks = bind all from those servers).</li>
+        <li>Advanced: Tools JSON for builtins, e.g. <code>{"name":"fs_list","kind":"builtin"}</code>.</li>
+        <li>Create / Update the hoop on the Hoops tab — tools are persisted on <code>StageSpec.tools</code>.</li>
+      </ol>
+      <p>Also linked from Hoops and Graph help panels. Planning notes: <code>planning/tools_mcp.md</code>.</p>
+
+      <h2>HTTP API</h2>
+      <p>See <a href="api.html#mcp">API · MCP</a> for <code>/api/mcp/*</code> routes.</p>
+
+      <h2>Seed sample hoops &amp; swarms</h2>
+      <pre>powershell -File scripts\seed-samples.ps1
+powershell -File scripts\seed-samples.ps1 -Start
+.\scripts\seed-samples.ps1 -Base http://127.0.0.1:8081</pre>
+      <p>
+        Loads every top-level YAML under <code>samples/hoops/</code> and <code>samples/swarms/</code>
+        (upsert hoops via dashboard API; write swarm templates to <code>~/.glider/hoops</code>).
+        Requires the dashboard for hoops. Details: <a href="samples.html#seed">Samples · Seed all</a>.
+      </p>
+
+      <h2>Builtins (quick list)</h2>
+      <p>
+        <code>fs_read</code>, <code>fs_write</code>, <code>fs_list</code>, <code>fs_search</code>,
+        <code>code_grep</code>, <code>http_fetch</code>, <code>git_*</code>, <code>context_query</code>,
+        <code>datetime</code>, <code>calculator</code>, <code>shell_exec</code> (off by default —
+        <code>orchestration.tools.allow_shell</code>).
+      </p>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a></footer>
+  </div>
+</body>
+</html>

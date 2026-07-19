@@ -28,6 +28,7 @@
       <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
       <a class="active" href="samples.html">Samples</a>
     </nav>
     <main class="prose">
@@ -123,7 +124,7 @@ GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
       <pre>scripts/examples/fan_out_sample.star
 # Match prompts containing "fanout" / "multi-agent review" → strategy fan_out</pre>
 
-      <h2>Seed all samples</h2>
+      <h2 id="seed">Seed all samples</h2>
       <pre># Idempotent: upserts every samples/hoops + samples/swarms YAML
 # Hoops → dashboard API; swarms → ~/.glider/hoops (Glider must be running)
 powershell -File scripts\seed-samples.ps1
@@ -132,6 +133,7 @@ powershell -File scripts\seed-samples.ps1 -Start   # also start each hoop
 # Or hoops only / one-shot start
 go run ./scripts/loadhoop -dir samples/hoops
 powershell -File scripts\run-sample-hoop.ps1 -Name incident-triage</pre>
+      <p>MCP / GitHub tools: <a href="mcp.html">Tools &amp; MCP</a>. Seed covers all top-level YAML in both sample dirs (including <code>parallel-actor</code>, <code>swarm-dual-review</code> / <code>dual-review</code>, and <code>repo-audit-swarm</code>).</p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

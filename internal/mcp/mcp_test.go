@@ -184,3 +184,31 @@ func TestConfigureStores(t *testing.T) {
 	}
 	_ = GitHubInstallNotes
 }
+
+func TestStatusAndListToolsOrCatalog(t *testing.T) {
+	m := NewManager()
+	if err := m.Configure(DefaultGitHubConfig(), DefaultGitHubStdioConfig()); err != nil {
+		t.Fatal(err)
+	}
+	sts := m.Status(context.Background())
+	if len(sts) != 2 {
+		t.Fatalf("status len=%d", len(sts))
+	}
+	var gh *ServerStatus
+	for i := range sts {
+		if sts[i].ID == "github" {
+			gh = &sts[i]
+		}
+	}
+	if gh == nil || !gh.IsGitHub || gh.Connected {
+		t.Fatalf("github status=%+v", gh)
+	}
+	tools, source, err := m.ListToolsOrCatalog(context.Background(), "github")
+	if err != nil || source != "catalog" || len(tools) == 0 {
+		t.Fatalf("tools source=%s n=%d err=%v", source, len(tools), err)
+	}
+	snap := m.GitHubStatusSnapshot(context.Background())
+	if snap.RemoteURL != GitHubRemoteURL {
+		t.Fatalf("%+v", snap)
+	}
+}

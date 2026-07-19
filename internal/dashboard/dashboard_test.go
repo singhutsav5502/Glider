@@ -18,6 +18,7 @@ import (
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/dashboard"
 	"github.com/glider-ai/glider/internal/loop"
+	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/gorilla/websocket"
@@ -906,4 +907,97 @@ func (m *mockLoopCompleter) Complete(r *http.Request, req *backend.CompletionReq
 
 func (m *mockLoopCompleter) CompleteLocal(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	return m.fn(r, req)
+}
+
+func TestMCPAPI(t *testing.T) {
+	ts, _, _, _ := setupDash(t)
+	// Without MCP manager: empty servers + github snapshot.
+	resp, err := http.Get(ts.URL + "/api/mcp/servers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var empty struct {
+		Servers []any `json:"servers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Servers == nil {
+		t.Fatal("servers null")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "glider.yaml")
+	_ = os.WriteFile(path, []byte("server:\n  proxy_port: 8080\n"), 0o644)
+	loaded, _ := config.LoadConfig(path)
+	p := config.NewProvider(loaded, path)
+	bus := metrics.NewBus()
+	store := &dashboard.FileConfigStore{Provider: p, Path: path}
+	models := &dashboard.RegistryModelController{Registry: backend.NewRegistry()}
+	srv := dashboard.New(":0", bus, store, models)
+	mgr := mcp.NewManager()
+	if err := mgr.Configure(mcp.DefaultGitHubConfig(), mcp.DefaultGitHubStdioConfig()); err != nil {
+		t.Fatal(err)
+	}
+	srv.MCP = mgr
+	ts2 := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts2.Close)
+
+	resp2, err := http.Get(ts2.URL + "/api/mcp/servers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var body struct {
+		Servers []mcp.ServerStatus `json:"servers"`
+		GitHub  mcp.GitHubStatus   `json:"github"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Servers) != 2 {
+		t.Fatalf("servers=%d", len(body.Servers))
+	}
+	if body.GitHub.RemoteURL == "" {
+		t.Fatal("github remote empty")
+	}
+
+	resp3, err := http.Get(ts2.URL + "/api/mcp/servers/github/tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	var toolsBody struct {
+		Source string     `json:"source"`
+		Tools  []mcp.Tool `json:"tools"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&toolsBody); err != nil {
+		t.Fatal(err)
+	}
+	if toolsBody.Source != "catalog" || len(toolsBody.Tools) == 0 {
+		t.Fatalf("%+v", toolsBody)
+	}
+
+	resp4, err := http.Get(ts2.URL + "/api/mcp/github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("github status=%d", resp4.StatusCode)
+	}
+
+	// Disconnect unknown → 404/400 via reconnect on missing
+	resp5, err := http.Post(ts2.URL+"/api/mcp/servers/nope/reconnect", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp5.Body.Close()
+	if resp5.StatusCode != http.StatusNotFound {
+		t.Fatalf("reconnect missing want 404 got %d", resp5.StatusCode)
+	}
 }

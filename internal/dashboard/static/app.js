@@ -5,6 +5,7 @@
     rules: document.getElementById("panel-rules"),
     hoops: document.getElementById("panel-hoops"),
     graphs: document.getElementById("panel-graphs"),
+    mcp: document.getElementById("panel-mcp"),
     settings: document.getElementById("panel-settings"),
   };
 
@@ -59,10 +60,15 @@
       if (name !== "hoops" && name !== "graphs") stopLiveBoardPoll();
     }
     if (name === "overview") loadSessions();
+    if (name === "mcp") refreshMCPPanel();
   }
 
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+  });
+
+  document.querySelectorAll("[data-goto-tab]").forEach((el) => {
+    el.addEventListener("click", () => activateTab(el.getAttribute("data-goto-tab")));
   });
 
   const logEl = document.getElementById("request-log");
@@ -1749,6 +1755,10 @@
       if (n.prompt) row.prompt = n.prompt;
       if (n.route) row.route = n.route;
       if (kind === "critic" && n.eval_min > 0) row.eval_min = n.eval_min;
+      if (n.parallel > 1) row.parallel = Number(n.parallel) || 0;
+      if (Array.isArray(n.roles) && n.roles.length) row.roles = n.roles;
+      if (Array.isArray(n.tools) && n.tools.length) row.tools = n.tools;
+      if (Array.isArray(n.mcp) && n.mcp.length) row.mcp = n.mcp;
       return row;
     });
     hidden.value = JSON.stringify(payload);
@@ -2169,6 +2179,274 @@
     return chip;
   }
 
+  let mcpServersCache = [];
+  let mcpSelectedServerId = "";
+  let stageEditMcpSelected = [];
+  let stageEditMcpToolNames = new Set(); // "server:tool"
+
+  function showMCPError(msg) {
+    const e = document.getElementById("mcp-error");
+    const o = document.getElementById("mcp-ok");
+    if (o) o.hidden = true;
+    if (!e) return;
+    if (!msg) { e.hidden = true; e.textContent = ""; return; }
+    e.hidden = false;
+    e.textContent = msg;
+  }
+
+  function showMCPOk(msg) {
+    const e = document.getElementById("mcp-error");
+    const o = document.getElementById("mcp-ok");
+    if (e) e.hidden = true;
+    if (!o) return;
+    o.hidden = false;
+    o.textContent = msg || "OK";
+  }
+
+  async function refreshMCPPanel() {
+    showMCPError("");
+    try {
+      const res = await fetch("/api/mcp/servers");
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      mcpServersCache = Array.isArray(data.servers) ? data.servers : [];
+      renderMCPGitHubCard(data.github || {});
+      renderMCPServersTable(mcpServersCache);
+      if (mcpSelectedServerId) {
+        await loadMCPToolsCatalog(mcpSelectedServerId);
+      } else if (mcpServersCache.length) {
+        mcpSelectedServerId = mcpServersCache[0].id;
+        await loadMCPToolsCatalog(mcpSelectedServerId);
+      } else {
+        const list = document.getElementById("mcp-tools-list");
+        if (list) list.innerHTML = "<p class=\"hint\">No servers configured.</p>";
+      }
+    } catch (err) {
+      showMCPError(String(err.message || err));
+    }
+  }
+
+  function renderMCPGitHubCard(gh) {
+    const el = document.getElementById("mcp-github-card");
+    if (!el) return;
+    const tok = gh.token_configured
+      ? `<span class="live-value ok">configured</span> (<code>${escapeHtml(gh.token_env || "GITHUB_*")}</code>)`
+      : `<span class="live-value bad">missing</span> — set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code> / <code>GITHUB_TOKEN</code> / <code>GH_TOKEN</code>`;
+    const http = gh.http_connected ? `<span class="live-value ok">connected</span>` : `<span class="live-value bad">disconnected</span>`;
+    const stdio = gh.stdio_connected ? `<span class="live-value ok">connected</span>` : `<span class="live-value">idle</span>`;
+    el.innerHTML = `
+      <div class="mcp-github-grid">
+        <div><span class="live-label">Token</span>${tok}</div>
+        <div><span class="live-label">HTTP (github)</span>${http}</div>
+        <div><span class="live-label">Stdio (github-stdio)</span>${stdio}</div>
+        <div><span class="live-label">Endpoint</span><code>${escapeHtml(gh.remote_url || "")}</code></div>
+      </div>`;
+  }
+
+  function renderMCPServersTable(servers) {
+    const body = document.getElementById("mcp-servers-body");
+    if (!body) return;
+    if (!servers.length) {
+      body.innerHTML = `<tr><td colspan="6" class="hint">No MCP servers configured. Restart Glider with dashboard enabled.</td></tr>`;
+      return;
+    }
+    body.innerHTML = servers.map((s) => {
+      const health = s.connected && s.health_ok
+        ? `<span class="live-value ok">connected</span>`
+        : `<span class="live-value bad" title="${escapeAttr(s.health_error || "")}">disconnected</span>`;
+      const tok = s.token_configured ? "yes" : (s.token_env ? "no" : "—");
+      const active = s.id === mcpSelectedServerId ? " mcp-row-active" : "";
+      return `<tr class="mcp-server-row${active}" data-mcp-id="${escapeAttr(s.id)}">
+        <td><code>${escapeHtml(s.id)}</code><div class="graph-hint">${escapeHtml(s.name || "")}</div></td>
+        <td>${escapeHtml(s.transport || "—")}</td>
+        <td>${health}</td>
+        <td>${s.tool_count != null ? s.tool_count : "—"}</td>
+        <td>${tok}</td>
+        <td class="mcp-actions">
+          <button type="button" class="linkish" data-mcp-act="tools" data-id="${escapeAttr(s.id)}">Tools</button>
+          ${s.connected
+            ? `<button type="button" class="linkish" data-mcp-act="disconnect" data-id="${escapeAttr(s.id)}">Disconnect</button>
+               <button type="button" class="linkish" data-mcp-act="reconnect" data-id="${escapeAttr(s.id)}">Reconnect</button>`
+            : `<button type="button" class="linkish" data-mcp-act="connect" data-id="${escapeAttr(s.id)}">Connect</button>`}
+          <button type="button" class="linkish" data-mcp-act="refresh" data-id="${escapeAttr(s.id)}">Refresh</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function loadMCPToolsCatalog(serverId) {
+    mcpSelectedServerId = serverId;
+    const label = document.getElementById("mcp-tools-server-label");
+    if (label) label.textContent = serverId ? `(${serverId})` : "";
+    const list = document.getElementById("mcp-tools-list");
+    if (!list) return;
+    list.innerHTML = "<p class=\"hint\">Loading…</p>";
+    document.querySelectorAll(".mcp-server-row").forEach((tr) => {
+      tr.classList.toggle("mcp-row-active", tr.getAttribute("data-mcp-id") === serverId);
+    });
+    try {
+      const res = await fetch(`/api/mcp/servers/${encodeURIComponent(serverId)}/tools`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const tools = Array.isArray(data.tools) ? data.tools : [];
+      const src = data.source || "";
+      const hint = document.getElementById("mcp-tools-hint");
+      if (hint) {
+        hint.textContent = src === "live"
+          ? "Live tools from connected server."
+          : src === "catalog"
+            ? "Documented catalog (server not connected — connect for live list)."
+            : "Tools";
+      }
+      if (!tools.length) {
+        list.innerHTML = "<p class=\"hint\">No tools.</p>";
+        return;
+      }
+      list.innerHTML = tools.map((t) => `
+        <div class="mcp-tool-row">
+          <code>${escapeHtml(t.name)}</code>
+          <span class="hint">${escapeHtml(t.description || "")}</span>
+        </div>`).join("");
+    } catch (err) {
+      list.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
+    }
+  }
+
+  async function mcpServerAction(id, act) {
+    showMCPError("");
+    try {
+      const res = await fetch(`/api/mcp/servers/${encodeURIComponent(id)}/${act}`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      showMCPOk(`${act} ${id}`);
+      await refreshMCPPanel();
+      if (act === "tools" || act === "connect" || act === "reconnect" || act === "refresh") {
+        await loadMCPToolsCatalog(id);
+      }
+    } catch (err) {
+      showMCPError(String(err.message || err));
+    }
+  }
+
+  document.getElementById("mcp-refresh")?.addEventListener("click", () => refreshMCPPanel());
+  document.getElementById("mcp-servers-body")?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-mcp-act]");
+    if (btn) {
+      const id = btn.getAttribute("data-id");
+      const act = btn.getAttribute("data-mcp-act");
+      if (act === "tools") {
+        loadMCPToolsCatalog(id);
+        return;
+      }
+      mcpServerAction(id, act);
+      return;
+    }
+    const row = ev.target.closest(".mcp-server-row");
+    if (row) loadMCPToolsCatalog(row.getAttribute("data-mcp-id"));
+  });
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, "&#39;");
+  }
+
+  async function ensureMCPServersCache() {
+    if (mcpServersCache.length) return mcpServersCache;
+    try {
+      const res = await fetch("/api/mcp/servers");
+      if (!res.ok) return [];
+      const data = await res.json();
+      mcpServersCache = Array.isArray(data.servers) ? data.servers : [];
+    } catch (_) {
+      mcpServersCache = [];
+    }
+    return mcpServersCache;
+  }
+
+  async function renderStageMCPPickers(node) {
+    const pick = document.getElementById("stage-edit-mcp-pick");
+    const toolsEl = document.getElementById("stage-edit-mcp-tools");
+    const hidden = document.getElementById("stage-edit-mcp");
+    if (!pick) return;
+    await ensureMCPServersCache();
+    const fromNode = Array.isArray(node?.mcp) ? node.mcp.slice() : [];
+    if (!fromNode.length && Array.isArray(node?.tools)) {
+      node.tools.forEach((t) => {
+        if (t && t.kind === "mcp" && t.server && !fromNode.includes(t.server)) fromNode.push(t.server);
+      });
+    }
+    stageEditMcpSelected = fromNode;
+    stageEditMcpToolNames = new Set();
+    if (Array.isArray(node?.tools)) {
+      node.tools.forEach((t) => {
+        if (t && t.kind === "mcp" && t.server && t.name && t.name !== "*" && t.name !== "list_tools") {
+          stageEditMcpToolNames.add(`${t.server}:${t.name}`);
+        }
+      });
+    }
+    if (hidden) hidden.value = stageEditMcpSelected.join(", ");
+    const servers = mcpServersCache.length
+      ? mcpServersCache
+      : [{ id: "github", name: "GitHub MCP" }, { id: "github-stdio", name: "GitHub MCP (stdio)" }];
+    pick.innerHTML = servers.map((s) => {
+      const checked = stageEditMcpSelected.includes(s.id) ? "checked" : "";
+      return `<label class="mcp-check"><input type="checkbox" data-mcp-server="${escapeAttr(s.id)}" ${checked} /> <code>${escapeHtml(s.id)}</code> <span class="hint">${escapeHtml(s.name || "")}</span></label>`;
+    }).join("");
+    pick.querySelectorAll("input[data-mcp-server]").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        stageEditMcpSelected = Array.from(pick.querySelectorAll("input[data-mcp-server]:checked")).map((i) => i.getAttribute("data-mcp-server"));
+        if (hidden) hidden.value = stageEditMcpSelected.join(", ");
+        renderStageMCPToolChecks();
+      });
+    });
+    await renderStageMCPToolChecks();
+  }
+
+  async function renderStageMCPToolChecks() {
+    const toolsEl = document.getElementById("stage-edit-mcp-tools");
+    if (!toolsEl) return;
+    if (!stageEditMcpSelected.length) {
+      toolsEl.innerHTML = "<p class=\"hint\" style=\"margin:0\">Select one or more MCP servers above.</p>";
+      return;
+    }
+    toolsEl.innerHTML = "<p class=\"hint\">Loading tools…</p>";
+    const blocks = [];
+    for (const sid of stageEditMcpSelected) {
+      let tools = [];
+      try {
+        const res = await fetch(`/api/mcp/servers/${encodeURIComponent(sid)}/tools`);
+        if (res.ok) {
+          const data = await res.json();
+          tools = Array.isArray(data.tools) ? data.tools : [];
+        }
+      } catch (_) {}
+      if (!tools.length) {
+        blocks.push(`<div class="mcp-tool-group"><strong>${escapeHtml(sid)}</strong><p class="hint">No tools listed — leave unchecked to bind all.</p></div>`);
+        continue;
+      }
+      const checks = tools.map((t) => {
+        const key = `${sid}:${t.name}`;
+        const checked = stageEditMcpToolNames.has(key) ? "checked" : "";
+        return `<label class="mcp-check"><input type="checkbox" data-mcp-tool-server="${escapeAttr(sid)}" data-mcp-tool-name="${escapeAttr(t.name)}" ${checked} /> <code>${escapeHtml(t.name)}</code></label>`;
+      }).join("");
+      blocks.push(`<div class="mcp-tool-group"><strong>${escapeHtml(sid)}</strong><div class="mcp-tool-checks">${checks}</div></div>`);
+    }
+    toolsEl.innerHTML = blocks.join("");
+    toolsEl.querySelectorAll("input[data-mcp-tool-name]").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const key = `${inp.getAttribute("data-mcp-tool-server")}:${inp.getAttribute("data-mcp-tool-name")}`;
+        if (inp.checked) stageEditMcpToolNames.add(key);
+        else stageEditMcpToolNames.delete(key);
+      });
+    });
+  }
+
   function openStageEditDialog(uid) {
     const dlg = document.getElementById("stage-edit-dialog");
     if (!dlg) {
@@ -2190,7 +2468,6 @@
     const routeEl = document.getElementById("stage-edit-route");
     const evalEl = document.getElementById("stage-edit-eval-min");
     const toolsEl = document.getElementById("stage-edit-tools");
-    const mcpEl = document.getElementById("stage-edit-mcp");
     if (kindEl) kindEl.value = coerceStageKind(node?.kind || "actor");
     if (idEl) idEl.value = node?.id || "";
     if (nameEl) nameEl.value = node?.name || "";
@@ -2199,14 +2476,11 @@
     if (routeEl) routeEl.value = node?.route || "";
     if (evalEl) evalEl.value = node?.eval_min > 0 ? String(node.eval_min) : "";
     if (toolsEl) {
-      toolsEl.value = Array.isArray(node?.tools) && node.tools.length
-        ? JSON.stringify(node.tools, null, 0)
-        : "";
+      // Show builtins + any non-picker MCP tools in advanced JSON.
+      const builtins = (Array.isArray(node?.tools) ? node.tools : []).filter((t) => t && t.kind !== "mcp");
+      toolsEl.value = builtins.length ? JSON.stringify(builtins, null, 0) : "";
     }
-    if (mcpEl) {
-      const mcp = node?.mcp || [];
-      mcpEl.value = Array.isArray(mcp) ? mcp.join(", ") : String(mcp || "");
-    }
+    renderStageMCPPickers(node);
     if (typeof dlg.showModal === "function") dlg.showModal();
     else dlg.setAttribute("open", "");
   }
@@ -2227,19 +2501,38 @@
     if (toolsRaw) {
       try {
         const parsed = JSON.parse(toolsRaw);
-        if (Array.isArray(parsed)) tools = parsed;
+        if (Array.isArray(parsed)) tools = parsed.filter((t) => t && t.kind !== "mcp");
       } catch (_) {
         showHoopsOk("Tools JSON invalid -- fix before save");
         return;
       }
     }
-    const mcp = String(document.getElementById("stage-edit-mcp")?.value || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    // Expand MCP server ids into tool refs when tools empty but mcp listed.
-    if (!tools.length && mcp.length) {
-      tools = mcp.map((server) => ({ name: "*", kind: "mcp", server }));
+    const pick = document.getElementById("stage-edit-mcp-pick");
+    let mcp = stageEditMcpSelected.slice();
+    if (pick) {
+      mcp = Array.from(pick.querySelectorAll("input[data-mcp-server]:checked")).map((i) => i.getAttribute("data-mcp-server"));
+    } else {
+      mcp = String(document.getElementById("stage-edit-mcp")?.value || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    // Collect explicit MCP tool picks.
+    const toolPick = document.getElementById("stage-edit-mcp-tools");
+    const picked = [];
+    if (toolPick) {
+      toolPick.querySelectorAll("input[data-mcp-tool-name]:checked").forEach((inp) => {
+        picked.push({
+          name: inp.getAttribute("data-mcp-tool-name"),
+          kind: "mcp",
+          server: inp.getAttribute("data-mcp-tool-server"),
+        });
+      });
+    }
+    if (picked.length) {
+      tools = tools.concat(picked);
+    } else if (mcp.length) {
+      tools = tools.concat(mcp.map((server) => ({ name: "*", kind: "mcp", server })));
     }
     if (stageEditUid) {
       const node = stageNodes.find((n) => n.uid === stageEditUid);
@@ -2258,7 +2551,10 @@
       renderStageGraph();
       showHoopsOk("Updated stage: " + node.id);
     } else {
-      addStageNode(kind, stageNodes.length, {
+      // rest of applyStageEditForm continues below — keep existing branch
+      pushStageHistory();
+      const node = normalizeStageNode({
+        kind,
         id,
         name,
         enabled,
@@ -2268,8 +2564,15 @@
         tools,
         mcp,
       });
-      showHoopsOk("Added stage: " + id);
+      stageNodes.push(node);
+      selectStageNode(node.uid);
+      renderStageGraph();
+      showHoopsOk("Added stage: " + node.id);
     }
+    syncStagesJSON();
+    const dlg = document.getElementById("stage-edit-dialog");
+    if (dlg && typeof dlg.close === "function") dlg.close();
+    else if (dlg) dlg.removeAttribute("open");
     stageEditUid = null;
   }
 

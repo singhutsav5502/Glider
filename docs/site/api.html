@@ -28,6 +28,7 @@
       <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a class="active" href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
       <a href="samples.html">Sample hoops</a>
     </nav>
     <main class="prose">
@@ -67,6 +68,20 @@
         <tr><td>POST</td><td><code>/api/swarm/run</code></td></tr>
         <tr><td>GET/POST</td><td><code>/api/swarm/templates</code></td></tr>
         <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td></tr>
+      </table>
+
+      <h2 id="mcp">MCP</h2>
+      <p>Live <code>internal/mcp.Manager</code> (not stubs). UI: Dashboard → <strong>MCP</strong> tab. Guide: <a href="mcp.html">Tools &amp; MCP</a>.</p>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers</code></td><td>Configured servers + status + GitHub summary</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers/{id}</code></td><td>One server status</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers/{id}/tools</code></td><td>Live tools, or GitHub catalog fallback</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code></td><td>Connect configured server</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/disconnect</code></td><td>Disconnect session</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/reconnect</code></td><td>Disconnect + connect</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/refresh</code></td><td>Reconnect if up, else connect</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token configured? HTTP/stdio connected?</td></tr>
       </table>
 
       <h2>Gateway OpenAI surface</h2>

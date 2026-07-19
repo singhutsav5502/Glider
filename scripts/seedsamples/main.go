@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,6 +50,7 @@ func main() {
 	if len(paths) == 0 {
 		fatal(fmt.Errorf("no sample YAML found under %s", root))
 	}
+	sort.Strings(paths)
 
 	store := swarm.NewTemplateStore(*hoopsDir)
 	client := &http.Client{Timeout: *timeout}
@@ -58,7 +60,7 @@ func main() {
 		failures          int
 	)
 
-	fmt.Printf("seeding from %s → dashboard %s, templates %s\n", root, strings.TrimRight(*base, "/"), store.Dir)
+	fmt.Printf("seeding from %s → dashboard %s, templates %s (%d files)\n", root, strings.TrimRight(*base, "/"), store.Dir, len(paths))
 
 	for _, p := range paths {
 		kind, id, err := probeKind(p)
@@ -199,7 +201,7 @@ func readSwarmTemplate(path, fallbackID string) (*swarm.Template, error) {
 		return &t, nil
 	}
 	var flat struct {
-		Kind string `yaml:"kind"`
+		Kind           string `yaml:"kind"`
 		swarm.Template `yaml:",inline"`
 	}
 	if err := yaml.Unmarshal(data, &flat); err != nil {

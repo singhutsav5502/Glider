@@ -23,6 +23,7 @@
         <button class="tab" data-tab="rules">Rules Engine</button>
         <button class="tab" data-tab="hoops">Hoops & Swarm</button>
         <button class="tab" data-tab="graphs">Graph editor</button>
+        <button class="tab" data-tab="mcp">MCP</button>
         <button class="tab" data-tab="settings">Config</button>
         <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
       </nav>
@@ -115,8 +116,9 @@
             <li><strong>Build stages</strong> on Graph editor (palette + Link mode), then Create / Update hoop here.</li>
             <li><strong>Click a hoop card</strong> to bind the Agent log, then Start -- cycle runs Memory → Router → Planner → Actor → Critic.</li>
             <li><strong>Swarm</strong> is a one-shot fan-out: link orchestrator to worker roles on the graph, set prompt, Run swarm. Merge summary appears below.</li>
+            <li><strong>MCP tools</strong>: connect servers on the <button type="button" class="linkish" data-goto-tab="mcp">MCP</button> tab, then bind them on a stage (Edit → MCP servers / tools).</li>
           </ol>
-          <p class="ux-help-note">Parallel actors inside a hoop also call <code>swarm.FanOut</code> mid-cycle when a stage has <code>parallel &gt; 1</code>.</p>
+          <p class="ux-help-note">Parallel actors inside a hoop also call <code>swarm.FanOut</code> mid-cycle when a stage has <code>parallel &gt; 1</code>. Docs: <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.</p>
         </aside>
 
         <div id="live-status-board" class="live-board" aria-live="polite">
@@ -293,6 +295,7 @@
             <li><strong>Stage graph</strong> (top): hoop pipeline. Link mode + drag edges; Fit / wheel zoom / pan blank area. Create hoop on Hoops tab when ready.</li>
             <li><strong>Swarm graph</strong> (bottom-left): orchestrator fan-out. Only linked worker roles are sent to Run swarm.</li>
             <li><strong>Agent log</strong> (bottom-right): follows the selected hoop id or last swarm <code>turn_id</code> -- not a global mixed stream.</li>
+            <li><strong>MCP binding</strong>: Edit a stage → pick servers and tools (or raw JSON). Manage connections on the <button type="button" class="linkish" data-goto-tab="mcp">MCP</button> tab · <a href="/docs/mcp.html" target="_blank" rel="noopener">docs</a>.</li>
           </ol>
         </aside>
 
@@ -414,10 +417,16 @@
                 </select>
               </label>
               <label>Eval min (critic)<input type="number" id="stage-edit-eval-min" min="0" max="1" step="0.05" placeholder="0.7" /></label>
-              <label class="span2">Tools (builtin / MCP)
+              <label class="span2">MCP servers
+                <div id="stage-edit-mcp-pick" class="mcp-pick" aria-label="MCP server picker"></div>
+                <input type="hidden" id="stage-edit-mcp" value="" />
+              </label>
+              <label class="span2">MCP tools (optional — empty = all from selected servers)
+                <div id="stage-edit-mcp-tools" class="mcp-tool-pick" aria-label="MCP tool picker"></div>
+              </label>
+              <label class="span2">Tools JSON (advanced — builtins + MCP)
                 <textarea id="stage-edit-tools" class="cfg-mono" rows="3" placeholder='[{"name":"fs_list","kind":"builtin"},{"name":"get_me","kind":"mcp","server":"github"}]'></textarea>
               </label>
-              <label class="span2">MCP servers (comma ids)<input type="text" id="stage-edit-mcp" placeholder="github, github-stdio" /></label>
             </div>
             <div class="cfg-actions" style="margin-top:14px">
               <button type="button" id="stage-edit-save">Save</button>
@@ -471,6 +480,63 @@
             </div>
           </form>
         </dialog>
+      </section>
+
+      <section id="panel-mcp" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">MCP servers</h2>
+            <p class="hint" style="margin:6px 0 0">
+              Live Model Context Protocol connections used by hoop stages and swarm workers.
+              Bind tools on the <button type="button" class="linkish" data-goto-tab="graphs">Graph editor</button>
+              (Edit stage). Docs: <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.
+            </p>
+          </div>
+          <button type="button" id="mcp-refresh" class="linkish">Refresh</button>
+        </div>
+
+        <aside class="ux-help" aria-label="GitHub MCP status">
+          <strong class="ux-help-title">GitHub MCP</strong>
+          <div id="mcp-github-card" class="mcp-github-card">
+            <p class="hint" style="margin:0">Loading…</p>
+          </div>
+          <p class="ux-help-note">
+            Set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code>, <code>GITHUB_TOKEN</code>, or <code>GH_TOKEN</code> in the process env (never inline in YAML).
+            Hosted endpoint: <code>https://api.githubcopilot.com/mcp/</code>.
+          </p>
+        </aside>
+
+        <p id="mcp-error" class="cfg-error" hidden></p>
+        <p id="mcp-ok" class="cfg-ok" hidden></p>
+
+        <div class="mcp-layout">
+          <fieldset class="cfg-section">
+            <legend>Servers</legend>
+            <div class="mcp-table-wrap">
+              <table class="mcp-table" id="mcp-servers-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Transport</th>
+                    <th>Health</th>
+                    <th>Tools</th>
+                    <th>Token</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="mcp-servers-body">
+                  <tr><td colspan="6" class="hint">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend>Tools catalog <span id="mcp-tools-server-label" class="graph-hint"></span></legend>
+            <p class="hint" id="mcp-tools-hint" style="margin:0 0 10px">Select a server to list tools (live when connected; GitHub falls back to documented catalog).</p>
+            <div id="mcp-tools-list" class="mcp-tools-list"></div>
+          </fieldset>
+        </div>
       </section>
 
       <section id="panel-settings" class="panel">

@@ -990,3 +990,96 @@ button.open-graph-editor.linkish {
   .agent-log-panel .log-stage { display: none; }
 }
 
+/* MCP tab */
+.mcp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .mcp-layout { grid-template-columns: 1fr; }
+}
+.mcp-table-wrap { overflow-x: auto; }
+.mcp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.mcp-table th,
+.mcp-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.mcp-table th {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.mcp-server-row { cursor: pointer; }
+.mcp-server-row:hover { background: #f1f5f9; }
+.mcp-row-active { background: #e8f0fe; }
+.mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  white-space: nowrap;
+}
+.mcp-github-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 16px;
+}
+.mcp-tools-list {
+  max-height: 420px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mcp-tool-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.mcp-tool-row code { font-family: var(--mono); font-size: 0.85rem; }
+.mcp-pick,
+.mcp-tool-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}
+.mcp-check {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.mcp-tool-group {
+  margin-bottom: 10px;
+}
+.mcp-tool-group strong {
+  display: block;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+.mcp-tool-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
