@@ -1,0 +1,26 @@
+kind: swarm_template
+id: multi-wave-weave
+name: Multi-wave weave (plan then execute)
+enabled: true
+prefer_local: true
+max_workers: 2
+waves: 3
+weave_policy: conflict_callouts
+decompose: true
+roles:
+  - plan
+  - exec
+prompt: |
+  Goal: ship a durable Slate-style weave demo for Glider.
+
+  Wave 0 (plan): produce a SHORT numbered plan (3 steps max) covering:
+  1) inspect contextgraph dual-layer query surface
+  2) run a two-role FanOut and weave with conflict callouts
+  3) verify thread resume after restart (list + resume APIs)
+
+  Later waves execute decomposed subtasks. Call out GO vs NO-GO clearly so
+  conflict_callouts can surface polarity disagreements. Prefer facts over invention.
+description: |
+  Sample multi-wave weave with planner decomposition and conflict_callouts policy.
+  POST /api/swarm/run {"template_id":"multi-wave-weave","waves":3,"decompose":true}
+  Resume: POST /api/swarm/threads/{id}/resume {"waves":1}

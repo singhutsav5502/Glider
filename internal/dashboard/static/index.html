@@ -241,10 +241,10 @@
           <div id="hoops-list" class="hoops-list"></div>
         </fieldset>
 
-        <fieldset class="cfg-section" style="margin-top:28px">
+          <fieldset class="cfg-section" style="margin-top:28px">
           <legend>Swarm wave</legend>
           <div class="graph-cta-block">
-            <p class="graph-cta-copy">Edit the thread graph (orchestrator fan-out) on the Graph editor tab. Roles sync with the field below.</p>
+            <p class="graph-cta-copy">Edit the thread graph (orchestrator fan-out) on the Graph editor tab. Roles sync with the field below. Multi-wave weave persists under ~/.glider/swarm/threads.</p>
             <div class="graph-cta-row">
               <button type="button" class="graph-cta-btn open-graph-editor" data-graph-focus="swarm">Open graph editor</button>
             </div>
@@ -253,11 +253,30 @@
             <label class="span2">Prompt<textarea id="swarm-prompt" class="cfg-mono" rows="2" placeholder="Plan then execute a short summary of this repo"></textarea></label>
             <label>Roles (comma)<input type="text" id="swarm-roles" value="plan,exec" /></label>
             <label>Max workers<input type="number" id="swarm-workers" min="1" max="4" value="2" /></label>
+            <label>Waves<input type="number" id="swarm-waves" min="1" max="4" value="1" /></label>
+            <label>Weave policy
+              <select id="swarm-weave-policy">
+                <option value="critic">critic</option>
+                <option value="concatenate">concatenate</option>
+                <option value="role_weighted">role_weighted</option>
+                <option value="conflict_callouts">conflict_callouts</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="swarm-decompose" /> Decompose planner</label>
             <div class="span2 cfg-actions">
               <button type="submit">Run swarm</button>
             </div>
           </form>
           <pre id="swarm-result" class="swarm-result" hidden></pre>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Durable threads</legend>
+          <p class="hint" style="margin:0 0 10px">List / resume multi-wave threads after process restart. Weave status paints on the swarm graph.</p>
+          <div class="cfg-actions" style="margin-bottom:10px">
+            <button type="button" id="swarm-threads-refresh">Refresh threads</button>
+          </div>
+          <div id="swarm-threads" class="hoops-list"></div>
         </fieldset>
 
         <fieldset class="cfg-section" style="margin-top:28px">

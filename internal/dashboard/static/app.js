@@ -3729,6 +3729,9 @@
         roles,
         max_workers: Number(document.getElementById("swarm-workers").value) || 2,
         prefer_local: true,
+        waves: Number(document.getElementById("swarm-waves")?.value) || 1,
+        weave_policy: document.getElementById("swarm-weave-policy")?.value || "critic",
+        decompose: !!document.getElementById("swarm-decompose")?.checked,
       };
       const res = await fetch("/api/swarm/run", {
         method: "POST",
@@ -3750,7 +3753,16 @@
         const data = JSON.parse(text);
         if (data.turn_id) {
           lastSwarmRunId = data.turn_id;
-          setAgentLogFocus("swarm", data.turn_id);
+          const focusId = data.thread_id || data.turn_id;
+          setAgentLogFocus("swarm", focusId);
+        }
+        if (data.thread_id || data.waves) {
+          // Weave status on graph: mark orch as woven.
+          const orch = swarmThreads.find((t) => t.uid === "orch");
+          if (orch) {
+            orch.status = "ok";
+            orch.summary = (data.weave_policy || "weave") + " waves=" + (data.waves || 1);
+          }
         }
         const results = data.results || [];
         const prog = data.progress || {};
@@ -3786,6 +3798,70 @@
       showHoopsOk("Swarm finished");
     });
   }
+
+  async function refreshSwarmThreads() {
+    const el = document.getElementById("swarm-threads");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/swarm/threads");
+      const list = await res.json();
+      if (!Array.isArray(list) || !list.length) {
+        el.innerHTML = `<p class="hint">No durable threads yet. Run with Waves &gt; 1.</p>`;
+        return;
+      }
+      el.innerHTML = list.map((t) =>
+        `<div class="hoop-card" data-thread="${esc(t.id)}">` +
+        `<div class="hoop-card-head"><strong>${esc(t.id)}</strong> ` +
+        `<span class="tag">${esc(t.status || "?")}</span>` +
+        `<span class="hoop-actions">` +
+        `<button type="button" class="linkish thr-resume" data-id="${esc(t.id)}">Resume</button>` +
+        `<button type="button" class="linkish thr-view" data-id="${esc(t.id)}">View</button>` +
+        `</span></div>` +
+        `<p class="hint">waves=${t.wave_count || 0} policy=${esc(t.weave_policy || "-")}</p>` +
+        `<p class="muted">${esc((t.merged_summary || t.goal || "").slice(0, 140))}</p></div>`
+      ).join("");
+      el.querySelectorAll(".thr-resume").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const id = b.dataset.id;
+          try {
+            const res = await fetch("/api/swarm/threads/" + encodeURIComponent(id) + "/resume", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ waves: 1 }),
+            });
+            const text = await res.text();
+            const out = document.getElementById("swarm-result");
+            if (out) { out.hidden = false; out.textContent = text; }
+            if (!res.ok) { showHoopsError(text); return; }
+            try {
+              const data = JSON.parse(text);
+              if (data.thread_id || data.turn_id) {
+                setAgentLogFocus("swarm", data.thread_id || data.turn_id);
+              }
+            } catch (_) {}
+            showHoopsOk("Resumed thread " + id);
+            refreshSwarmThreads();
+          } catch (e) {
+            showHoopsError(String(e));
+          }
+        });
+      });
+      el.querySelectorAll(".thr-view").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const res = await fetch("/api/swarm/threads/" + encodeURIComponent(b.dataset.id));
+          const text = await res.text();
+          const out = document.getElementById("swarm-result");
+          if (out) { out.hidden = false; out.textContent = text; }
+          setAgentLogFocus("swarm", b.dataset.id);
+        });
+      });
+    } catch (e) {
+      el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
+    }
+  }
+  document.getElementById("swarm-threads-refresh")?.addEventListener("click", () => refreshSwarmThreads());
+  refreshSwarmThreads();
+
   const tplForm = document.getElementById("tpl-form");
   if (tplForm) {
     tplForm.addEventListener("submit", async (ev) => {

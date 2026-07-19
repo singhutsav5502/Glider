@@ -34,31 +34,86 @@
     <main class="prose">
       <div class="badge">Memory</div>
       <h1>Context management</h1>
-      <p>Hybrid: <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge store</strong> (Graphify-style structural layer) + in-memory turn index for sticky routing.</p>
+      <p>Hybrid dual-layer store (Graphify methodology): <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME) + in-memory turn index for sticky routing. Durable swarm <strong>threads / waves / weave</strong> sit beside the graph so wave N+1 can seed from prior outputs without dumping transcripts.</p>
 
       <h2>Why</h2>
-      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: “is this still part of turn family X?” Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (thread / wave / episode) without dumping transcripts.</p>
+      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: "is this still part of turn family X?" Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (thread / wave / episode / file) without dumping transcripts.</p>
+
+      <h2>Dual-layer model</h2>
+      <table>
+        <thead><tr><th>Layer</th><th>Role</th><th>Provenance</th><th>Persist</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Event log</td>
+            <td>Append-only verbs (RouteDecided, SwarmFanOut, LoopTick, EpisodeMerged, FileTreeIndexed, &hellip;)</td>
+            <td>Prefer RUNTIME; EXTRACTED when attrs come from tools</td>
+            <td><code>~/.glider/context/events-*.jsonl</code></td>
+          </tr>
+          <tr>
+            <td>Entity / edge store</td>
+            <td>thread, wave, worker, episode, file, dir, subtask, conflict + relations (produced, follows, contains, &hellip;)</td>
+            <td>EXTRACTED | INFERRED | RUNTIME</td>
+            <td><code>~/.glider/context/entities.jsonl</code></td>
+          </tr>
+          <tr>
+            <td>Durable swarm threads</td>
+            <td>Multi-wave FanOut + weave policies; resume after restart</td>
+            <td>RUNTIME writes mirrored into graph</td>
+            <td><code>~/.glider/swarm/threads/*.json</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Query surface</h2>
+      <p><code>Store.Query</code> / <code>QueryWith</code> / tool <code>context_query</code> search <strong>both</strong> layers. Filters:</p>
+      <pre>context_query: &lt;turn_id&gt; [prov=RUNTIME|EXTRACTED|INFERRED] [path=from-&gt;to] [neigh=id] keyword&hellip;
+
+Examples:
+  t-abc wave
+  t-abc prov=EXTRACTED readme
+  t-abc path=wave-0-&gt;wave-1
+  t-abc neigh=thr-1-wave-0
+  prov=RUNTIME EpisodeMerged</pre>
+      <p><code>PathSummary(turn, from, to)</code> prefers entity edges, falls back to event scan. Used in production by hoop cycle narratives and multi-wave prompt seeding.</p>
+      <p>Optional file-tree ingest: <code>POST /api/context/index-tree</code> or automatic after successful <code>git_clone</code> in a hoop (EXTRACTED dir/file + contains edges).</p>
+
+      <h2>Weave (Slate-inspired)</h2>
+      <ul>
+        <li><strong>Policies</strong> — concatenate | role_weighted | critic | conflict_callouts</li>
+        <li><strong>Planner decompose</strong> — numbered plan lines become bounded SubTasks for later waves</li>
+        <li><strong>Resume</strong> — <code>GET /api/swarm/threads</code>, <code>POST /api/swarm/threads/{id}/resume</code></li>
+        <li><strong>Sample</strong> — <code>samples/swarms/multi-wave-weave.yaml</code></li>
+      </ul>
+      <pre>POST /api/swarm/run
+{"prompt":"&hellip;","waves":3,"weave_policy":"conflict_callouts","decompose":true}
+
+POST /api/swarm/threads/{id}/resume
+{"waves":1}</pre>
 
       <h2>Storage</h2>
       <ul>
         <li><strong>Hot</strong> — <code>internal/contextgraph.Store</code> keyed by turn_family / request_uuid / connect_session</li>
         <li><strong>Warm events</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
-        <li><strong>Entities</strong> — <code>~/.glider/context/entities.jsonl</code> (threads, waves, workers, edges; provenance EXTRACTED | INFERRED | RUNTIME)</li>
-        <li><strong>Durable swarm threads</strong> — <code>~/.glider/swarm/threads/*.json</code> (multi-wave FanOut + weave)</li>
+        <li><strong>Entities</strong> — <code>~/.glider/context/entities.jsonl</code></li>
+        <li><strong>Durable swarm threads</strong> — <code>~/.glider/swarm/threads/*.json</code></li>
         <li><strong>Episodes</strong> — compact outcomes for local prompts (<code>contextkit</code>)</li>
       </ul>
 
       <h2>What locals receive</h2>
-      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>).</p>
+      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>). Wave N+1 also gets graph-seeded prior_wave + optional PathSummary hint.</p>
 
       <h2>Inspect</h2>
-      <pre>GET /api/context/recent
-GET /api/context/turns/{id}
-GET /api/context/episodes
-GET /api/context/export</pre>
-      <p>Plan: <code>planning/slate_weave_graphify_plan.md</code>. Full write-up: <code>planning/context_management.md</code></p>
+      <pre>GET  /api/context/recent
+GET  /api/context/turns/{id}
+GET  /api/context/episodes
+GET  /api/context/export
+POST /api/context/index-tree
+GET  /api/swarm/threads
+GET  /api/swarm/threads/{id}
+POST /api/swarm/threads/{id}/resume</pre>
+      <p>Plan: <code>planning/slate_weave_graphify_plan.md</code>. Full write-up: <code>planning/context_management.md</code>. Graphify notes: <code>planning/graphify_context_notes.md</code>.</p>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a></footer>
+    <footer class="foot"><a href="index.html">&larr; Home</a></footer>
   </div>
 </body>
 </html>

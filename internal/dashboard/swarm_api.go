@@ -73,7 +73,10 @@ func (s *Server) handleSwarmRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resp *swarm.RunResponse
-	if req.Waves > 1 {
+	if req.Waves > 1 || req.Decompose || req.WeavePolicy != "" || len(req.SubTasks) > 0 {
+		if req.Waves <= 1 && (req.Decompose || len(req.SubTasks) > 0) {
+			req.Waves = 2
+		}
 		resp, err = s.Swarm.RunWaves(r.Context(), req)
 	} else {
 		resp, err = s.Swarm.Run(r.Context(), req.RunRequest)
@@ -86,6 +89,103 @@ func (s *Server) handleSwarmRun(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Glider-Swarm-Error", err.Error())
 	}
 	writeJSON(w, resp)
+}
+
+func (s *Server) handleSwarmThreads(w http.ResponseWriter, r *http.Request) {
+	if s.Swarm == nil || s.Swarm.Threads == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	list, err := s.Swarm.Threads.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if list == nil {
+		list = []swarm.ThreadSummary{}
+	}
+	writeJSON(w, list)
+}
+
+func (s *Server) handleSwarmThread(w http.ResponseWriter, r *http.Request) {
+	if s.Swarm == nil || s.Swarm.Threads == nil {
+		http.Error(w, "threads not configured", http.StatusServiceUnavailable)
+		return
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/swarm/threads/"), "/")
+	if path == "" {
+		http.Error(w, "missing thread id", http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(path, "/")
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	switch {
+	case action == "resume" && r.Method == http.MethodPost:
+		var body struct {
+			Waves       int              `json:"waves"`
+			WeavePolicy swarm.WeavePolicy `json:"weave_policy"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		defer r.Body.Close()
+		if body.Waves <= 0 {
+			body.Waves = 1
+		}
+		resp, err := s.Swarm.ResumeThread(r.Context(), id, body.Waves, body.WeavePolicy)
+		if err != nil && resp == nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			w.Header().Set("X-Glider-Swarm-Error", err.Error())
+		}
+		writeJSON(w, resp)
+	case action == "" && r.Method == http.MethodGet:
+		st, err := s.Swarm.Threads.Load(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, st)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleContextIndexTree(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g, ok := s.ContextGraph.(*contextgraph.Store)
+	if !ok || g == nil {
+		http.Error(w, "context graph not enabled", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		TurnID   string `json:"turn_id"`
+		Root     string `json:"root"`
+		MaxDepth int    `json:"max_depth"`
+		MaxFiles int    `json:"max_files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	n, err := g.IndexFileTree(body.TurnID, body.Root, body.MaxDepth, body.MaxFiles)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"indexed": n, "root": body.Root, "turn_id": body.TurnID})
 }
 
 func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
@@ -236,6 +336,13 @@ func (c graphContext) Query(turnID, q string, limit int) string {
 		return ""
 	}
 	return c.g.Query(turnID, q, limit)
+}
+
+func (c graphContext) PathSummary(turnID, from, to string) string {
+	if c.g == nil {
+		return ""
+	}
+	return c.g.PathSummary(turnID, from, to)
 }
 
 func (c graphContext) WaveOutputs(turnID string, waveIndex int, limit int) []string {

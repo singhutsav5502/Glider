@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,10 @@ type ThreadState struct {
 	ID            string             `json:"id"`
 	TurnID        string             `json:"turn_id"`
 	Goal          string             `json:"goal,omitempty"`
+	WeavePolicy   WeavePolicy        `json:"weave_policy,omitempty"`
+	Status        string             `json:"status,omitempty"` // running|woven|resumable
 	Waves         []WaveRecord       `json:"waves,omitempty"`
+	SubTasks      []string           `json:"subtasks,omitempty"` // planner-decomposed prompts
 	Merged        contextkit.Episode `json:"merged,omitempty"`
 	MergedSummary string             `json:"merged_summary,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"`
@@ -32,6 +36,18 @@ type WaveRecord struct {
 	Results []ResultView       `json:"results,omitempty"`
 	Merged  contextkit.Episode `json:"merged,omitempty"`
 	At      time.Time          `json:"at"`
+}
+
+// ThreadSummary is a list-card view for the dashboard.
+type ThreadSummary struct {
+	ID            string    `json:"id"`
+	TurnID        string    `json:"turn_id,omitempty"`
+	Goal          string    `json:"goal,omitempty"`
+	Status        string    `json:"status,omitempty"`
+	WeavePolicy   string    `json:"weave_policy,omitempty"`
+	WaveCount     int       `json:"wave_count"`
+	MergedSummary string    `json:"merged_summary,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // ThreadStore persists ThreadState JSON files.
@@ -155,5 +171,76 @@ func (ts *ThreadStore) SetMerged(threadID string, ep contextkit.Episode, summary
 	}
 	st.Merged = ep
 	st.MergedSummary = summary
+	st.Status = "woven"
+	return ts.Save(st)
+}
+
+// List returns summaries of all durable threads (newest updated first).
+func (ts *ThreadStore) List() ([]ThreadSummary, error) {
+	if ts == nil {
+		return nil, fmt.Errorf("thread: nil store")
+	}
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if err := os.MkdirAll(ts.Dir, 0o755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(ts.Dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []ThreadSummary
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(ts.Dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var st ThreadState
+		if err := json.Unmarshal(data, &st); err != nil || st.ID == "" {
+			continue
+		}
+		status := st.Status
+		if status == "" {
+			if st.MergedSummary != "" {
+				status = "woven"
+			} else if len(st.Waves) > 0 {
+				status = "resumable"
+			} else {
+				status = "empty"
+			}
+		}
+		out = append(out, ThreadSummary{
+			ID:            st.ID,
+			TurnID:        st.TurnID,
+			Goal:          truncate(st.Goal, 120),
+			Status:        status,
+			WeavePolicy:   string(st.WeavePolicy),
+			WaveCount:     len(st.Waves),
+			MergedSummary: truncate(st.MergedSummary, 160),
+			UpdatedAt:     st.UpdatedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out, nil
+}
+
+// MarkResumable sets status so operators can resume after restart.
+func (ts *ThreadStore) MarkResumable(threadID string, policy WeavePolicy, subtasks []string) error {
+	st, err := ts.Load(threadID)
+	if err != nil {
+		return err
+	}
+	st.Status = "resumable"
+	if policy != "" {
+		st.WeavePolicy = NormalizeWeavePolicy(policy)
+	}
+	if len(subtasks) > 0 {
+		st.SubTasks = append([]string{}, subtasks...)
+	}
 	return ts.Save(st)
 }

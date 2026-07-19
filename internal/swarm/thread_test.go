@@ -72,6 +72,9 @@ type memGraph struct {
 }
 
 func (m *memGraph) Query(turnID, q string, limit int) string { return m.q }
+func (m *memGraph) PathSummary(turnID, from, to string) string {
+	return "path: " + from + " -> " + to
+}
 func (m *memGraph) WaveOutputs(turnID string, waveIndex int, limit int) []string {
 	return m.outs
 }

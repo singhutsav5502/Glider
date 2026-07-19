@@ -13,15 +13,19 @@ import (
 
 // Template is a reusable swarm fan-out recipe (roles + models + prompt scaffold).
 type Template struct {
-	ID           string   `json:"id" yaml:"id"`
-	Name         string   `json:"name,omitempty" yaml:"name,omitempty"`
-	Prompt       string   `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	Roles        []string `json:"roles,omitempty" yaml:"roles,omitempty"` // plan|exec|research|worker
-	Models       []string `json:"models,omitempty" yaml:"models,omitempty"`
-	MaxWorkers   int      `json:"max_workers,omitempty" yaml:"max_workers,omitempty"`
-	PreferLocal  bool     `json:"prefer_local,omitempty" yaml:"prefer_local,omitempty"`
-	Enabled      bool     `json:"enabled" yaml:"enabled"`
-	Description  string   `json:"description,omitempty" yaml:"description,omitempty"`
+	ID          string      `json:"id" yaml:"id"`
+	Name        string      `json:"name,omitempty" yaml:"name,omitempty"`
+	Prompt      string      `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Roles       []string    `json:"roles,omitempty" yaml:"roles,omitempty"` // plan|exec|research|worker
+	Models      []string    `json:"models,omitempty" yaml:"models,omitempty"`
+	MaxWorkers  int         `json:"max_workers,omitempty" yaml:"max_workers,omitempty"`
+	PreferLocal bool        `json:"prefer_local,omitempty" yaml:"prefer_local,omitempty"`
+	Enabled     bool        `json:"enabled" yaml:"enabled"`
+	Description string      `json:"description,omitempty" yaml:"description,omitempty"`
+	Waves       int         `json:"waves,omitempty" yaml:"waves,omitempty"`
+	WeavePolicy WeavePolicy `json:"weave_policy,omitempty" yaml:"weave_policy,omitempty"`
+	Decompose   bool        `json:"decompose,omitempty" yaml:"decompose,omitempty"`
+	SubTasks    []string    `json:"subtasks,omitempty" yaml:"subtasks,omitempty"`
 }
 
 // Normalize fills defaults and validates.

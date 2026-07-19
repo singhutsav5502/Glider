@@ -244,12 +244,15 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.handleSwarmRun(w, r)
 	})
+	mux.HandleFunc("/api/swarm/threads", s.handleSwarmThreads)
+	mux.HandleFunc("/api/swarm/threads/", s.handleSwarmThread)
 	mux.HandleFunc("/api/swarm/templates", func(w http.ResponseWriter, r *http.Request) {
 		s.handleSwarmTemplates(w, r)
 	})
 	mux.HandleFunc("/api/swarm/templates/", func(w http.ResponseWriter, r *http.Request) {
 		s.handleSwarmTemplate(w, r)
 	})
+	mux.HandleFunc("/api/context/index-tree", s.handleContextIndexTree)
 	mux.HandleFunc("/api/agent-logs", s.handleAgentLogs)
 	mux.HandleFunc("/api/mcp/servers", s.handleMCPServers)
 	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)

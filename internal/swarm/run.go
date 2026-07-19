@@ -54,14 +54,17 @@ type DecisionRouteView struct {
 
 // RunResponse is the orchestrator-facing merge result.
 type RunResponse struct {
-	TurnID    string              `json:"turn_id"`
-	Summary   string              `json:"summary"`
-	Episode   contextkit.Episode  `json:"episode"`
-	Results   []ResultView        `json:"results"`
-	ElapsedMS int64               `json:"elapsed_ms"`
-	Progress  DecisionRouteView   `json:"progress,omitempty"`
-	Tokens    int                 `json:"tokens,omitempty"`
-	BudgetHit string              `json:"budget_hit,omitempty"`
+	TurnID    string             `json:"turn_id"`
+	Summary   string             `json:"summary"`
+	Episode   contextkit.Episode `json:"episode"`
+	Results   []ResultView       `json:"results"`
+	ElapsedMS int64              `json:"elapsed_ms"`
+	Progress  DecisionRouteView  `json:"progress,omitempty"`
+	Tokens    int                `json:"tokens,omitempty"`
+	BudgetHit string             `json:"budget_hit,omitempty"`
+	ThreadID  string             `json:"thread_id,omitempty"`
+	Waves     int                `json:"waves,omitempty"`
+	Policy    string             `json:"weave_policy,omitempty"`
 }
 
 // ResultView is a JSON-safe worker result.
