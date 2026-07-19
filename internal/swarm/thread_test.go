@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/swarm"
 )
@@ -83,6 +84,9 @@ func (m *memGraph) RecordThreadWave(turnID, threadID string, waveIndex int, merg
 	m.outs = append(m.outs, mergedSummary)
 }
 func (m *memGraph) RecordEpisodeFact(turnID, episodeID, label, summary string) {}
+func (m *memGraph) RecordSubtasks(turnID, threadID string, tasks []swarm.SubtaskOut) {
+	m.n += len(tasks)
+}
 
 func TestRunWavesSeedsPrior(t *testing.T) {
 	dir := t.TempDir()
@@ -138,5 +142,84 @@ func TestRunWavesSeedsPrior(t *testing.T) {
 	}
 	if len(st.Waves) != 2 {
 		t.Fatalf("persisted waves=%d", len(st.Waves))
+	}
+}
+
+func TestRunWavesFreeSpawn(t *testing.T) {
+	dir := t.TempDir()
+	var rolesSeen []string
+	r := &swarm.Runner{
+		WorkerFn: func(ctx context.Context, role swarm.Role, model, prompt string) (contextkit.Episode, error) {
+			rolesSeen = append(rolesSeen, string(role))
+			return contextkit.Episode{Summary: "did " + string(role), Tokens: 3, Role: string(role)}, nil
+		},
+		GraphCtx: &memGraph{},
+		Threads:  swarm.NewThreadStore(dir),
+		Opts:     swarm.Options{MaxWorkers: 4},
+	}
+	r.SetEnabled(true)
+	resp, err := r.RunWaves(context.Background(), swarm.RunWavesRequest{
+		RunRequest: swarm.RunRequest{
+			Prompt: "ship weave",
+			TurnID: "t-free",
+		},
+		Waves:     1,
+		ThreadID:  "thr-free",
+		FreeSpawn: true,
+		SubTasks: []backend.SubTask{
+			{Prompt: "Audit security carefully enough", Target: "security"},
+			{Prompt: "Implement the fix from findings", Target: "exec"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("nil resp")
+	}
+	joined := strings.Join(rolesSeen, ",")
+	if !strings.Contains(joined, "security") || !strings.Contains(joined, "exec") {
+		t.Fatalf("roles=%v", rolesSeen)
+	}
+}
+
+func TestRunWavesLLMCritic(t *testing.T) {
+	dir := t.TempDir()
+	criticCalls := 0
+	r := &swarm.Runner{
+		WorkerFn: func(ctx context.Context, role swarm.Role, model, prompt string) (contextkit.Episode, error) {
+			return contextkit.Episode{Summary: "worker " + string(role) + " GO ship", Tokens: 4, Role: string(role)}, nil
+		},
+		CriticFn: func(ctx context.Context, prompt, model string) (string, error) {
+			criticCalls++
+			if !strings.Contains(prompt, "weave critic") {
+				t.Fatalf("prompt=%s", prompt)
+			}
+			return "LLM says GO with monitoring", nil
+		},
+		GraphCtx: &memGraph{},
+		Threads:  swarm.NewThreadStore(dir),
+		Opts:     swarm.Options{MaxWorkers: 2},
+	}
+	r.SetEnabled(true)
+	resp, err := r.RunWaves(context.Background(), swarm.RunWavesRequest{
+		RunRequest: swarm.RunRequest{
+			Prompt:     "decide",
+			Roles:      []string{"plan", "exec"},
+			MaxWorkers: 2,
+			TurnID:     "t-llm",
+		},
+		Waves:       2,
+		ThreadID:    "thr-llm",
+		WeavePolicy: swarm.WeaveLLMCritic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if criticCalls != 1 {
+		t.Fatalf("criticCalls=%d", criticCalls)
+	}
+	if !strings.Contains(resp.Episode.Summary, "llm_critic") || !strings.Contains(resp.Episode.Summary, "GO with monitoring") {
+		t.Fatalf("%s", resp.Episode.Summary)
 	}
 }

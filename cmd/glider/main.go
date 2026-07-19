@@ -264,7 +264,7 @@ func main() {
 		completer.Transformer = transform.NewTransformer(c.Transform, tok)
 	})
 
-	swarmRunner.WorkerFn = swarm.CompleterWorkerFn(func(ctx context.Context, r *http.Request, prompt, model string) (string, error) {
+	completeFn := func(ctx context.Context, r *http.Request, prompt, model string) (string, error) {
 		req := &backend.CompletionRequest{
 			Model:  model,
 			Stream: true,
@@ -284,7 +284,9 @@ func main() {
 			}
 		}
 		return b.String(), nil
-	}, true)
+	}
+	swarmRunner.WorkerFn = swarm.CompleterWorkerFn(completeFn, true)
+	swarmRunner.CriticFn = swarm.CompleterCriticFn(completeFn, true)
 
 	handlers := &api.Handlers{
 		Completer: completer,

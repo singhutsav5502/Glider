@@ -21,6 +21,7 @@ type GraphContext interface {
 	WaveOutputs(turnID string, waveIndex int, limit int) []string
 	RecordThreadWave(turnID, threadID string, waveIndex int, mergedID, mergedSummary string, workers []WaveWorkerOut)
 	RecordEpisodeFact(turnID, episodeID, label, summary string)
+	RecordSubtasks(turnID, threadID string, tasks []SubtaskOut)
 }
 
 // WaveWorkerOut is a graph-write DTO (avoids contextgraph importing swarm).
@@ -32,6 +33,14 @@ type WaveWorkerOut struct {
 	OK       bool
 }
 
+// SubtaskOut is a planner-decomposed subtask fact for the entity layer.
+type SubtaskOut struct {
+	Index  int
+	Prompt string
+	Target string
+	Model  string
+}
+
 // RunWavesRequest runs N sequential FanOut waves on one durable thread.
 // Wave N+1 seeds its prompt from prior wave outputs via the shared graph.
 type RunWavesRequest struct {
@@ -40,10 +49,12 @@ type RunWavesRequest struct {
 	Waves int `json:"waves,omitempty"`
 	// ThreadID durable id (default = turn_id).
 	ThreadID string `json:"thread_id,omitempty"`
-	// WeavePolicy: concatenate | role_weighted | critic | conflict_callouts.
+	// WeavePolicy: concatenate | role_weighted | critic | conflict_callouts | llm_critic.
 	WeavePolicy WeavePolicy `json:"weave_policy,omitempty"`
 	// Decompose parses first plan-role / planner output into SubTasks for later waves.
 	Decompose bool `json:"decompose,omitempty"`
+	// FreeSpawn invents worker roles from planner SubTasks (capped ≤4).
+	FreeSpawn bool `json:"free_spawn,omitempty"`
 	// SubTasks optional explicit prompts (overrides decompose when non-empty).
 	SubTasks []backend.SubTask `json:"subtasks,omitempty"`
 	// ResumeFrom skips wave indices already persisted (set by ResumeThread).
@@ -119,6 +130,9 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 			}
 			if !req.Decompose {
 				req.Decompose = tpl.Decompose
+			}
+			if !req.FreeSpawn {
+				req.FreeSpawn = tpl.FreeSpawn
 			}
 			if len(req.SubTasks) == 0 {
 				for _, p := range tpl.SubTasks {
@@ -197,8 +211,32 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 
 	for w := startWave; w < endWave; w++ {
 		wavePrompt := goal
-		if len(subtasks) > 0 && w < len(subtasks) {
+		waveReq := base
+		waveReq.Prompt = wavePrompt
+		waveReq.TurnID = turnID
+		waveReq.FreeSpawn = false
+		waveReq.SubTasks = nil
+
+		freeThisWave := req.FreeSpawn && len(subtasks) > 0 && (w > 0 || (w == 0 && !req.Decompose))
+		if freeThisWave {
+			// Dynamic spawn: FanOut invented roles from SubTasks (capped).
+			waveReq.FreeSpawn = true
+			waveReq.SubTasks = append([]backend.SubTask{}, subtasks...)
+			waveReq.Roles = nil
+			waveReq.Models = nil
+			waveReq.Prompt = goal
+			if w > 0 {
+				prior := seedFromGraph(r.GraphCtx, turnID, w-1)
+				if prior == "" && len(waveMerges) > 0 {
+					prior = waveMerges[len(waveMerges)-1].Summary
+				}
+				if prior != "" {
+					waveReq.Prompt = fmt.Sprintf("%s\n\n[prior_wave_%d]\n%s", goal, w-1, truncate(prior, 1200))
+				}
+			}
+		} else if len(subtasks) > 0 && w < len(subtasks) {
 			wavePrompt = FormatSubTaskPrompt(goal, w, subtasks[w])
+			waveReq.Prompt = wavePrompt
 		} else if w > 0 {
 			prior := seedFromGraph(r.GraphCtx, turnID, w-1)
 			if prior == "" && len(waveMerges) > 0 {
@@ -214,18 +252,16 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 					wavePrompt += "\n\n[path]\n" + truncate(pathHint, 400)
 				}
 			}
+			waveReq.Prompt = wavePrompt
 		}
-		waveReq := base
-		waveReq.Prompt = wavePrompt
-		waveReq.TurnID = turnID
 		// First wave with decompose: prefer plan role to produce SubTasks.
-		if w == 0 && req.Decompose && len(subtasks) == 0 && len(waveReq.Roles) == 0 {
+		if w == 0 && req.Decompose && len(subtasks) == 0 && len(waveReq.Roles) == 0 && !freeThisWave {
 			waveReq.Roles = []string{string(RolePlan), string(RoleResearch)}
 		}
 		if r.Logs != nil {
 			r.Logs.Info(agentlog.ScopeSwarm, threadID, "wave", fmt.Sprintf("wave %d start (thread)", w), map[string]string{
 				"wave": strconv.Itoa(w), "thread": threadID, "turn": turnID,
-				"policy": string(policy),
+				"policy": string(policy), "free_spawn": strconv.FormatBool(freeThisWave),
 			})
 			r.Logs.Info(agentlog.ScopeSwarm, turnID, "wave", fmt.Sprintf("wave %d/%d start", w+1, endWave), map[string]string{
 				"wave": strconv.Itoa(w), "thread": threadID,
@@ -269,13 +305,20 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 			if r.Logs != nil && len(subtasks) > 0 {
 				r.Logs.Info(agentlog.ScopeSwarm, threadID, "decompose",
 					fmt.Sprintf("planner decomposed %d subtasks", len(subtasks)),
-					map[string]string{"thread": threadID, "wave": "0"})
+					map[string]string{"thread": threadID, "wave": "0", "free_spawn": strconv.FormatBool(req.FreeSpawn)})
+			}
+			if r.GraphCtx != nil && len(subtasks) > 0 {
+				outs := make([]SubtaskOut, len(subtasks))
+				for i, st := range subtasks {
+					outs[i] = SubtaskOut{Index: i, Prompt: st.Prompt, Target: st.Target, Model: st.Model}
+				}
+				r.GraphCtx.RecordSubtasks(turnID, threadID, outs)
 			}
 		}
 
 		waveRec := WaveRecord{
 			Index:   w,
-			Prompt:  wavePrompt,
+			Prompt:  waveReq.Prompt,
 			Results: resp.Results,
 			Merged:  resp.Episode,
 			At:      time.Now().UTC(),
@@ -312,9 +355,14 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 		if err != nil && len(resp.Results) == 0 {
 			return resp, err
 		}
+		// Free-spawn FanOut already executed all SubTasks — stop extra waves unless more requested for seed follow-ups.
+		if freeThisWave && req.FreeSpawn && w+1 < endWave && len(subtasks) > 0 {
+			// Keep going only if caller asked for more waves after spawn (graph-seeded).
+			continue
+		}
 	}
 
-	woven := ApplyWeavePolicy(policy, waveMerges, allWaveResults)
+	woven := r.weaveFinal(ctx, policy, waveMerges, allWaveResults)
 	woven.ID = threadID + "-weave"
 	// Episode digest: tool/artifact hints from worker episodes.
 	woven.Artifacts = episodeDigest(allWaveResults)
@@ -353,6 +401,30 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 		Waves:     len(waveMerges),
 		Policy:    string(policy),
 	}, nil
+}
+
+// weaveFinal applies weave policy and optional LLM critic pass.
+func (r *Runner) weaveFinal(ctx context.Context, policy WeavePolicy, waveMerges []contextkit.Episode, waveResults [][]Result) contextkit.Episode {
+	policy = NormalizeWeavePolicy(policy)
+	woven := ApplyWeavePolicy(policy, waveMerges, waveResults)
+	if policy != WeaveLLMCritic {
+		return woven
+	}
+	if r == nil || r.CriticFn == nil {
+		return ApplyLLMCritic(woven, "")
+	}
+	model := r.CriticModel
+	if model == "" {
+		model = r.DefaultModel
+	}
+	text, err := r.CriticFn(ctx, LLMCriticPrompt(woven, waveMerges), model)
+	if err != nil || strings.TrimSpace(text) == "" {
+		if r.Logs != nil && err != nil {
+			r.Logs.Error(agentlog.ScopeSwarm, "", "llm_critic", "critic fail: "+truncate(err.Error(), 120), nil)
+		}
+		return ApplyLLMCritic(woven, "")
+	}
+	return ApplyLLMCritic(woven, text)
 }
 
 // ResumeThread continues a durable thread with additional FanOut waves, then re-weaves.

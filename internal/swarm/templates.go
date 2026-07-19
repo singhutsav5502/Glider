@@ -25,6 +25,7 @@ type Template struct {
 	Waves       int         `json:"waves,omitempty" yaml:"waves,omitempty"`
 	WeavePolicy WeavePolicy `json:"weave_policy,omitempty" yaml:"weave_policy,omitempty"`
 	Decompose   bool        `json:"decompose,omitempty" yaml:"decompose,omitempty"`
+	FreeSpawn   bool        `json:"free_spawn,omitempty" yaml:"free_spawn,omitempty"`
 	SubTasks    []string    `json:"subtasks,omitempty" yaml:"subtasks,omitempty"`
 }
 

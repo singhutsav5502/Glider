@@ -23,6 +23,31 @@ func TestDecomposeSubTasks(t *testing.T) {
 	}
 }
 
+func TestDecomposeFreeSpawnRoles(t *testing.T) {
+	plan := `
+1. [role:security] Audit auth middleware paths carefully
+2. role=exec model=local Implement the fix from audit findings
+3. @research Compare prior Graphify approaches briefly
+`
+	sts := swarm.DecomposeSubTasks(plan, 4)
+	if len(sts) != 3 {
+		t.Fatalf("got %d: %+v", len(sts), sts)
+	}
+	if sts[0].Target != "security" {
+		t.Fatalf("target0=%s", sts[0].Target)
+	}
+	if sts[1].Target != "exec" || sts[1].Model != "local" {
+		t.Fatalf("%+v", sts[1])
+	}
+	if sts[2].Target != "research" {
+		t.Fatalf("%+v", sts[2])
+	}
+	roles := swarm.RolesFromSubTasks(sts, 4)
+	if len(roles) != 3 || roles[0] != "security" {
+		t.Fatalf("%v", roles)
+	}
+}
+
 func TestWeavePolicies(t *testing.T) {
 	merges := []contextkit.Episode{
 		{Summary: "research says GO ship", Role: "research", Tokens: 10},
@@ -43,6 +68,13 @@ func TestWeavePolicies(t *testing.T) {
 	conflict := swarm.ApplyWeavePolicy(swarm.WeaveConflictCallout, merges, results)
 	if !strings.Contains(conflict.Summary, "conflict") {
 		t.Fatalf("%s", conflict.Summary)
+	}
+	llm := swarm.ApplyLLMCritic(
+		swarm.ApplyWeavePolicy(swarm.WeaveLLMCritic, merges, results),
+		"GO with caveats: reconcile security vs ship pressure.",
+	)
+	if !strings.Contains(llm.Summary, "llm_critic") || !strings.Contains(llm.Summary, "GO with caveats") {
+		t.Fatalf("%s", llm.Summary)
 	}
 }
 

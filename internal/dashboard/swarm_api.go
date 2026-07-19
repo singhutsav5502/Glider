@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -73,8 +74,8 @@ func (s *Server) handleSwarmRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resp *swarm.RunResponse
-	if req.Waves > 1 || req.Decompose || req.WeavePolicy != "" || len(req.SubTasks) > 0 {
-		if req.Waves <= 1 && (req.Decompose || len(req.SubTasks) > 0) {
+	if req.Waves > 1 || req.Decompose || req.FreeSpawn || req.WeavePolicy != "" || len(req.SubTasks) > 0 {
+		if req.Waves <= 1 && (req.Decompose || req.FreeSpawn || len(req.SubTasks) > 0) {
 			req.Waves = 2
 		}
 		resp, err = s.Swarm.RunWaves(r.Context(), req)
@@ -186,6 +187,106 @@ func (s *Server) handleContextIndexTree(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]any{"indexed": n, "root": body.Root, "turn_id": body.TurnID})
+}
+
+func (s *Server) handleContextIndexSymbols(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g, ok := s.ContextGraph.(*contextgraph.Store)
+	if !ok || g == nil {
+		http.Error(w, "context graph not enabled", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		TurnID   string `json:"turn_id"`
+		Root     string `json:"root"`
+		MaxFiles int    `json:"max_files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	n, err := g.IndexSymbols(body.TurnID, body.Root, body.MaxFiles)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"indexed": n, "root": body.Root, "turn_id": body.TurnID})
+}
+
+func (s *Server) handleContextCommunities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g, ok := s.ContextGraph.(*contextgraph.Store)
+	if !ok || g == nil {
+		http.Error(w, "context graph not enabled", http.StatusNotFound)
+		return
+	}
+	turnID := r.URL.Query().Get("turn_id")
+	limit := 20
+	if r.Method == http.MethodPost {
+		var body struct {
+			TurnID string `json:"turn_id"`
+			Limit  int    `json:"limit"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		defer r.Body.Close()
+		if body.TurnID != "" {
+			turnID = body.TurnID
+		}
+		if body.Limit > 0 {
+			limit = body.Limit
+		}
+	}
+	coms := g.DetectCommunities(turnID, limit)
+	hubs := g.GodNodes(turnID, 8)
+	writeJSON(w, map[string]any{
+		"turn_id":     turnID,
+		"communities": coms,
+		"god_nodes":   hubs,
+	})
+}
+
+func (s *Server) handleContextExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g, ok := s.ContextGraph.(*contextgraph.Store)
+	if !ok || g == nil {
+		http.Error(w, "context graph not enabled", http.StatusNotFound)
+		return
+	}
+	turnID := r.URL.Query().Get("turn_id")
+	id := r.URL.Query().Get("id")
+	if r.Method == http.MethodPost {
+		var body struct {
+			TurnID string `json:"turn_id"`
+			ID     string `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		defer r.Body.Close()
+		if body.TurnID != "" {
+			turnID = body.TurnID
+		}
+		if body.ID != "" {
+			id = body.ID
+		}
+	}
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"turn_id": turnID,
+		"id":      id,
+		"explain": g.Explain(turnID, id),
+	})
 }
 
 func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
@@ -370,4 +471,30 @@ func (c graphContext) RecordEpisodeFact(turnID, episodeID, label, summary string
 		return
 	}
 	c.g.RecordEpisodeFact(turnID, episodeID, label, summary)
+}
+
+func (c graphContext) RecordSubtasks(turnID, threadID string, tasks []swarm.SubtaskOut) {
+	if c.g == nil || len(tasks) == 0 {
+		return
+	}
+	threadEnt := "thr-" + threadID
+	for _, t := range tasks {
+		id := fmt.Sprintf("%s-subtask-%d", threadID, t.Index)
+		attrs := map[string]string{
+			"index":  strconv.Itoa(t.Index),
+			"target": t.Target,
+			"prompt": t.Prompt,
+		}
+		if t.Model != "" {
+			attrs["model"] = t.Model
+		}
+		c.g.RecordFact(turnID, contextgraph.Fact{
+			ID:         id,
+			Kind:       contextgraph.KindSubtask,
+			Label:      t.Prompt,
+			Provenance: contextgraph.ProvenanceInferred,
+			Attrs:      attrs,
+		})
+		c.g.RecordEdge(turnID, threadEnt+"-seeds-"+id, threadEnt, id, contextgraph.RelSeeds, contextgraph.ProvenanceInferred, nil)
+	}
 }

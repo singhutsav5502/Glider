@@ -16,6 +16,7 @@ const (
 	WeaveRoleWeighted    WeavePolicy = "role_weighted"
 	WeaveCritic          WeavePolicy = "critic"
 	WeaveConflictCallout WeavePolicy = "conflict_callouts"
+	WeaveLLMCritic       WeavePolicy = "llm_critic"
 )
 
 // NormalizeWeavePolicy maps aliases; empty → critic (P0 default path).
@@ -27,6 +28,8 @@ func NormalizeWeavePolicy(p WeavePolicy) WeavePolicy {
 		return WeaveRoleWeighted
 	case WeaveConflictCallout, "conflict", "conflicts":
 		return WeaveConflictCallout
+	case WeaveLLMCritic, "llm", "llm-critic", "model_critic":
+		return WeaveLLMCritic
 	case WeaveCritic, "critique", "":
 		return WeaveCritic
 	default:
@@ -49,6 +52,7 @@ func roleWeight(role string) float64 {
 }
 
 // ApplyWeavePolicy combines wave merges + flat worker results per policy.
+// For WeaveLLMCritic without a completer, falls back to heuristic CritiqueMerge.
 func ApplyWeavePolicy(policy WeavePolicy, waveMerges []contextkit.Episode, waveResults [][]Result) contextkit.Episode {
 	policy = NormalizeWeavePolicy(policy)
 	switch policy {
@@ -58,9 +62,53 @@ func ApplyWeavePolicy(policy WeavePolicy, waveMerges []contextkit.Episode, waveR
 		return weaveRoleWeighted(waveMerges, waveResults)
 	case WeaveConflictCallout:
 		return weaveConflictCallouts(waveMerges, waveResults)
+	case WeaveLLMCritic:
+		// Sync path without CriticFn — heuristic base; Runner.weaveFinal adds LLM pass.
+		base := WeaveWaves(waveMerges, waveResults)
+		base.Summary = strings.Replace(base.Summary, "weave[critic]", "weave[llm_critic:pending]", 1)
+		return base
 	default:
 		return WeaveWaves(waveMerges, waveResults)
 	}
+}
+
+// LLMCriticPrompt builds the model prompt for a post-CritiqueMerge critic pass.
+func LLMCriticPrompt(base contextkit.Episode, waveMerges []contextkit.Episode) string {
+	var parts []string
+	parts = append(parts, "You are the weave critic for a multi-wave swarm. Rank and reconcile the wave summaries.")
+	parts = append(parts, "Return 3-6 sentences: GO/NO-GO, top conflicts, and a single merged recommendation.")
+	if s := strings.TrimSpace(base.Summary); s != "" {
+		parts = append(parts, "\n[heuristic_merge]\n"+truncate(s, 800))
+	}
+	for i, w := range waveMerges {
+		sum := strings.TrimSpace(w.Summary)
+		if sum == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("\n[wave-%d]\n%s", i, truncate(sum, 400)))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ApplyLLMCritic overlays a real model critic pass on the heuristic weave base.
+func ApplyLLMCritic(base contextkit.Episode, criticText string) contextkit.Episode {
+	text := strings.TrimSpace(criticText)
+	if text == "" {
+		if strings.Contains(base.Summary, "llm_critic:pending") {
+			base.Summary = strings.Replace(base.Summary, "weave[llm_critic:pending]", "weave[llm_critic:fallback]", 1)
+		}
+		return base
+	}
+	if len(text) > 1200 {
+		text = text[:1200] + "…"
+	}
+	base.Summary = "weave[llm_critic] " + text
+	base.Reason = "weave"
+	base.Role = "critic"
+	if base.ID == "" {
+		base.ID = "weave-llm-critic"
+	}
+	return base
 }
 
 func weaveConcatenate(waveMerges []contextkit.Episode) contextkit.Episode {

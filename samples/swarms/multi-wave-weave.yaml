@@ -7,6 +7,7 @@ max_workers: 2
 waves: 3
 weave_policy: conflict_callouts
 decompose: true
+free_spawn: true
 roles:
   - plan
   - exec
@@ -14,13 +15,14 @@ prompt: |
   Goal: ship a durable Slate-style weave demo for Glider.
 
   Wave 0 (plan): produce a SHORT numbered plan (3 steps max) covering:
-  1) inspect contextgraph dual-layer query surface
-  2) run a two-role FanOut and weave with conflict callouts
-  3) verify thread resume after restart (list + resume APIs)
+  1) [role:research] inspect contextgraph dual-layer query + explain surface
+  2) role=exec run a free-spawn FanOut and weave with conflict callouts
+  3) @security verify thread resume after restart (list + resume APIs)
 
-  Later waves execute decomposed subtasks. Call out GO vs NO-GO clearly so
-  conflict_callouts can surface polarity disagreements. Prefer facts over invention.
+  Later waves free-spawn invented roles from the plan. Call out GO vs NO-GO
+  clearly so conflict_callouts can surface polarity disagreements.
 description: |
-  Sample multi-wave weave with planner decomposition and conflict_callouts policy.
-  POST /api/swarm/run {"template_id":"multi-wave-weave","waves":3,"decompose":true}
+  Sample multi-wave weave with planner decomposition, free_spawn roles, and conflict_callouts.
+  POST /api/swarm/run {"template_id":"multi-wave-weave","waves":3,"decompose":true,"free_spawn":true}
+  LLM critic: {"weave_policy":"llm_critic",...}
   Resume: POST /api/swarm/threads/{id}/resume {"waves":1}

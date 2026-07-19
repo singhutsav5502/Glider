@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/agentlog"
+	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/statemachine"
 	"github.com/glider-ai/glider/internal/tools"
@@ -17,6 +18,9 @@ import (
 
 // WorkerFn executes one role/model prompt and returns an Episode.
 type WorkerFn func(ctx context.Context, role Role, model, prompt string) (contextkit.Episode, error)
+
+// CriticFn is an optional LLM completer used by weave policy llm_critic.
+type CriticFn func(ctx context.Context, prompt, model string) (string, error)
 
 // GraphSink records fan-out events (implemented by *contextgraph.Store).
 type GraphSink interface {
@@ -38,6 +42,10 @@ type RunRequest struct {
 	HardTokens int `json:"hard_tokens,omitempty"`
 	// ToolRefs optional per-worker tools (same unified registry as hoop).
 	Tools []tools.Ref `json:"tools,omitempty"`
+	// FreeSpawn builds workers from SubTasks (role invent); capped by MaxWorkers.
+	FreeSpawn bool `json:"free_spawn,omitempty"`
+	// SubTasks optional per-worker prompts/roles when FreeSpawn is set.
+	SubTasks []backend.SubTask `json:"subtasks,omitempty"`
 }
 
 // DecisionRouteView is Cytoscape-friendly live route paint (parity with hoop).
@@ -103,6 +111,10 @@ type Runner struct {
 	Tools *tools.Registry
 	// Governance defaults for runs.
 	Governance Governance
+	// CriticFn optional LLM pass for WeaveLLMCritic (wired from PipelineCompleter).
+	CriticFn CriticFn
+	// CriticModel optional model id for CriticFn (empty → DefaultModel).
+	CriticModel string
 }
 
 // ApplyOpts hot-swaps concurrency bounds.
@@ -167,6 +179,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 	if prompt == "" {
 		return nil, fmt.Errorf("prompt required")
 	}
+	freeSpawn := req.FreeSpawn && len(req.SubTasks) > 0
+	if freeSpawn {
+		roles = RolesFromSubTasks(req.SubTasks, maxW)
+		if len(req.Models) == 0 {
+			models = ModelsFromSubTasks(req.SubTasks, maxW)
+		}
+	}
 	if len(roles) == 0 {
 		roles = []string{string(RolePlan), string(RoleExec)}
 	}
@@ -183,6 +202,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 	n := opts.MaxWorkers
 	if len(roles) < n {
 		n = len(roles)
+	}
+	if freeSpawn && len(req.SubTasks) < n {
+		n = len(req.SubTasks)
 	}
 	turnID := strings.TrimSpace(req.TurnID)
 	if turnID == "" {
@@ -251,6 +273,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			model = models[0]
 		}
 		rolePrompt := fmt.Sprintf("[%s]\n%s", role, prompt)
+		if freeSpawn && i < len(req.SubTasks) {
+			rolePrompt = fmt.Sprintf("[%s]\n%s", role, FormatSubTaskPrompt(prompt, i, req.SubTasks[i]))
+			if req.SubTasks[i].Model != "" && (len(models) <= i || models[i] == "") {
+				model = req.SubTasks[i].Model
+			}
+		}
 		if toolBlock != "" {
 			rolePrompt += "\n\n" + toolBlock
 		}
@@ -458,5 +486,17 @@ func CompleterWorkerFn(complete func(ctx context.Context, r *http.Request, promp
 			Role:    string(role),
 		}
 		return ep, err
+	}
+}
+
+// CompleterCriticFn adapts the same Completer callback for Runner.CriticFn.
+func CompleterCriticFn(complete func(ctx context.Context, r *http.Request, prompt, model string) (string, error), preferLocal bool) CriticFn {
+	return func(ctx context.Context, prompt, model string) (string, error) {
+		msg := prompt
+		if preferLocal && !strings.HasPrefix(strings.TrimSpace(msg), "/local") {
+			msg = "/local " + msg
+		}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://glider.local/swarm-critic", nil)
+		return complete(ctx, req, msg, model)
 	}
 }
