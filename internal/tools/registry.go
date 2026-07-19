@@ -63,6 +63,11 @@ type ContextStore interface {
 	Query(turnID, q string, limit int) string
 }
 
+// ContextStoreRaw optionally supports filter-syntax queries (prov=/path=/neigh=).
+type ContextStoreRaw interface {
+	QueryRaw(input string) string
+}
+
 // Options configures the unified registry.
 type Options struct {
 	Workspace   string // sandbox root for fs/shell/git

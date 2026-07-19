@@ -12,21 +12,29 @@ import (
 
 // Entity kinds for the structural layer (Graphify-inspired nodes/edges).
 const (
-	KindEntity  = "entity"
-	KindEdge    = "edge"
-	KindThread  = "thread"
-	KindWave    = "wave"
-	KindEpisode = "episode"
-	KindWorker  = "worker"
-	KindNote    = "note"
+	KindEntity   = "entity"
+	KindEdge     = "edge"
+	KindThread   = "thread"
+	KindWave     = "wave"
+	KindEpisode  = "episode"
+	KindWorker   = "worker"
+	KindNote     = "note"
+	KindFile     = "file"
+	KindDir      = "dir"
+	KindSubtask  = "subtask"
+	KindConflict = "conflict"
+	KindSymbol   = "symbol"
 )
 
 // Relation verbs on edges.
 const (
-	RelProduced   = "produced"
-	RelFollows    = "follows"
-	RelMergedInto = "merged_into"
-	RelPartOf     = "part_of"
+	RelProduced      = "produced"
+	RelFollows       = "follows"
+	RelMergedInto    = "merged_into"
+	RelPartOf        = "part_of"
+	RelContains      = "contains"
+	RelConflictsWith = "conflicts_with"
+	RelSeeds         = "seeds"
 )
 
 // Entity is a durable node or edge in the structural context layer.

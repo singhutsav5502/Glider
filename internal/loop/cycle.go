@@ -254,6 +254,22 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 								"provenance": string(contextgraph.ProvenanceExtracted),
 							},
 						})
+						// Lightweight file-tree EXTRACTED index after successful clone/audit path.
+						if tr.OK && (tr.Name == "git_clone" || tr.Name == "fs_list") {
+							if root := extractClonedPath(tr.Output); root != "" {
+								if n, err := m.Graph.IndexFileTree(turnID, root, 4, 200); err == nil && n > 0 {
+									m.Graph.Append(contextgraph.Event{
+										Kind:   contextgraph.EventKind("FileTreeIndexed"),
+										TurnID: turnID,
+										Actor:  "loop",
+										Attrs: map[string]string{
+											"root": root, "nodes": fmt.Sprintf("%d", n),
+											"provenance": string(contextgraph.ProvenanceExtracted),
+										},
+									})
+								}
+							}
+						}
 					}
 				}
 			}
@@ -506,6 +522,16 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 				"episode_id": epID,
 			},
 		})
+		// Production PathSummary: planner → critic narrative for SM / tools.
+		if path := g.PathSummary(turnID, "planner", "critic"); path != "" && !strings.Contains(path, "no link") {
+			attrs["path_summary"] = truncate(path, 200)
+			g.Append(contextgraph.Event{
+				Kind:   contextgraph.EventKind("PathSummary"),
+				TurnID: turnID,
+				Actor:  "loop",
+				Attrs:  map[string]string{"path": truncate(path, 240), "provenance": string(contextgraph.ProvenanceInferred)},
+			})
+		}
 	}
 
 	outcome := IterationOutcome{
@@ -1121,4 +1147,21 @@ func humanToSM(st *LoopState) *statemachine.HumanDecision {
 		Actor:    st.Gate.Actor,
 		GateNode: statemachine.StateID(st.Gate.StageID),
 	}
+}
+
+// extractClonedPath finds "cloned to <path>" from git_clone output, or a bare path line.
+func extractClonedPath(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	const mark = "cloned to "
+	if i := strings.LastIndex(strings.ToLower(out), mark); i >= 0 {
+		p := strings.TrimSpace(out[i+len(mark):])
+		if j := strings.IndexAny(p, "\r\n"); j >= 0 {
+			p = p[:j]
+		}
+		return strings.TrimSpace(p)
+	}
+	return ""
 }

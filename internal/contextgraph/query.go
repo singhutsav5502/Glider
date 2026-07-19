@@ -36,64 +36,7 @@ type Fact struct {
 // Returns a human-readable summary for agent tools / relevancy hints.
 // Graphify methodology: one query surface over structured graph + provenance tags.
 func (s *Store) Query(turnID, q string, limit int) string {
-	if s == nil {
-		return ""
-	}
-	if limit <= 0 {
-		limit = 20
-	}
-	q = strings.TrimSpace(strings.ToLower(q))
-	var hits []string
-
-	// Layer 1: structural entities / edges.
-	ents := s.Entities(turnID, 200)
-	for i := len(ents) - 1; i >= 0 && len(hits) < limit; i-- {
-		e := ents[i]
-		blob := strings.ToLower(e.Kind + " " + e.Label + " " + e.TurnID + " " + e.From + " " + e.To + " " + e.Relation + " " + attrsBlob(e.Attrs))
-		if q != "" && !strings.Contains(blob, q) {
-			continue
-		}
-		prov := e.Provenance
-		if prov == "" {
-			prov = ProvenanceInferred
-		}
-		hits = append(hits, fmt.Sprintf("[entity:%s] %s id=%s kind=%s turn=%s %s",
-			prov, e.Label, e.ID, e.Kind, e.TurnID, attrsBlob(e.Attrs)))
-	}
-
-	// Layer 2: runtime event log.
-	var events []Event
-	if turnID != "" {
-		if v, ok := s.Turn(turnID); ok {
-			events = v.Events
-		}
-	} else {
-		events = s.RecentEvents(200)
-	}
-	for i := len(events) - 1; i >= 0 && len(hits) < limit; i-- {
-		ev := events[i]
-		blob := strings.ToLower(string(ev.Kind) + " " + ev.TurnID + " " + ev.Actor + " " + attrsBlob(ev.Attrs))
-		if q != "" && !strings.Contains(blob, q) {
-			continue
-		}
-		prov := ProvenanceRuntime
-		if ev.Attrs != nil {
-			switch ev.Attrs["provenance"] {
-			case string(ProvenanceInferred):
-				prov = ProvenanceInferred
-			case string(ProvenanceExtracted):
-				prov = ProvenanceExtracted
-			case string(ProvenanceRuntime):
-				prov = ProvenanceRuntime
-			}
-		}
-		hits = append(hits, fmt.Sprintf("[event:%s] %s turn=%s %s", prov, ev.Kind, ev.TurnID, attrsBlob(ev.Attrs)))
-	}
-
-	if len(hits) == 0 {
-		return fmt.Sprintf("context_query: no hits for %q (turn=%s)", q, turnID)
-	}
-	return strings.Join(hits, "\n")
+	return s.QueryWith(QueryOpts{TurnID: turnID, Keyword: q, Limit: limit})
 }
 
 // RelevancyScore estimates 0..1 task relevance from recent turn activity.
@@ -122,6 +65,12 @@ func (s *Store) RelevancyScore(turnID string) float64 {
 		if v.Stats.ByKind[string(EventEpisodeMerged)] > 0 {
 			score += 0.05
 		}
+	}
+	if ents := s.Entities(turnID, 8); len(ents) > 0 {
+		score += 0.05
+	}
+	if q := s.Query(turnID, "wave", 5); q != "" && !strings.Contains(q, "no hits") {
+		score += 0.03
 	}
 	return clamp01(score)
 }
