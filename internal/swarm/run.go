@@ -73,6 +73,19 @@ type RunResponse struct {
 	ThreadID  string             `json:"thread_id,omitempty"`
 	Waves     int                `json:"waves,omitempty"`
 	Policy    string             `json:"weave_policy,omitempty"`
+	// Workspace is the run-associated work/out binding.
+	Workspace *WorkspaceInfo `json:"workspace,omitempty"`
+}
+
+// WorkspaceInfo is the JSON surface for a swarm/hoop run work+out pair.
+type WorkspaceInfo struct {
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	WorkRel       string `json:"work_rel,omitempty"`
+	OutRel        string `json:"out_rel,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
+	OutDir        string `json:"out_dir,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	RunID         string `json:"run_id,omitempty"`
 }
 
 // ResultView is a JSON-safe worker result.
@@ -211,6 +224,24 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		turnID = "swarm-" + uuid.NewString()
 	}
 	opts.TurnID = turnID
+
+	var wsInfo *WorkspaceInfo
+	if r.Tools != nil {
+		layout, err := r.Tools.EnsureRunLayout(turnID)
+		if err != nil {
+			return nil, fmt.Errorf("workspace: %w", err)
+		}
+		wsInfo = &WorkspaceInfo{
+			WorkspaceRoot: layout.WorkspaceRoot,
+			WorkRel:       layout.WorkRel,
+			OutRel:        layout.OutRel,
+			WorkDir:       layout.WorkDir,
+			OutDir:        layout.OutDir,
+			Mode:          layout.Mode,
+			RunID:         layout.RunID,
+		}
+		ctx = tools.WithRunLayout(ctx, layout)
+	}
 
 	soft := req.SoftTokens
 	if soft <= 0 {
@@ -401,6 +432,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		Progress:  progress,
 		Tokens:    spent,
 		BudgetHit: budgetHit,
+		Workspace: wsInfo,
 	}
 	if budgetHit == "hard_tokens" {
 		return out, fmt.Errorf("budget_exceeded:hard_tokens")

@@ -165,6 +165,14 @@ func (m *Manager) Start(parent context.Context, id string) (*LoopState, error) {
 	if st.Checkpoint.WakeReason != "resume" {
 		st.Checkpoint.WakeReason = "start"
 	}
+	// Ensure default run workspace binding (workspace stage may override to existing).
+	if err := m.bindDefaultWorkspace(st); err != nil {
+		cancel()
+		m.mu.Lock()
+		delete(m.runners, id)
+		m.mu.Unlock()
+		return nil, err
+	}
 	if err := m.Store.Save(st); err != nil {
 		cancel()
 		m.mu.Lock()
@@ -457,6 +465,92 @@ func (m *Manager) Resume(parent context.Context, id string) (*LoopState, error) 
 		m.Logs.Info(agentlog.ScopeHoop, id, "hitl", "resuming after human gate", nil)
 	}
 	return m.Start(parent, id)
+}
+
+// bindDefaultWorkspace ensures runs/<hoop_id>/{work,out} and records association on state.
+func (m *Manager) bindDefaultWorkspace(st *LoopState) error {
+	if st == nil {
+		return nil
+	}
+	runID := st.Spec.ID
+	if runID == "" {
+		runID = "hoop"
+	}
+	var layout tools.RunLayout
+	var err error
+	if m.Tools != nil {
+		layout, err = m.Tools.EnsureRunLayout(runID)
+		if err != nil {
+			return err
+		}
+	} else {
+		layout = tools.LayoutForRun(tools.DefaultWorkspaceDir(), runID)
+		if err := layout.Ensure(); err != nil {
+			return err
+		}
+	}
+	st.Workspace.FromToolsLayout(layout)
+	return nil
+}
+
+// applyWorkspaceStage binds run or existing workspace roots for subsequent stages.
+func (m *Manager) applyWorkspaceStage(st *LoopState, mod StageSpec) (tools.RunLayout, error) {
+	runID := st.Spec.ID
+	if runID == "" {
+		runID = "hoop"
+	}
+	mode := mod.WorkspaceMode
+	if mode == "" {
+		mode = WorkspaceModeRun
+	}
+	var layout tools.RunLayout
+	var err error
+	switch mode {
+	case WorkspaceModeExisting:
+		if m.Tools == nil {
+			root := tools.DefaultWorkspaceDir()
+			layout, err = tools.LayoutExisting(root, runID, mod.WorkspacePath, mod.OutPath)
+			if err != nil {
+				return tools.RunLayout{}, err
+			}
+			if err := layout.Ensure(); err != nil {
+				return tools.RunLayout{}, err
+			}
+		} else {
+			layout, err = m.Tools.BindExisting(runID, mod.WorkspacePath, mod.OutPath)
+			if err != nil {
+				return tools.RunLayout{}, err
+			}
+		}
+	default:
+		if m.Tools != nil {
+			layout, err = m.Tools.EnsureRunLayout(runID)
+		} else {
+			layout = tools.LayoutForRun(tools.DefaultWorkspaceDir(), runID)
+			err = layout.Ensure()
+		}
+		if err != nil {
+			return tools.RunLayout{}, err
+		}
+	}
+	st.Workspace.FromToolsLayout(layout)
+	return layout, nil
+}
+
+// toolContext attaches the hoop's workspace layout for ScopeRel-aware builtins.
+func (m *Manager) toolContext(ctx context.Context, st *LoopState) context.Context {
+	if st == nil || st.Workspace.WorkDir == "" {
+		return ctx
+	}
+	return tools.WithRunLayout(ctx, tools.RunLayout{
+		WorkspaceRoot: st.Workspace.WorkspaceRoot,
+		RunID:         st.Workspace.RunID,
+		Mode:          st.Workspace.Mode,
+		WorkDir:       st.Workspace.WorkDir,
+		OutDir:        st.Workspace.OutDir,
+		WorkRel:       st.Workspace.WorkRel,
+		OutRel:        st.Workspace.OutRel,
+	})
 }
 
 func truncate(s string, n int) string {

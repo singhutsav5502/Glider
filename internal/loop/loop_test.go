@@ -37,8 +37,11 @@ func streamText(s string) <-chan backend.CompletionChunk {
 
 func TestNormalizeStagesAndPrompt(t *testing.T) {
 	stages, err := NormalizeStages(nil)
-	if err != nil || len(stages) != 6 {
+	if err != nil || len(stages) != 7 {
 		t.Fatalf("default stages len=%d err=%v", len(stages), err)
+	}
+	if stages[0].Kind != StageWorkspace {
+		t.Fatalf("expected workspace first, got %s", stages[0].Kind)
 	}
 	p := StagePrompt("ship fix", StageSpec{Kind: StageCritic, Prompt: "Grade it."}, "prior note", EvalSpec{Goal: "tests pass"})
 	if !strings.Contains(p, "Eval: tests pass") || !strings.Contains(p, "[stage:critic]") {
@@ -247,8 +250,17 @@ func TestManagerFailStop(t *testing.T) {
 
 func TestCatalog(t *testing.T) {
 	c := Catalog()
-	if len(c.Kinds) != 6 || len(c.Defaults) < 3 {
+	if len(c.Kinds) != 8 || len(c.Defaults) < 3 {
 		t.Fatalf("%+v", c)
+	}
+	found := false
+	for _, k := range c.Kinds {
+		if k == StageWorkspace {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing workspace kind: %+v", c.Kinds)
 	}
 }
 

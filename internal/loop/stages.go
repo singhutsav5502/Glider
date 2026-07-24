@@ -14,8 +14,18 @@ const (
 	StageActor     StageKind = "actor"      // implement / produce artifact
 	StageCritic    StageKind = "critic"     // maker/checker — emit eval score
 	StageMemory    StageKind = "memory"     // load/persist durable state (no LLM by default)
+	StageContext   StageKind = "context"    // early context hydrate (no LLM by default)
+	StageWorkspace StageKind = "workspace"  // bind run or existing work/out roots
 	StageRouter    StageKind = "router"     // which model/tools for following stages
 	StageHumanGate StageKind = "human_gate" // HITL pause node (first-class)
+)
+
+// WorkspaceMode selects how a workspace stage binds tool paths.
+type WorkspaceMode string
+
+const (
+	WorkspaceModeRun      WorkspaceMode = "run"      // ensure runs/<id>/{work,out}
+	WorkspaceModeExisting WorkspaceMode = "existing" // reuse path under tools workspace
 )
 
 // AutonomyLevel matches cobusgreyling L1–L3 rollout.
@@ -49,6 +59,12 @@ type StageSpec struct {
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
 	// Tools declares builtin / MCP / plugin capabilities on this node (internal/tools).
 	Tools []ToolRef `json:"tools,omitempty" yaml:"tools,omitempty"`
+	// WorkspaceMode: run (default) | existing — only for kind=workspace.
+	WorkspaceMode WorkspaceMode `json:"workspace_mode,omitempty" yaml:"workspace_mode,omitempty"`
+	// WorkspacePath is required when WorkspaceMode=existing (workspace-relative or abs under sandbox).
+	WorkspacePath string `json:"workspace_path,omitempty" yaml:"workspace_path,omitempty"`
+	// OutPath optionally overrides the out dir when mode=existing (else <workspace_path>/out).
+	OutPath string `json:"out_path,omitempty" yaml:"out_path,omitempty"`
 }
 
 // ToolRef is a node-declared MCP server or local plugin capability.
@@ -97,9 +113,24 @@ func (m *StageSpec) Normalize() error {
 	}
 	m.Kind = StageKind(strings.ToLower(string(m.Kind)))
 	switch m.Kind {
-	case StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate:
+	case StagePlanner, StageActor, StageCritic, StageMemory, StageContext, StageWorkspace, StageRouter, StageHumanGate:
 	default:
-		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|router|human_gate)", m.Kind)
+		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|context|workspace|router|human_gate)", m.Kind)
+	}
+	m.WorkspaceMode = WorkspaceMode(strings.ToLower(strings.TrimSpace(string(m.WorkspaceMode))))
+	m.WorkspacePath = strings.TrimSpace(m.WorkspacePath)
+	m.OutPath = strings.TrimSpace(m.OutPath)
+	if m.Kind == StageWorkspace {
+		switch m.WorkspaceMode {
+		case "", WorkspaceModeRun:
+			m.WorkspaceMode = WorkspaceModeRun
+		case WorkspaceModeExisting:
+			if m.WorkspacePath == "" {
+				return fmt.Errorf("module %s: workspace_path required when workspace_mode=existing", m.ID)
+			}
+		default:
+			return fmt.Errorf("module %s: workspace_mode must be run|existing", m.ID)
+		}
 	}
 	for i := range m.Tools {
 		m.Tools[i].Name = strings.TrimSpace(m.Tools[i].Name)
@@ -175,6 +206,7 @@ func DefaultModules(goal string) []StageSpec {
 		goal = "complete the assigned task"
 	}
 	return []StageSpec{
+		{Kind: StageWorkspace, Name: "workspace", ID: "workspace", WorkspaceMode: WorkspaceModeRun},
 		{Kind: StageMemory, Name: "memory_load", ID: "memory_load"},
 		{Kind: StageRouter, Name: "router", ID: "router"},
 		{
@@ -243,9 +275,10 @@ type ModuleCatalog struct {
 // Catalog returns compose-UI metadata (pure data; no I/O).
 func Catalog() ModuleCatalog {
 	return ModuleCatalog{
-		Kinds:    []StageKind{StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate},
+		Kinds:    []StageKind{StageWorkspace, StagePlanner, StageActor, StageCritic, StageMemory, StageContext, StageRouter, StageHumanGate},
 		Defaults: DefaultModules("your recursive goal"),
-		Notes: "Loop Engineering hoop: compose Planner/Actor/Critic (+ Memory/Router/HumanGate). " +
+		Notes: "Loop Engineering hoop: compose Workspace/Planner/Actor/Critic (+ Memory/Context/Router/HumanGate). " +
+			"Workspace binds runs/<id>/{work,out} or an existing path under ~/.glider/workspace. " +
 			"Interval/cron is optional Automations heartbeat — not the definition of the loop. " +
 			"Runtime is an AI-first state machine (graph|tree|loop|swarm). " +
 			"See planning/loop_engineering.md and internal/statemachine.",

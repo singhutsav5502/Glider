@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/tools"
 )
 
 // RoutePref selects how each iteration hits the shared harness.
@@ -162,6 +163,31 @@ type StageOutcome struct {
 	Model   string `json:"model,omitempty"`
 }
 
+// WorkspaceBinding records the work/out association for a hoop or swarm run.
+type WorkspaceBinding struct {
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	WorkRel       string `json:"work_rel,omitempty"`
+	OutRel        string `json:"out_rel,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
+	OutDir        string `json:"out_dir,omitempty"`
+	Mode          string `json:"mode,omitempty"` // run|existing
+	RunID         string `json:"run_id,omitempty"`
+}
+
+// FromToolsLayout copies fields from a tools.RunLayout.
+func (b *WorkspaceBinding) FromToolsLayout(l tools.RunLayout) {
+	if b == nil {
+		return
+	}
+	b.WorkspaceRoot = l.WorkspaceRoot
+	b.WorkRel = l.WorkRel
+	b.OutRel = l.OutRel
+	b.WorkDir = l.WorkDir
+	b.OutDir = l.OutDir
+	b.Mode = l.Mode
+	b.RunID = l.RunID
+}
+
 // LoopState is persisted under ~/.glider/loops/<id>.json.
 type LoopState struct {
 	Spec          LoopSpec                  `json:"spec"`
@@ -181,6 +207,8 @@ type LoopState struct {
 	Cursor        MachineCursor             `json:"cursor,omitempty"`
 	// Spend tracks governance budget consumption for this hoop.
 	Spend         BudgetSpend               `json:"spend,omitempty"`
+	// Workspace is the run-associated work/out binding (set on start / workspace stage).
+	Workspace     WorkspaceBinding          `json:"workspace,omitempty"`
 	StartedAt     *time.Time                `json:"started_at,omitempty"`
 	StoppedAt     *time.Time                `json:"stopped_at,omitempty"`
 	UpdatedAt     time.Time                 `json:"updated_at"`

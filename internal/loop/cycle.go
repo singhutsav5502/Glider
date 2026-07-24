@@ -226,13 +226,37 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 			break
 		}
 
+		// Workspace bind (early, like context) — no LLM by default.
+		if mod.Kind == StageWorkspace {
+			layout, werr := m.applyWorkspaceStage(st, mod)
+			text := layout.PromptHint()
+			sr := StageResult{Kind: StageWorkspace, ModuleID: mod.ID, Text: text}
+			if werr != nil {
+				sr.Err = werr.Error()
+				stages = append(stages, sr)
+				cycleErr = werr
+				break
+			}
+			_ = m.Store.Save(st)
+			if m.Logs != nil {
+				m.Logs.Info(agentlog.ScopeHoop, st.Spec.ID, "workspace",
+					fmt.Sprintf("mode=%s work=%s out=%s", layout.Mode, layout.WorkRel, layout.OutRel),
+					map[string]string{
+						"mode": layout.Mode, "work_rel": layout.WorkRel, "out_rel": layout.OutRel,
+					})
+			}
+			stages = append(stages, sr)
+			continue
+		}
+
 		// Node tools — parallel invoke + feed results into the model prompt / agent loop.
 		var toolBlock string
 		var refs []tools.Ref
+		toolCtx := m.toolContext(ctx, st)
 		if len(mod.Tools) > 0 && m.Tools != nil {
 			refs = m.filterToolRefs(st, mod.Tools)
 			if len(refs) > 0 && !st.Spend.SoftHit {
-				toolResults := m.Tools.InvokeAllParallel(ctx, refs, goal)
+				toolResults := m.Tools.InvokeAllParallel(toolCtx, refs, goal)
 				toolBlock = tools.FormatToolResults(toolResults)
 				for _, tr := range toolResults {
 					msg := tr.Name + " ok=" + fmt.Sprintf("%t", tr.OK)
@@ -287,8 +311,8 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		}
 
 		switch mod.Kind {
-		case StageMemory:
-			stages = append(stages, StageResult{Kind: StageMemory, ModuleID: mod.ID, Text: "ok"})
+		case StageMemory, StageContext:
+			stages = append(stages, StageResult{Kind: mod.Kind, ModuleID: mod.ID, Text: "ok"})
 			continue
 		case StageRouter:
 			lastRoute = EffectiveRoute(st.Spec, st.Hoop, m.learningCfg(st))
@@ -328,7 +352,7 @@ func (m *Manager) runCycle(ctx context.Context, st *LoopState) (CycleResult, str
 		if mod.Parallel > 1 && (mod.Kind == StageActor || mod.Kind == StagePlanner) {
 			text, tokens, used, err = m.completeParallel(ctx, st, mod, route, reqID, turnID, prompt)
 		} else if len(refs) > 0 && m.Tools != nil {
-			text, tokens, used, err = m.completeWithTools(ctx, st, route, reqID, turnID, prompt, mod.Model, refs)
+			text, tokens, used, err = m.completeWithTools(toolCtx, st, route, reqID, turnID, prompt, mod.Model, refs)
 		} else {
 			text, tokens, used, err = m.completeOnce(ctx, st, route, reqID, turnID, prompt, mod.Model)
 		}
@@ -670,6 +694,13 @@ func (m *Manager) stagePrompt(st *LoopState, mod ModuleSpec, goal, plan, actor s
 		b.WriteString("\n\nACTOR_OUTPUT:\n")
 		b.WriteString(truncate(actor, 4000))
 	}
+	if st.Workspace.WorkRel != "" && (mod.Kind == StageActor || mod.Kind == StagePlanner) {
+		b.WriteString("\n\n")
+		b.WriteString(tools.RunLayout{
+			WorkRel: st.Workspace.WorkRel,
+			OutRel:  st.Workspace.OutRel,
+		}.PromptHint())
+	}
 	return b.String()
 }
 
@@ -861,6 +892,8 @@ func (m *Manager) setProgress(st *LoopState, phase string, mod ModuleSpec, idx, 
 
 func stagePhase(k StageKind) string {
 	switch k {
+	case StageWorkspace, StageContext:
+		return "observe"
 	case StageMemory:
 		return "observe"
 	case StageRouter:
