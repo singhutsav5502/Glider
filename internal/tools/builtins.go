@@ -24,6 +24,7 @@ func StandardBuiltins(opts Options) []Builtin {
 		&fsList{root: root},
 		&fsSearch{root: root},
 		&codeGrep{root: root},
+		&artifactWrite{root: root},
 		&shellExec{root: root, allow: opts.AllowShell, allowList: opts.ShellAllow},
 		&httpFetch{allowHosts: opts.AllowHosts},
 		&gitStatus{root: root},
@@ -34,6 +35,18 @@ func StandardBuiltins(opts Options) []Builtin {
 		&datetimeTool{},
 		&calculatorTool{},
 	}
+}
+
+// resolveToolPath scopes rel under the active run layout (ctx) when present.
+// Bare paths → work; kind=out → out. Without a layout, joins under root only.
+func resolveToolPath(ctx context.Context, root, rel string, kind ArtifactKind) (string, error) {
+	if l, ok := RunLayoutFrom(ctx); ok {
+		return l.ResolveAbs(rel, kind)
+	}
+	if root == "" {
+		root = DefaultWorkspaceDir()
+	}
+	return safeJoin(root, rel)
 }
 
 func safeJoin(root, rel string) (string, error) {
@@ -64,8 +77,8 @@ func (t *fsRead) Description() string { return "Read a UTF-8 text file under the
 func (t *fsRead) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)
 }
-func (t *fsRead) Call(_ context.Context, input string, _ json.RawMessage) (Result, error) {
-	path, err := safeJoin(t.root, firstField(input))
+func (t *fsRead) Call(ctx context.Context, input string, _ json.RawMessage) (Result, error) {
+	path, err := resolveToolPath(ctx, t.root, firstField(input), RelWork)
 	if err != nil {
 		return fail(t.Name(), err)
 	}
@@ -86,9 +99,9 @@ func (t *fsWrite) Description() string { return "Write a text file under the wor
 func (t *fsWrite) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)
 }
-func (t *fsWrite) Call(_ context.Context, input string, _ json.RawMessage) (Result, error) {
+func (t *fsWrite) Call(ctx context.Context, input string, _ json.RawMessage) (Result, error) {
 	pathLine, content, _ := strings.Cut(input, "\n")
-	path, err := safeJoin(t.root, strings.TrimSpace(pathLine))
+	path, err := resolveToolPath(ctx, t.root, strings.TrimSpace(pathLine), RelWork)
 	if err != nil {
 		return fail(t.Name(), err)
 	}
@@ -108,8 +121,8 @@ func (t *fsList) Description() string { return "List directory entries under the
 func (t *fsList) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)
 }
-func (t *fsList) Call(_ context.Context, input string, _ json.RawMessage) (Result, error) {
-	path, err := safeJoin(t.root, firstField(input))
+func (t *fsList) Call(ctx context.Context, input string, _ json.RawMessage) (Result, error) {
+	path, err := resolveToolPath(ctx, t.root, firstField(input), RelWork)
 	if err != nil {
 		return fail(t.Name(), err)
 	}
@@ -211,6 +224,86 @@ func (t *codeGrep) Call(_ context.Context, input string, _ json.RawMessage) (Res
 	return ok(t.Name(), strings.Join(hits, "\n")), nil
 }
 
+type artifactWrite struct{ root string }
+
+func (t *artifactWrite) Name() string { return "artifact_write" }
+func (t *artifactWrite) Description() string {
+	return "Write a file under run work (default) or out (kind=out). Input: path\\ncontent, or JSON {path,content,kind}."
+}
+func (t *artifactWrite) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["work","out"]}},"required":["path","content"]}`)
+}
+func (t *artifactWrite) Call(ctx context.Context, input string, args json.RawMessage) (Result, error) {
+	pathStr, content, kind := "", "", RelWork
+	parseObj := func(raw []byte) bool {
+		var m struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+			Kind    string `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil || strings.TrimSpace(m.Path) == "" {
+			return false
+		}
+		pathStr, content = m.Path, m.Content
+		if strings.TrimSpace(m.Kind) != "" {
+			kind = ArtifactKind(strings.ToLower(strings.TrimSpace(m.Kind)))
+		}
+		return true
+	}
+	if len(args) > 0 && string(args) != "null" && parseObj(args) {
+		// ok
+	} else if strings.TrimSpace(input) != "" && strings.HasPrefix(strings.TrimSpace(input), "{") && parseObj([]byte(input)) {
+		// JSON in input string (agent loop)
+	} else {
+		pathLine, body, _ := strings.Cut(input, "\n")
+		pathStr = strings.TrimSpace(pathLine)
+		content = body
+		// Optional first-line: kind=out path=foo.md
+		if strings.Contains(pathStr, "kind=") || strings.HasPrefix(strings.ToLower(pathStr), "out ") {
+			fields := strings.Fields(pathStr)
+			var pathParts []string
+			for _, f := range fields {
+				low := strings.ToLower(f)
+				if strings.HasPrefix(low, "kind=") {
+					kind = ArtifactKind(strings.TrimPrefix(low, "kind="))
+					continue
+				}
+				if low == "out" {
+					kind = RelOut
+					continue
+				}
+				if strings.HasPrefix(low, "path=") {
+					pathParts = append(pathParts, strings.TrimPrefix(f, "path="))
+					continue
+				}
+				pathParts = append(pathParts, f)
+			}
+			pathStr = strings.Join(pathParts, " ")
+		}
+	}
+	if strings.TrimSpace(pathStr) == "" {
+		return fail(t.Name(), fmt.Errorf("path required"))
+	}
+	if kind != RelOut && kind != RelWork {
+		if kind == "output" {
+			kind = RelOut
+		} else {
+			kind = RelWork
+		}
+	}
+	path, err := resolveToolPath(ctx, t.root, pathStr, kind)
+	if err != nil {
+		return fail(t.Name(), err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fail(t.Name(), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fail(t.Name(), err)
+	}
+	return ok(t.Name(), fmt.Sprintf("wrote %s (%s)", path, kind)), nil
+}
+
 type shellExec struct {
 	root      string
 	allow     bool
@@ -236,8 +329,12 @@ func (t *shellExec) Call(ctx context.Context, input string, _ json.RawMessage) (
 		return fail(t.Name(), fmt.Errorf("command %q not allowlisted", cmdName))
 	}
 	c := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	if t.root != "" {
-		c.Dir = t.root
+	dir := t.root
+	if work, err := resolveToolPath(ctx, t.root, ".", RelWork); err == nil {
+		dir = work
+	}
+	if dir != "" {
+		c.Dir = dir
 	}
 	out, err := c.CombinedOutput()
 	text := string(out)
@@ -347,8 +444,11 @@ func (t *gitClone) Call(ctx context.Context, input string, _ json.RawMessage) (R
 	if len(fields) > 1 {
 		dir = fields[1]
 	}
-	dest, err := safeJoin(t.root, dir)
+	dest, err := resolveToolPath(ctx, t.root, dir, RelWork)
 	if err != nil {
+		return fail(t.Name(), err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fail(t.Name(), err)
 	}
 	c := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, dest)

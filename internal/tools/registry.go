@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -81,13 +82,22 @@ type Options struct {
 
 // Registry unifies native + MCP + plugin tools.
 type Registry struct {
-	mu       sync.RWMutex
-	opts     Options
-	builtins map[string]Builtin
+	mu        sync.RWMutex
+	opts      Options
+	builtins  map[string]Builtin
+	runID     string
+	layout    RunLayout
+	hasLayout bool
 }
 
 // NewRegistry builds a registry and registers the standard builtin set.
 func NewRegistry(opts Options) *Registry {
+	if strings.TrimSpace(opts.Workspace) == "" {
+		opts.Workspace = DefaultWorkspaceDir()
+	}
+	if abs, err := filepath.Abs(opts.Workspace); err == nil {
+		opts.Workspace = abs
+	}
 	r := &Registry{
 		opts:     opts,
 		builtins: make(map[string]Builtin),
@@ -96,6 +106,145 @@ func NewRegistry(opts Options) *Registry {
 		r.builtins[b.Name()] = b
 	}
 	return r
+}
+
+// Workspace returns the sandbox root (typically ~/.glider/workspace).
+func (r *Registry) Workspace() string {
+	if r == nil {
+		return DefaultWorkspaceDir()
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.opts.Workspace
+}
+
+// SetRunID records the active run id (hoop id / swarm turn id) without creating dirs.
+func (r *Registry) SetRunID(id string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.runID = sanitizeRunID(id)
+	r.mu.Unlock()
+}
+
+// RunID returns the last SetRunID / EnsureRunLayout id.
+func (r *Registry) RunID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.runID
+}
+
+// EnsureRunLayout creates runs/<run_id>/{work,out} under the workspace and
+// records the association on the registry (fallback when ctx has no layout).
+func (r *Registry) EnsureRunLayout(runID string) (RunLayout, error) {
+	if r == nil {
+		return RunLayout{}, fmt.Errorf("nil registry")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	root := r.opts.Workspace
+	if root == "" {
+		root = DefaultWorkspaceDir()
+		r.opts.Workspace = root
+	}
+	layout := LayoutForRun(root, runID)
+	if err := layout.Ensure(); err != nil {
+		return RunLayout{}, err
+	}
+	r.runID = layout.RunID
+	r.layout = layout
+	r.hasLayout = true
+	return layout, nil
+}
+
+// BindLayout installs a pre-validated layout (e.g. workspace stage mode=existing).
+func (r *Registry) BindLayout(layout RunLayout) error {
+	if r == nil {
+		return fmt.Errorf("nil registry")
+	}
+	if err := layout.Ensure(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if layout.WorkspaceRoot != "" {
+		r.opts.Workspace = layout.WorkspaceRoot
+	}
+	if layout.RunID != "" {
+		r.runID = layout.RunID
+	}
+	r.layout = layout
+	r.hasLayout = true
+	return nil
+}
+
+// BindExisting resolves workspace_path (+ optional out_path) under the sandbox
+// and binds it as the active work/out roots for subsequent tool calls.
+func (r *Registry) BindExisting(runID, workPath, outPath string) (RunLayout, error) {
+	if r == nil {
+		return RunLayout{}, fmt.Errorf("nil registry")
+	}
+	root := r.Workspace()
+	layout, err := LayoutExisting(root, runID, workPath, outPath)
+	if err != nil {
+		return RunLayout{}, err
+	}
+	if err := r.BindLayout(layout); err != nil {
+		return RunLayout{}, err
+	}
+	return layout, nil
+}
+
+// CurrentLayout returns the registry-bound layout, if any.
+func (r *Registry) CurrentLayout() (RunLayout, bool) {
+	if r == nil {
+		return RunLayout{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.hasLayout {
+		return RunLayout{}, false
+	}
+	return r.layout, true
+}
+
+// ClearRunLayout drops the fallback layout association.
+func (r *Registry) ClearRunLayout() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.hasLayout = false
+	r.layout = RunLayout{}
+	r.runID = ""
+	r.mu.Unlock()
+}
+
+// ActiveLayout prefers ctx-bound layout, then registry fallback.
+func (r *Registry) ActiveLayout(ctx context.Context) (RunLayout, bool) {
+	if l, ok := RunLayoutFrom(ctx); ok {
+		return l, true
+	}
+	return r.CurrentLayout()
+}
+
+// ResolvePath scopes a tool path (bare → work; kind=out → out) and safeJoins under workspace.
+func (r *Registry) ResolvePath(ctx context.Context, rel string, kind ArtifactKind) (string, error) {
+	root := ""
+	if r != nil {
+		root = r.Workspace()
+	}
+	if root == "" {
+		root = DefaultWorkspaceDir()
+	}
+	if l, ok := r.ActiveLayout(ctx); ok {
+		return l.ResolveAbs(rel, kind)
+	}
+	return safeJoin(root, strings.TrimSpace(rel))
 }
 
 // RegisterBuiltin adds or replaces a native tool.
@@ -253,6 +402,7 @@ func StandardNames() []string {
 	return []string{
 		"fs_read", "fs_write", "fs_list", "fs_search",
 		"code_grep",
+		"artifact_write",
 		"shell_exec",
 		"http_fetch",
 		"git_status", "git_diff", "git_log", "git_clone",
