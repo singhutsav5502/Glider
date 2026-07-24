@@ -17,7 +17,7 @@ server:
 thresholds:
   max_local_context_tokens: 8000
   idle_unload_timeout: "5m"
-  request_timeout: "120s"
+  request_timeout: "10m"
 vram:
   strategy: "hybrid"
   headroom_mb: 512

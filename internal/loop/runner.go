@@ -12,6 +12,8 @@ import (
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/plugin"
+	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
@@ -28,6 +30,12 @@ type RunnerConfig struct {
 	Hoop         HoopLearningConfig
 	DefaultRoute RoutePref // used when spec.Route empty; default local
 	OutcomeRing  int
+	// DefaultMaxTokens is max_tokens / Ollama num_predict for hoop Completes (0 → DefaultCompletionMaxTokens).
+	DefaultMaxTokens int
+	// SkillsDir is an optional search root for SKILL.md / skill-id resolution (in addition to tools workspace + cwd).
+	SkillsDir string
+	// Worktrees enables parallel-worker isolation (git worktree when repo is git, else subdirs under runs/<id>/work/wN).
+	Worktrees bool
 }
 
 // Manager owns CRUD + start/stop for Loop Engineering hoops.
@@ -35,13 +43,17 @@ type Manager struct {
 	mu       sync.Mutex
 	Store    *Store
 	Complete Completer
-	Graph    *contextgraph.Store
+	Graph    LoopGraphSink
 	Cfg      RunnerConfig
 	Episodes *contextkit.Store // optional episode ring
 	// Logs is optional per-hoop agent activity (independent ring per hoop id).
 	Logs *agentlog.Store
 	// Tools is the unified builtin/MCP/plugin registry for node tool refs.
 	Tools *tools.Registry
+	// Plugins optional CapHooks registry (enter/exit stage). Nil → no-op.
+	Plugins plugin.Registry
+	// Swarm optional nested runner for parallel_mode: swarm stages.
+	Swarm *swarm.Runner
 	// BudgetCheck optional FinOps hook; nil → always OK.
 	BudgetCheck func(*LoopState) bool
 
@@ -54,7 +66,7 @@ type runnerHandle struct {
 }
 
 // NewManager wires persistence + harness.
-func NewManager(store *Store, completer Completer, graph *contextgraph.Store, cfg RunnerConfig) *Manager {
+func NewManager(store *Store, completer Completer, graph LoopGraphSink, cfg RunnerConfig) *Manager {
 	if store == nil {
 		store = NewStore("")
 	}
@@ -135,6 +147,54 @@ func (m *Manager) Get(id string) (*LoopState, error) {
 // List returns all hoops.
 func (m *Manager) List() ([]LoopState, error) {
 	return m.Store.List()
+}
+
+// ClearResults wipes outcomes / live stage dumps / last error for one hoop (must not be running).
+func (m *Manager) ClearResults(id string) (*LoopState, error) {
+	st, err := m.Store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if st.Status == StatusRunning || st.Status == StatusWaitingHuman {
+		return nil, fmt.Errorf("stop or finish hoop %q before clearing results", id)
+	}
+	st.Outcomes = nil
+	st.LiveStages = nil
+	st.Artifacts = nil
+	st.LastError = ""
+	st.LastEvalScore = 0
+	st.ConsecutiveOK = 0
+	st.ConsecutiveFail = 0
+	st.Progress = CycleProgress{}
+	st.UpdatedAt = time.Now().UTC()
+	if err := m.Store.Save(st); err != nil {
+		return nil, err
+	}
+	if m.Logs != nil {
+		m.Logs.Clear(agentlog.ScopeHoop, id)
+	}
+	return st, nil
+}
+
+// ClearAllResults clears outcomes for every non-running hoop and all agent log rings for hoops.
+func (m *Manager) ClearAllResults() (cleared int, skipped []string, err error) {
+	list, err := m.Store.List()
+	if err != nil {
+		return 0, nil, err
+	}
+	for i := range list {
+		id := list[i].Spec.ID
+		if list[i].Status == StatusRunning || list[i].Status == StatusWaitingHuman {
+			skipped = append(skipped, id)
+			continue
+		}
+		if _, e := m.ClearResults(id); e != nil {
+			skipped = append(skipped, id)
+			continue
+		}
+		cleared++
+	}
+	return cleared, skipped, nil
 }
 
 // Start begins engineering cycles until stop, eval pass, max iterations, or fail policy.

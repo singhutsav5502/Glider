@@ -47,17 +47,30 @@ stages:
       4) Explicit rollback vs mitigate fork criteria
       5) Decision deadline (minutes from now)
       Do not invent metrics. Flag unknowns as UNKNOWN.
+  - id: context_seed
+    kind: context
+    name: Seed shared IC context
   - id: parallel_actors
     kind: actor
     name: Parallel IC workstreams
     parallel: 3
+    # Default parallel_mode is fanout. Optional nested swarm:
+    # parallel_mode: swarm
     roles: [exec, research, plan]
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       You are one workstream lead under the IC PLAN. Stay in your role:
       - exec: Immediate mitigations + rollback commands (feature flag, pool, traffic shed)
       - research: Evidence checklist (DB, flag, deploy, PII exposure) and what to pull next
       - plan: Stakeholder matrix + status-page / exec update drafts
       Follow the PLAN. Cite only provided facts. Keep each workstream section under 180 words.
+      Prefer context_query / [context_digest] for shared goal/plan — do not re-plan from scratch.
+      Persist your section with artifact_write kind=out (e.g. out stream-<role>.md) under
+      runs/enterprise-incident-command/out/ (bare paths ScopeRel to work/).
       Label your section with ROLE: <name>.
   - id: safety_critic
     kind: critic
@@ -83,6 +96,10 @@ graph_edges:
     kind: flow
   - id: e3
     source: commander_plan
+    target: context_seed
+    kind: flow
+  - id: e3b
+    source: context_seed
     target: parallel_actors
     kind: flow
   - id: e4

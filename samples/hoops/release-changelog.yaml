@@ -33,9 +33,17 @@ stages:
     kind: planner
     name: Checklist plan
     prompt: Plan release checklist sections (tests, docs, samples, config flags) then changelog structure.
+  - id: context_seed
+    kind: context
+    name: Seed shared release context
   - id: actor
     kind: actor
     name: Draft changelog
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       Follow the PLAN. Output:
       ## Checklist
@@ -44,6 +52,9 @@ stages:
       ### Added
       ### Changed
       ### Fixed
+      Prefer context_query / [context_digest] for shared goal/plan.
+      Persist with artifact_write kind=out under runs/release-changelog/out/
+      (bare paths ScopeRel to work/).
   - id: critic
     kind: critic
     name: Release gate
@@ -58,7 +69,8 @@ stages:
 graph_edges:
   - { id: e1, source: memory_load, target: router, kind: flow }
   - { id: e2, source: router, target: planner, kind: flow }
-  - { id: e3, source: planner, target: actor, kind: flow }
+  - { id: e3, source: planner, target: context_seed, kind: flow }
+  - { id: e3b, source: context_seed, target: actor, kind: flow }
   - { id: e4, source: actor, target: critic, kind: flow }
   - { id: e5, source: critic, target: memory_persist, kind: flow }
   - { id: fb1, source: critic, target: actor, kind: feedback }

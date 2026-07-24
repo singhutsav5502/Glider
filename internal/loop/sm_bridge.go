@@ -203,12 +203,14 @@ func relevancyHint(evalScore float64, evalPass bool, route RoutePref, eventCount
 
 func openGate(st *LoopState, mod StageSpec, reason string) {
 	now := time.Now().UTC()
+	ask := buildHITLAsk(st, reason)
 	st.Status = StatusWaitingHuman
 	st.Gate = GateRequest{
 		Active:    true,
 		StageID:   mod.ID,
 		StageKind: string(mod.Kind),
 		Reason:    reason,
+		Ask:       ask,
 		Iteration: st.Iteration,
 		OpenedAt:  now,
 	}
@@ -219,6 +221,35 @@ func openGate(st *LoopState, mod StageSpec, reason string) {
 	st.Progress.Note = reason
 	st.Progress.UpdatedAt = now
 	st.UpdatedAt = now
+}
+
+// buildHITLAsk assembles the operator-facing review payload for a human gate.
+func buildHITLAsk(st *LoopState, reason string) string {
+	if st == nil {
+		return reason
+	}
+	var b strings.Builder
+	if reason != "" {
+		b.WriteString(reason)
+	} else {
+		b.WriteString("Human approval required")
+	}
+	if st.Cursor.CriticText != "" {
+		b.WriteString("\n\n--- CRITIC ---\n")
+		b.WriteString(truncate(st.Cursor.CriticText, hitlCriticCap))
+	}
+	if st.Cursor.ActorText != "" {
+		b.WriteString("\n\n--- ACTOR OUTPUT TO REVIEW ---\n")
+		b.WriteString(truncate(st.Cursor.ActorText, hitlActorCap))
+	}
+	if st.Cursor.PlanText != "" {
+		b.WriteString("\n\n--- PLAN ---\n")
+		b.WriteString(truncate(st.Cursor.PlanText, hitlPlanCap))
+	}
+	if b.Len() == 0 {
+		return "Human approval required"
+	}
+	return b.String()
 }
 
 func clearGateDecision(st *LoopState) {

@@ -44,6 +44,24 @@ func TestQueryWithFilters(t *testing.T) {
 	if opts.TurnID != "t1" || opts.Provenance != contextgraph.ProvenanceExtracted || opts.Keyword != "main" {
 		t.Fatalf("%+v", opts)
 	}
+	opts = contextgraph.ParseQueryInput("t1 key=clone_path")
+	if opts.Key != contextgraph.HoopKeyClonePath {
+		t.Fatalf("key parse: %+v", opts)
+	}
+}
+
+func TestQueryORAndHoopKeys(t *testing.T) {
+	s := contextgraph.New("")
+	s.RecordHoopContext("t1", contextgraph.HoopKeyGoal, "do the audit")
+	s.RecordHoopContext("t1", contextgraph.HoopKeyPlan, "clone then review")
+	q := s.Query("t1", "context_seed OR plan OR goal", 10)
+	if !strings.Contains(q, "goal") || !strings.Contains(q, "plan") {
+		t.Fatalf("OR: %s", q)
+	}
+	q2 := s.QueryWith(contextgraph.QueryOpts{TurnID: "t1", Kind: "note", Limit: 10})
+	if !strings.Contains(q2, "goal") {
+		t.Fatalf("kind=note: %s", q2)
+	}
 }
 
 func TestIndexFileTree(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/glider-ai/glider/internal/tools"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,6 +28,7 @@ type Template struct {
 	Decompose   bool        `json:"decompose,omitempty" yaml:"decompose,omitempty"`
 	FreeSpawn   bool        `json:"free_spawn,omitempty" yaml:"free_spawn,omitempty"`
 	SubTasks    []string    `json:"subtasks,omitempty" yaml:"subtasks,omitempty"`
+	Tools       []tools.Ref `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
 
 // Normalize fills defaults and validates.
@@ -135,7 +137,7 @@ func (s *TemplateStore) Get(id string) (*Template, error) {
 
 // flatHoopFile matches samples/swarms/*.yaml (fields at top level).
 type flatHoopFile struct {
-	Kind string `yaml:"kind"`
+	Kind     string `yaml:"kind"`
 	Template `yaml:",inline"`
 }
 

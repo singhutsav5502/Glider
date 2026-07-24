@@ -2,8 +2,16 @@ kind: swarm_template
 id: dual-review
 name: Dual review
 description: Plan + exec workers with critique merge (prefer_local).
-prompt: Review this change for correctness and naming. Keep each worker under 6 lines.
+prompt: |
+  Review this change for correctness and naming. Keep each worker under 6 lines.
+  Prefer context_query / [context_digest] for shared goal. Optional: artifact_write
+  kind=out under runs/<turn-id>/out/ (bare paths ScopeRel to work/).
 roles: [plan, exec]
 max_workers: 2
 prefer_local: true
 enabled: true
+tools:
+  - name: artifact_write
+    kind: builtin
+  - name: context_query
+    kind: builtin

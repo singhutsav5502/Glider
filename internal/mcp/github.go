@@ -16,6 +16,8 @@ GitHub MCP (live):
 HTTP (hosted):
   export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN
   # Glider: mcp.DefaultGitHubConfig() → Manager.Connect
+  # Sends Authorization + Mcp-Session-Id + MCP-Protocol-Version + X-MCP-Toolsets
+  # On 401/session 400: clear session, refresh token from env/file, re-initialize once
 
 Docker stdio (official image):
   docker pull ghcr.io/github/github-mcp-server
@@ -25,6 +27,7 @@ Docker stdio (official image):
   docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
 
 Never put the PAT in hoop YAML — use auth.token_env only.
+Manual hosted verify: Connect → tools source=live → get_me twice; Reconnect after PAT rotate.
 `
 
 // DefaultGitHubConfig returns a recommended ServerConfig for GitHub MCP HTTP.

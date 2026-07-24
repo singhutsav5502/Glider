@@ -5,68 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 )
-
-// OpenAIToolsJSON builds an OpenAI-compatible tools[] array from schemas / refs.
-func (r *Registry) OpenAIToolsJSON(ctx context.Context, refs []Ref) json.RawMessage {
-	if r == nil {
-		return json.RawMessage("[]")
-	}
-	var schemas []Schema
-	if len(refs) == 0 {
-		schemas = r.Catalog(ctx)
-	} else {
-		cat := r.Catalog(ctx)
-		byKey := map[string]Schema{}
-		for _, s := range cat {
-			byKey[s.Name+"|"+string(s.Kind)+"|"+s.Server] = s
-			byKey[s.Name] = s
-		}
-		for _, ref := range refs {
-			if s, ok := byKey[ref.Name+"|"+string(ref.Kind)+"|"+ref.Server]; ok {
-				schemas = append(schemas, s)
-				continue
-			}
-			if s, ok := byKey[ref.Name]; ok {
-				schemas = append(schemas, s)
-				continue
-			}
-			// Minimal schema for declared but unknown tools.
-			schemas = append(schemas, Schema{
-				Name: ref.Name, Kind: ref.Kind, Server: ref.Server,
-				Description: "declared tool " + ref.Name,
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}}}`),
-			})
-		}
-	}
-	type fn struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description,omitempty"`
-		Parameters  json.RawMessage `json:"parameters,omitempty"`
-	}
-	type tool struct {
-		Type     string `json:"type"`
-		Function fn     `json:"function"`
-	}
-	out := make([]tool, 0, len(schemas))
-	for _, s := range schemas {
-		params := s.InputSchema
-		if len(params) == 0 {
-			params = json.RawMessage(`{"type":"object","properties":{}}`)
-		}
-		out = append(out, tool{
-			Type: "function",
-			Function: fn{
-				Name:        s.Name,
-				Description: s.Description,
-				Parameters:  params,
-			},
-		})
-	}
-	b, _ := json.Marshal(out)
-	return b
-}
 
 // ToolCallDelta is a parsed model tool call (OpenAI-style).
 type ToolCallDelta struct {
@@ -78,10 +17,18 @@ type ToolCallDelta struct {
 // AgentLoopOpts configures the agentic tool loop.
 type AgentLoopOpts struct {
 	Refs     []Ref
-	MaxSteps int
+	MaxSteps int // model↔tool rounds; <=0 uses DefaultAgentLoopMaxSteps
 	// Complete is called with messages + tools JSON; returns assistant text and optional tool_calls.
 	Complete func(ctx context.Context, messages []map[string]any, toolsJSON json.RawMessage) (text string, calls []ToolCallDelta, err error)
 }
+
+// DefaultAgentLoopMaxSteps is used when AgentLoopOpts.MaxSteps <= 0.
+// Hoop stages override via completeWithTools (toolLoopMaxStepsStage / Parallel).
+const DefaultAgentLoopMaxSteps = 20
+
+// maxTruncatedToolJSONRetries caps "continue incomplete tool JSON" recovery rounds
+// so a stuck local model cannot burn the whole MaxSteps budget.
+const maxTruncatedToolJSONRetries = 2
 
 // AgentLoopResult is the final text plus all tool invocations.
 type AgentLoopResult struct {
@@ -101,18 +48,20 @@ func (r *Registry) RunAgentLoop(ctx context.Context, system, user string, opts A
 	}
 	max := opts.MaxSteps
 	if max <= 0 {
-		max = 8
+		max = DefaultAgentLoopMaxSteps
 	}
 	toolsJSON := r.OpenAIToolsJSON(ctx, opts.Refs)
 	messages := []map[string]any{
 		{"role": "system", "content": system},
 		{"role": "user", "content": user},
 	}
+	expanded := r.ExpandRefs(ctx, opts.Refs)
 	refByName := map[string]Ref{}
-	for _, ref := range opts.Refs {
+	for _, ref := range expanded {
 		refByName[ref.Name] = ref
 	}
 
+	truncatedRetries := 0
 	for step := 0; step < max; step++ {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -122,7 +71,27 @@ func (r *Registry) RunAgentLoop(ctx context.Context, system, user string, opts A
 			return out, err
 		}
 		out.Steps = step + 1
+		// Local models often print tool-call JSON as plain text instead of
+		// OpenAI tool_calls — recover and execute those so the loop continues.
 		if len(calls) == 0 {
+			calls = ParseTextToolCalls(text)
+		}
+		if len(calls) == 0 {
+			// Truncated artifact_write / TOOL_CALLS JSON must not become the "final answer".
+			if LooksLikeTruncatedToolJSON(text) && truncatedRetries < maxTruncatedToolJSONRetries && step+1 < max {
+				truncatedRetries++
+				messages = append(messages,
+					map[string]any{"role": "assistant", "content": text},
+					map[string]any{
+						"role": "user",
+						"content": "Your previous tool-call JSON was truncated mid-arguments (incomplete JSON). " +
+							"Re-emit ONE complete tool call as valid JSON only (full arguments), " +
+							"or finish with a plain-text stage answer if no further tools are needed. " +
+							"Do not repeat partial content or treat the truncated blob as final.",
+					},
+				)
+				continue
+			}
 			out.Text = text
 			return out, nil
 		}
@@ -143,31 +112,32 @@ func (r *Registry) RunAgentLoop(ctx context.Context, system, user string, opts A
 		messages = append(messages, asst)
 
 		for _, c := range calls {
-			ref, ok := refByName[c.Name]
+			name := strings.TrimSpace(c.Name)
+			if name == "*" {
+				name = "list_tools" // never CallTool("*")
+			}
+			ref, ok := refByName[name]
 			if !ok {
-				ref = Ref{Name: c.Name, Kind: KindBuiltin}
-			}
-			input := c.Arguments
-			if input == "" {
-				input = "{}"
-			}
-			// Prefer plain string "input" field when present.
-			var argsMap map[string]any
-			if json.Unmarshal([]byte(input), &argsMap) == nil {
-				if v, ok := argsMap["input"].(string); ok {
-					input = v
-				} else if v, ok := argsMap["path"].(string); ok && argsMap["content"] == nil {
-					input = v
-				} else if v, ok := argsMap["query"].(string); ok {
-					input = v
-				} else if v, ok := argsMap["command"].(string); ok {
-					input = v
-				} else if v, ok := argsMap["url"].(string); ok {
-					input = v
-				} else if v, ok := argsMap["expr"].(string); ok {
-					input = v
+				// Do not invent builtins from text-parsed JSON (e.g. parallel workers
+				// emitting git_clone / nested plan→git_clone when clone is not in refs).
+				// Rejection is soft: loop continues so the model can finish without that tool.
+				res := Result{
+					Name: name, Kind: KindBuiltin, OK: false,
+					Err: fmt.Sprintf(
+						"tool %q not allowed in this stage — continue with allowed tools or finish your answer; do not copy this rejection into the plan/report",
+						name,
+					),
 				}
+				out.Results = append(out.Results, res)
+				messages = append(messages, map[string]any{
+					"role":         "tool",
+					"tool_call_id": c.ID,
+					"name":         c.Name,
+					"content":      "error: " + res.Err,
+				})
+				continue
 			}
+			input := FlattenToolArgs(name, c.Arguments)
 			res, invErr := r.Invoke(ctx, ref, input)
 			if invErr != nil && res.Err == "" {
 				res.Err = invErr.Error()
@@ -186,76 +156,9 @@ func (r *Registry) RunAgentLoop(ctx context.Context, system, user string, opts A
 			})
 		}
 	}
-	out.Text = "tool loop budget exhausted"
+	out.Text = fmt.Sprintf(
+		"tool loop budget exhausted after %d steps (max %d); model kept requesting tools without a final answer — stop tools and emit the stage output (e.g. SCORE: x for critics)",
+		max, max,
+	)
 	return out, nil
-}
-
-// FormatToolResults builds a prompt injection block from Invoke results.
-func FormatToolResults(results []Result) string {
-	if len(results) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("[tool_results]\n")
-	for _, r := range results {
-		b.WriteString("- ")
-		b.WriteString(r.Name)
-		b.WriteString(" ok=")
-		b.WriteString(fmt.Sprintf("%t", r.OK))
-		if r.Stubbed {
-			b.WriteString(" stubbed")
-		}
-		b.WriteByte('\n')
-		out := r.Output
-		if len(out) > 4000 {
-			out = out[:4000] + "\n...truncated"
-		}
-		if out != "" {
-			b.WriteString(out)
-			b.WriteByte('\n')
-		}
-		if r.Err != "" {
-			b.WriteString("err: ")
-			b.WriteString(r.Err)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
-// InvokeAllParallel runs refs concurrently (bounded by GOMAXPROCS-ish wait group).
-func (r *Registry) InvokeAllParallel(ctx context.Context, refs []Ref, input string) []Result {
-	if r == nil || len(refs) == 0 {
-		return nil
-	}
-	out := make([]Result, len(refs))
-	var wg sync.WaitGroup
-	for i, ref := range refs {
-		wg.Add(1)
-		go func(i int, ref Ref) {
-			defer wg.Done()
-			res, err := r.Invoke(ctx, ref, input)
-			if err != nil && res.Err == "" {
-				res.Err = err.Error()
-				res.OK = false
-			}
-			out[i] = res
-		}(i, ref)
-	}
-	wg.Wait()
-	return out
-}
-
-// InvokeAll runs refs sequentially (kept for compatibility).
-func (r *Registry) InvokeAll(ctx context.Context, refs []Ref, input string) []Result {
-	var out []Result
-	for _, ref := range refs {
-		res, err := r.Invoke(ctx, ref, input)
-		if err != nil && res.Err == "" {
-			res.Err = err.Error()
-			res.OK = false
-		}
-		out = append(out, res)
-	}
-	return out
 }

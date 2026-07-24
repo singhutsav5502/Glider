@@ -10,36 +10,9 @@ import (
 	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/google/uuid"
 )
-
-// GraphContext is the dual-layer context surface used by multi-wave runs.
-// Implemented by *contextgraph.Store via dashboard adapters.
-type GraphContext interface {
-	Query(turnID, q string, limit int) string
-	PathSummary(turnID, from, to string) string
-	WaveOutputs(turnID string, waveIndex int, limit int) []string
-	RecordThreadWave(turnID, threadID string, waveIndex int, mergedID, mergedSummary string, workers []WaveWorkerOut)
-	RecordEpisodeFact(turnID, episodeID, label, summary string)
-	RecordSubtasks(turnID, threadID string, tasks []SubtaskOut)
-}
-
-// WaveWorkerOut is a graph-write DTO (avoids contextgraph importing swarm).
-type WaveWorkerOut struct {
-	WorkerID string
-	Role     string
-	Model    string
-	Summary  string
-	OK       bool
-}
-
-// SubtaskOut is a planner-decomposed subtask fact for the entity layer.
-type SubtaskOut struct {
-	Index  int
-	Prompt string
-	Target string
-	Model  string
-}
 
 // RunWavesRequest runs N sequential FanOut waves on one durable thread.
 // Wave N+1 seeds its prompt from prior wave outputs via the shared graph.
@@ -115,6 +88,7 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 		nWaves = 4
 	}
 	policy := NormalizeWeavePolicy(req.WeavePolicy)
+	r.setRunRoute(ResolveInferenceRoute(req.Route, req.PreferLocal))
 
 	base := req.RunRequest
 	if base.TemplateID != "" && r.Templates != nil {
@@ -138,6 +112,9 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 				for _, p := range tpl.SubTasks {
 					req.SubTasks = append(req.SubTasks, backend.SubTask{Prompt: p})
 				}
+			}
+			if len(base.Tools) == 0 && len(tpl.Tools) > 0 {
+				base.Tools = append([]tools.Ref(nil), tpl.Tools...)
 			}
 		}
 	}
@@ -272,6 +249,13 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 		if resp == nil {
 			return nil, err
 		}
+		r.patchLive(turnID, func(v *LiveRunView) {
+			v.ThreadID = threadID
+			v.Wave = w
+			v.Waves = endWave
+			v.Phase = "fanout"
+			v.Status = "running"
+		})
 		results := make([]Result, len(resp.Results))
 		for i, v := range resp.Results {
 			results[i] = Result{
@@ -389,6 +373,7 @@ func (r *Runner) RunWaves(ctx context.Context, req RunWavesRequest) (*RunRespons
 
 	lastProgress.Current = "weave"
 	lastProgress.PathTaken = append(append([]string{}, lastProgress.PathTaken...), "weave")
+	r.finishLive(turnID, true, lastProgress)
 	return &RunResponse{
 		TurnID:    turnID,
 		Summary:   summary,
@@ -417,7 +402,7 @@ func (r *Runner) weaveFinal(ctx context.Context, policy WeavePolicy, waveMerges 
 	if model == "" {
 		model = r.DefaultModel
 	}
-	text, err := r.CriticFn(ctx, LLMCriticPrompt(woven, waveMerges), model)
+	text, err := r.CriticFn(ctx, ApplyInferenceRoute(LLMCriticPrompt(woven, waveMerges), r.currentRunRoute()), model)
 	if err != nil || strings.TrimSpace(text) == "" {
 		if r.Logs != nil && err != nil {
 			r.Logs.Error(agentlog.ScopeSwarm, "", "llm_critic", "critic fail: "+truncate(err.Error(), 120), nil)
@@ -450,11 +435,11 @@ func (r *Runner) ResumeThread(ctx context.Context, threadID string, extraWaves i
 			Prompt: st.Goal,
 			TurnID: st.TurnID,
 		},
-		Waves:      extraWaves,
-		ThreadID:   threadID,
+		Waves:       extraWaves,
+		ThreadID:    threadID,
 		WeavePolicy: policy,
-		ResumeFrom: len(st.Waves),
-		Decompose:  false,
+		ResumeFrom:  len(st.Waves),
+		Decompose:   false,
 	}
 	for _, p := range st.SubTasks {
 		req.SubTasks = append(req.SubTasks, backend.SubTask{Prompt: p})

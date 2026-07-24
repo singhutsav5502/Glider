@@ -60,6 +60,55 @@ func TestFallback_LocalFailureCloudSuccess(t *testing.T) {
 	}
 }
 
+// Explicit /local must not fall through to BYOK cloud (hoop/swarm route=local).
+func TestFallback_ExplicitLocalSkipsCloud(t *testing.T) {
+	reg := backend.NewRegistry()
+	local := &mockBackend{
+		name:       "ollama",
+		typ:        backend.BackendTypeLocal,
+		healthy:    true,
+		completeFn: errorComplete(errors.New("local crash")),
+	}
+	cloud := &mockBackend{
+		name:       "openai",
+		typ:        backend.BackendTypeCloud,
+		healthy:    true,
+		completeFn: chunkStream("from cloud"),
+	}
+	_ = reg.Register(local)
+	_ = reg.Register(cloud)
+	registerModel(reg, "codellama:7b", "ollama", 4200)
+
+	exec := orchestrator.NewSimpleExecutor(orchestrator.SimpleExecutorConfig{
+		Registry:     reg,
+		VRAM:         newStubVRAM(),
+		CloudBackend: "openai",
+		CloudModel:   "gpt-4o",
+	})
+
+	decision := &backend.RoutingDecision{
+		Target:      "local",
+		BackendName: "ollama",
+		Model:       "codellama:7b",
+		RuleName:    "Explicit Local",
+	}
+	req := &backend.CompletionRequest{
+		Model:    "codellama:7b",
+		Messages: []backend.Message{{Role: "user", Content: "/local hi"}},
+	}
+
+	_, err := exec.Execute(context.Background(), decision, req)
+	if err == nil {
+		t.Fatal("expected error without cloud fallback")
+	}
+	if !strings.Contains(err.Error(), "local crash") {
+		t.Fatalf("want local crash in error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "openai") || strings.Contains(err.Error(), "from cloud") {
+		t.Fatalf("must not attempt openai on Explicit Local: %v", err)
+	}
+}
+
 // T3.6.2 — Both local and cloud fail → error to caller
 func TestFallback_BothFailReturns502(t *testing.T) {
 	reg := backend.NewRegistry()

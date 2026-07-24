@@ -17,22 +17,40 @@ import (
 
 // Backend implements InferenceBackend, ModelManager, and HealthChecker for Ollama.
 type Backend struct {
-	baseURL    string
-	client     *http.Client
-	healthy    atomic.Bool
-	name       string
+	baseURL string
+	client  *http.Client
+	healthy atomic.Bool
+	name    string
 }
 
 func New(baseURL string) *Backend {
+	return NewWithTimeout(baseURL, 10*time.Minute)
+}
+
+// NewWithTimeout builds an Ollama backend with an explicit HTTP client timeout.
+// Local 14b + tool loops routinely exceed 2 minutes awaiting first tokens; default is 10m.
+// Wired from thresholds.request_timeout in glider.yaml (see registerBackends).
+func NewWithTimeout(baseURL string, timeout time.Duration) *Backend {
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
 	b := &Backend{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: timeout,
 		},
 		name: "ollama",
 	}
 	b.healthy.Store(false)
 	return b
+}
+
+// SetRequestTimeout updates the HTTP client timeout used for Complete / LoadModel / etc.
+func (b *Backend) SetRequestTimeout(timeout time.Duration) {
+	if b == nil || timeout <= 0 {
+		return
+	}
+	b.client = &http.Client{Timeout: timeout}
 }
 
 func (b *Backend) Name() string              { return b.name }
@@ -46,6 +64,17 @@ var (
 )
 
 func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+	ch, err := b.complete(ctx, req)
+	// Schema format is version-dependent; fall back to format:"json" once.
+	if err != nil && req != nil && len(bytes.TrimSpace(req.Format)) > 0 && !backend.FormatIsJSONMode(req.Format) && isFormatUnsupported(err) {
+		fallback := *req
+		fallback.Format = backend.CriticEvalFormatJSON()
+		return b.complete(ctx, &fallback)
+	}
+	return ch, err
+}
+
+func (b *Backend) complete(ctx context.Context, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	body := map[string]any{
 		"model":    req.Model,
 		"messages": req.Messages,
@@ -62,6 +91,8 @@ func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) 
 	// error → FallbackChain tries BYOK cloud (documented Path A fallback).
 	// Stream tool_calls are parsed via ParseOpenAIStreamPayload (M2 bridge).
 	backend.AttachTools(body, req)
+	// Ollama structured outputs: native format ("json" | JSON schema) + OpenAI response_format.
+	backend.AttachFormat(body, req)
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -111,6 +142,18 @@ func (b *Backend) Complete(ctx context.Context, req *backend.CompletionRequest) 
 		}
 	}()
 	return ch, nil
+}
+
+func isFormatUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "format") ||
+		strings.Contains(msg, "json_schema") ||
+		strings.Contains(msg, "response_format") ||
+		strings.Contains(msg, "structured") ||
+		strings.Contains(msg, "invalid schema")
 }
 
 func (b *Backend) LoadModel(ctx context.Context, model string, opts backend.LoadOptions) error {

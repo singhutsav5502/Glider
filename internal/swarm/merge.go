@@ -7,6 +7,13 @@ import (
 	"github.com/glider-ai/glider/internal/contextkit"
 )
 
+// Per-worker / merge retention for audit-sized fan-out text (hard caps).
+const (
+	mergeWorkerSummaryCap  = 16000
+	mergeFailNoteCap       = 800
+	orchestratorSummaryCap = 32000
+)
+
 // MergeResults is a callable weave stub: concatenates episode summaries into one
 // Episode. Not full Slate thread-weaving — enough for FanOutExecutor text merge.
 func MergeResults(results []Result) contextkit.Episode {
@@ -29,7 +36,7 @@ func MergeResults(results []Result) contextkit.Episode {
 			sum = strings.TrimSpace(strings.Join(r.Episode.Artifacts, " "))
 		}
 		if sum != "" {
-			parts = append(parts, fmt.Sprintf("[%s] %s", label, truncate(sum, 160)))
+			parts = append(parts, fmt.Sprintf("[%s] %s", label, truncate(sum, mergeWorkerSummaryCap)))
 		}
 		tokens += r.Episode.Tokens
 		artifacts = append(artifacts, r.Episode.Artifacts...)
@@ -72,7 +79,7 @@ func CritiqueMerge(results []Result) contextkit.Episode {
 			if label == "" {
 				label = string(r.Role)
 			}
-			failNotes = append(failNotes, fmt.Sprintf("%s:%s", label, truncate(r.Err.Error(), 48)))
+			failNotes = append(failNotes, fmt.Sprintf("%s:%s", label, truncate(r.Err.Error(), mergeFailNoteCap)))
 			continue
 		}
 		sum := strings.TrimSpace(r.Episode.Summary)
@@ -126,7 +133,7 @@ func OrchestratorSummary(merged contextkit.Episode, results []Result) string {
 	if sum == "" {
 		sum = fmt.Sprintf("swarm %d ok / %d fail", ok, fail)
 	}
-	return fmt.Sprintf("swarm[%d/%d] %s", ok, ok+fail, truncate(sum, 240))
+	return fmt.Sprintf("swarm[%d/%d] %s", ok, ok+fail, truncate(sum, orchestratorSummaryCap))
 }
 
 // MergeTexts concatenates non-empty worker text blobs (gateway SSE merge helper).

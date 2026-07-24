@@ -6,6 +6,7 @@
     hoops: document.getElementById("panel-hoops"),
     graphs: document.getElementById("panel-graphs"),
     mcp: document.getElementById("panel-mcp"),
+    workspace: document.getElementById("panel-workspace"),
     settings: document.getElementById("panel-settings"),
   };
 
@@ -61,6 +62,7 @@
     }
     if (name === "overview") loadSessions();
     if (name === "mcp") refreshMCPPanel();
+    if (name === "workspace") refreshWorkspacePanel();
   }
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -73,10 +75,353 @@
 
   const logEl = document.getElementById("request-log");
 
+  /** @type {Record<string, { title: string, body?: string, values?: { v: string, d: string }[] }>} */
+  const TIP_CATALOG = {
+    "hoop-name": { title: "Hoop name", body: "Display name for this hoop. Used in the manager list and logs." },
+    "hoop-interval": {
+      title: "Heartbeat",
+      body: "Optional delay between hoop cycles. Empty = run without waiting.",
+      values: [
+        { v: "5m", d: "Five minutes between cycles" },
+        { v: "30s", d: "Thirty seconds" },
+        { v: "(empty)", d: "No heartbeat wait" },
+      ],
+    },
+    "hoop-prompt": {
+      title: "Goal / purpose",
+      body: "Primary objective sent to planner/actor each cycle. For clone/audit samples, include repo=<url> or an https:// URL.",
+    },
+    "hoop-eval-goal": {
+      title: "Eval goal (critic)",
+      body: "Critic success criteria. Cycles stop when this is met and score thresholds pass.",
+    },
+    "hoop-route": {
+      title: "Inference route",
+      body: "Forces how each stage reaches the model via the Glider gateway.",
+      values: [
+        { v: "local", d: "Prefix /local → Ollama or vLLM only" },
+        { v: "cloud", d: "Prefix /cloud → BYOK OpenAI (or other cloud providers in config)" },
+        { v: "auto", d: "No prefix → gateway rules decide (default rule is often cloud BYOK)" },
+      ],
+    },
+    "hoop-learning": {
+      title: "Self-learning",
+      body: "Only affects route=auto. Successful local outcomes bias toward local; cloud successes bias toward cloud.",
+    },
+    "hoop-max-iter": {
+      title: "Max iterations",
+      body: "Upper bound on hoop cycles before forced stop. 0 is treated as the UI default (3).",
+    },
+    "swarm-prompt": { title: "Swarm prompt", body: "Task text given to each worker role (and to decompose/planner when enabled)." },
+    "swarm-roles": {
+      title: "Swarm roles",
+      body: "Comma-separated worker roles linked on the swarm graph. Canonical roles are preferred; free-spawn can invent more when enabled.",
+      values: [
+        { v: "plan", d: "Planner / decomposition narrative" },
+        { v: "exec", d: "Implementer / doer" },
+        { v: "research", d: "Lookup / investigate" },
+        { v: "worker", d: "Generic short-lived action" },
+      ],
+    },
+    "swarm-workers": {
+      title: "Max workers",
+      body: "Parallel FanOut concurrency cap.",
+      values: [
+        { v: "1–4", d: "Hard cap is 4 workers per wave" },
+      ],
+    },
+    "swarm-waves": {
+      title: "Waves",
+      body: "Sequential FanOut waves. Later waves can read prior weave output.",
+      values: [
+        { v: "1", d: "Single FanOut" },
+        { v: "2–4", d: "Multi-wave weave (durable thread)" },
+      ],
+    },
+    "swarm-route": {
+      title: "Swarm inference route",
+      body: "Same gateway prefixes as hoop route. Applies to every worker and llm_critic weave.",
+      values: [
+        { v: "local", d: "Ollama/vLLM via /local" },
+        { v: "cloud", d: "BYOK OpenAI (etc.) via /cloud" },
+        { v: "auto", d: "Gateway rules (often default cloud)" },
+      ],
+    },
+    "swarm-weave-policy": {
+      title: "Weave policy",
+      body: "How worker outputs are merged across a wave / multi-wave run.",
+      values: [
+        { v: "critic", d: "Rank / critique merge (default)" },
+        { v: "concatenate", d: "Simple concatenation of summaries" },
+        { v: "role_weighted", d: "Weight plan/research slightly over raw exec dumps" },
+        { v: "conflict_callouts", d: "Surface disagreements between roles" },
+        { v: "llm_critic", d: "Extra LLM critic pass (uses swarm CriticFn + route)" },
+      ],
+    },
+    "swarm-decompose": {
+      title: "Decompose planner",
+      body: "Ask a planner wave to propose SubTasks / roles before later FanOut waves.",
+    },
+    "swarm-free-spawn": {
+      title: "Free spawn roles",
+      body: "Allow planner free-form role labels (bounded ≤4) beyond the fixed role list.",
+    },
+    "tpl-id": { title: "Template ID", body: "Stable slug used in APIs and on disk." },
+    "tpl-name": { title: "Template name", body: "Human-readable template label." },
+    "tpl-prompt": { title: "Template prompt", body: "Default prompt when running this template." },
+    "tpl-roles": {
+      title: "Template roles",
+      body: "Default comma-separated roles.",
+      values: [
+        { v: "plan", d: "Planner" },
+        { v: "exec", d: "Implementer" },
+        { v: "research", d: "Research" },
+        { v: "worker", d: "Generic worker" },
+      ],
+    },
+    "tpl-local": {
+      title: "Prefer local",
+      body: "When checked, template runs resolve to route=local unless the run overrides route.",
+    },
+    "stage-edit-kind": {
+      title: "Stage kind",
+      body: "Loop Engineering stage type.",
+      values: [
+        { v: "planner", d: "Produce a plan for the cycle" },
+        { v: "actor", d: "Implement / execute against the plan" },
+        { v: "critic", d: "Score / gate success (maker ≠ checker)" },
+        { v: "memory", d: "Load / write shared memory" },
+        { v: "router", d: "Update local/cloud bias for following stages" },
+        { v: "human_gate", d: "Pause for human approve / reject" },
+      ],
+    },
+    "stage-edit-id": { title: "Stage id", body: "Stable id used in graph_edges and runtime state (slug-safe)." },
+    "stage-edit-name": { title: "Stage name", body: "Display name for this stage." },
+    "stage-edit-enabled": { title: "Enabled", body: "When unchecked, this stage is skipped in the cycle." },
+    "stage-edit-prompt": { title: "Stage prompt", body: "Instructions for the model at this stage." },
+    "stage-edit-route": {
+      title: "Stage route",
+      body: "Per-stage override of hoop route.",
+      values: [
+        { v: "(inherit)", d: "Use hoop route" },
+        { v: "local", d: "Force Ollama/vLLM" },
+        { v: "cloud", d: "Force BYOK cloud" },
+        { v: "auto", d: "Gateway rules" },
+      ],
+    },
+    "stage-edit-eval-min": {
+      title: "Eval min (critic)",
+      body: "Minimum critic score (0–1) required to treat evaluation as success.",
+    },
+    "stage-edit-mcp": {
+      title: "MCP servers",
+      body: "Which MCP servers this stage may call. Leave tools empty to allow all tools from selected servers.",
+    },
+    "stage-edit-tools": {
+      title: "Tools JSON",
+      body: "Advanced StageSpec.tools JSON (builtins + MCP refs). Prefer the MCP pickers above when possible.",
+    },
+    "edge-kind-select": {
+      title: "Edge kind",
+      body: "Graph transition type (state machine), not model routing.",
+      values: [
+        { v: "flow", d: "Normal forward edge" },
+        { v: "feedback", d: "Loop-back / retry edge" },
+        { v: "on_fail", d: "Taken when stage fails" },
+        { v: "escalate", d: "Escalate path" },
+        { v: "conditional", d: "Guard-driven branch" },
+        { v: "budget_exceeded", d: "Budget breach path" },
+        { v: "parallel", d: "Fan-out marker" },
+        { v: "merge", d: "Join after parallel" },
+        { v: "feeds", d: "Data seed: producer summary → consumer prompt (not control-flow)" },
+      ],
+    },
+    "glider-prompt-input": { title: "Prompt value", body: "Value entered for the modal prompt dialog." },
+    "session-select": {
+      title: "Session",
+      body: "A session is one Glider process run. Live WebSocket events append to the current session; pick a past run to browse stored logs.",
+    },
+    "cfg-proxy-port": { title: "Gateway proxy port", body: "OpenAI-compatible /v1 listener. Restart required after change." },
+    "cfg-dash-port": { title: "Dashboard port", body: "This UI + REST/WebSocket. Restart required after change." },
+    "cfg-log-level": {
+      title: "Log level",
+      body: "slog level for the Glider process. Applied immediately on save.",
+      values: [
+        { v: "debug", d: "Verbose" },
+        { v: "info", d: "Default" },
+        { v: "warn", d: "Warnings+" },
+        { v: "error", d: "Errors only" },
+      ],
+    },
+    "cfg-tokens": { title: "Max local context tokens", body: "Context size above which routing prefers cloud/origin. Hot-reloaded." },
+    "cfg-idle": { title: "Idle unload timeout", body: "Unload idle local models after this duration (e.g. 5m)." },
+    "cfg-req-timeout": { title: "Request timeout", body: "Per-request timeout for backend completions (e.g. 120s)." },
+    "cfg-mitm-enabled": { title: "MITM enabled", body: "Enable the MITM proxy listener. Restart required." },
+    "cfg-mitm-port": { title: "MITM listen port", body: "CONNECT listen port. Restart required." },
+    "cfg-mitm-passthrough": { title: "Passthrough default", body: "When true, non-local routes pass through to Cursor origin instead of BYOK." },
+    "cfg-mitm-cacert": { title: "CA cert path", body: "Path to MITM CA certificate (~ expanded)." },
+    "cfg-mitm-cakey": { title: "CA key path", body: "Path to MITM CA private key." },
+    "cfg-mitm-hosts": { title: "MITM hosts", body: "Hostnames to intercept (one per line). Supports simple wildcards like *.api5.cursor.sh." },
+    "cfg-vram-strategy": {
+      title: "VRAM strategy",
+      values: [
+        { v: "static", d: "Keep warm models" },
+        { v: "dynamic", d: "Evict aggressively" },
+        { v: "hybrid", d: "Balance both" },
+      ],
+    },
+    "cfg-vram-headroom": { title: "Headroom (MB)", body: "Reserved free VRAM the allocator will not fill." },
+    "cfg-vram-max": { title: "Max loaded models", body: "Soft cap on concurrently loaded local models." },
+    "cfg-vram-gpus": { title: "GPU assignments", body: "JSON map of model name → GPU index. Prefer the VRAM & Models tab." },
+    "cfg-dash-enabled": { title: "Dashboard enabled", body: "Serve this UI. Restart required to toggle." },
+    "cfg-dash-auth": { title: "Dashboard auth", body: "Reserved for future dashboard auth." },
+    "cfg-xform-enabled": { title: "Transforms enabled", body: "Master switch for prompt transforms." },
+    "cfg-xform-trim": { title: "Trim context", body: "Trim oversized context toward max local tokens." },
+    "cfg-xform-prepend": { title: "Augment prepend", body: "Text prepended when transforms are enabled." },
+    "cfg-xform-append": { title: "Augment append", body: "Text appended when transforms are enabled." },
+    "cfg-aliases": { title: "Aliases JSON", body: "JSON object: client model → local model name." },
+    "cfg-rules": { title: "Rules JSON", body: "JSON array of rules. Prefer the Rules Engine tab." },
+    "cfg-models": { title: "Models JSON", body: "JSON array of model objects (name, backend, vram_estimate_mb, …)." },
+    "cfg-backends": { title: "Backends JSON", body: "JSON array: ollama / vllm entries with url and health_check_interval." },
+    "cfg-budget": { title: "Budget cap (USD)", body: "Optional USD budget cap for cloud spend tracking." },
+    "cfg-rpm": { title: "Requests / min", body: "Rate limit across cloud providers." },
+    "cfg-tpm": { title: "Tokens / min", body: "Token rate limit across cloud providers." },
+    "cfg-providers": { title: "Providers JSON", body: "Providers array. Use api_key_env names — never paste secrets." },
+    "cfg-yaml": { title: "glider.yaml", body: "Raw YAML editor for full config. Prefer the structured form unless you need advanced keys." },
+    "stage-chip-router": { title: "Add router", body: "Chooses / updates local vs cloud bias for following stages." },
+    "stage-chip-planner": { title: "Add planner", body: "Produces the cycle plan." },
+    "stage-chip-actor": { title: "Add actor", body: "Implements against the plan." },
+    "stage-chip-critic": { title: "Add critic", body: "Scores / gates success." },
+    "stage-chip-memory": { title: "Add memory", body: "Loads or writes shared memory." },
+    "stage-chip-human_gate": { title: "Add human gate", body: "Pauses for human approval." },
+    "stage-chip-code": { title: "Add code stage", body: "Open the stage editor to set id, name, prompt, tools." },
+    "rule-name": { title: "Rule name", body: "Human-readable rule name shown in the rules list." },
+    "rule-priority": { title: "Priority", body: "Higher priority is evaluated first." },
+    "rule-enabled": { title: "Enabled", body: "Disabled rules stay in config but are skipped by the router." },
+    "rule-trigger-type": {
+      title: "Trigger type",
+      values: [
+        { v: "explicit", d: "Match /local /cloud (or custom) commands in the prompt" },
+        { v: "context_size", d: "Token threshold comparison" },
+        { v: "script", d: "Starlark script file" },
+        { v: "always", d: "Default fallback when nothing else matches" },
+        { v: "regex", d: "Regex pattern match" },
+      ],
+    },
+    "rule-commands": { title: "Commands", body: "Comma-separated commands for explicit triggers (e.g. /local,/fast)." },
+    "rule-pattern": { title: "Pattern", body: "Regex pattern when trigger type is regex." },
+    "rule-script": { title: "Script file", body: "Starlark script path relative to process cwd." },
+    "rule-operator": { title: "Operator", body: "Comparison for context_size: >, >=, <, <=, ==" },
+    "rule-value": { title: "Value", body: "Token count threshold for context_size rules." },
+    "rule-target": {
+      title: "Action target",
+      values: [
+        { v: "local", d: "Ollama/vLLM" },
+        { v: "cloud", d: "BYOK (gateway) or origin passthrough (MITM)" },
+      ],
+    },
+    "rule-backend": { title: "Backend", body: "Optional backend name for cloud actions." },
+    "rule-model": { title: "Model", body: "Model to use when this rule matches." },
+    "rule-adapter": { title: "Adapter", body: "Optional LoRA adapter name." },
+  };
+
+  const tipEl = document.getElementById("glider-tip");
+  let tipHideTimer = null;
+
+  function tipEsc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function resolveTip(el) {
+    if (!el) return null;
+    const key = el.getAttribute("data-tip-key");
+    if (key && TIP_CATALOG[key]) return TIP_CATALOG[key];
+    const raw = el.getAttribute("data-tip");
+    if (raw) return { title: "", body: raw };
+    return null;
+  }
+
+  function renderTipHTML(tip) {
+    if (!tip) return "";
+    let html = "";
+    if (tip.title) html += `<div class="glider-tip-title">${tipEsc(tip.title)}</div>`;
+    if (tip.body) html += `<p class="glider-tip-body">${tipEsc(tip.body)}</p>`;
+    if (tip.values && tip.values.length) {
+      html += `<ul class="glider-tip-values">${tip.values
+        .map((x) => `<li><code>${tipEsc(x.v)}</code><span>${tipEsc(x.d)}</span></li>`)
+        .join("")}</ul>`;
+    }
+    return html;
+  }
+
+  function placeTip(anchor) {
+    if (!tipEl || !anchor) return;
+    const pad = 10;
+    const rect = anchor.getBoundingClientRect();
+    tipEl.hidden = false;
+    tipEl.classList.add("is-open");
+    const tw = tipEl.offsetWidth;
+    const th = tipEl.offsetHeight;
+    let left = rect.left;
+    let top = rect.bottom + 8;
+    if (left + tw > window.innerWidth - pad) left = window.innerWidth - tw - pad;
+    if (left < pad) left = pad;
+    if (top + th > window.innerHeight - pad) top = rect.top - th - 8;
+    if (top < pad) top = pad;
+    tipEl.style.left = `${Math.round(left)}px`;
+    tipEl.style.top = `${Math.round(top)}px`;
+  }
+
+  function showTipFor(el) {
+    const tip = resolveTip(el);
+    if (!tip || !tipEl) return;
+    if (tipHideTimer) {
+      clearTimeout(tipHideTimer);
+      tipHideTimer = null;
+    }
+    tipEl.innerHTML = renderTipHTML(tip);
+    placeTip(el);
+  }
+
+  function hideTipSoon() {
+    if (tipHideTimer) clearTimeout(tipHideTimer);
+    tipHideTimer = setTimeout(() => {
+      if (!tipEl) return;
+      tipEl.classList.remove("is-open");
+      tipEl.hidden = true;
+      tipEl.innerHTML = "";
+    }, 80);
+  }
+
+  function bindCustomTips(root) {
+    const scope = root || document;
+    scope.querySelectorAll("[data-tip-key], [data-tip]").forEach((el) => {
+      if (el.dataset.tipBound === "1") return;
+      el.dataset.tipBound = "1";
+      // Prevent native browser tooltip chrome.
+      if (el.hasAttribute("title")) el.removeAttribute("title");
+      el.querySelectorAll("[title]").forEach((c) => c.removeAttribute("title"));
+      el.addEventListener("mouseenter", () => showTipFor(el));
+      el.addEventListener("mouseleave", hideTipSoon);
+      el.addEventListener("focusin", () => showTipFor(el));
+      el.addEventListener("focusout", hideTipSoon);
+    });
+  }
+
   function tipAttrs(el) {
-    // native title tooltips already on labels; keep helper for dynamic nodes
+    // legacy no-op; prefer data-tip-key / data-tip + bindCustomTips
     return el;
   }
+
+  bindCustomTips(document);
+  // Re-bind after dynamic panel renders.
+  const tipObserver = new MutationObserver(() => bindCustomTips(document));
+  tipObserver.observe(document.getElementById("app") || document.body, { childList: true, subtree: true });
+
 
   function resetLiveMetrics() {
     requests = 0;
@@ -158,6 +503,131 @@
     el.innerHTML = `<span class="chip-label">CLASS</span>${chips.join("")}`;
   }
 
+  function episodeChipLabel(ep) {
+    const role = String(ep.role || "").trim();
+    const model = String(ep.model || "").trim();
+    const rule = String(ep.rule || "").trim();
+    const head = role || model || rule || String(ep.id || "ep").slice(0, 10);
+    const summary = String(ep.summary || "").replace(/\s+/g, " ").trim();
+    const short = summary.length > 48 ? summary.slice(0, 48) + "…" : summary;
+    return short ? `${head}: ${short}` : head;
+  }
+
+  function episodeChipTitle(ep) {
+    const bits = [];
+    if (ep.id) bits.push("id " + ep.id);
+    if (ep.turn_id) bits.push("turn " + ep.turn_id);
+    if (ep.role) bits.push("role " + ep.role);
+    if (ep.model) bits.push("model " + ep.model);
+    if (ep.rule) bits.push("rule " + ep.rule);
+    if (ep.tokens) bits.push(ep.tokens + " tok");
+    if (ep.created_at) {
+      try {
+        bits.push(new Date(ep.created_at).toLocaleString());
+      } catch (_) {}
+    }
+    if (ep.summary) bits.push(String(ep.summary).slice(0, 240));
+    return bits.join(" · ");
+  }
+
+  function renderEpisodeChips(episodes) {
+    const el = document.getElementById("episode-chips");
+    if (!el) return;
+    const list = Array.isArray(episodes) ? episodes.slice() : [];
+    list.sort((a, b) => {
+      const ta = a && a.created_at ? Date.parse(a.created_at) || 0 : 0;
+      const tb = b && b.created_at ? Date.parse(b.created_at) || 0 : 0;
+      return tb - ta;
+    });
+    const recent = list.slice(0, 12);
+    if (!recent.length) {
+      el.innerHTML = "";
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    const chips = recent.map((ep) => {
+      const cls = ["chip"];
+      if (ep.role) cls.push("role");
+      if (Array.isArray(ep.artifacts) && ep.artifacts.length) cls.push("has-artifacts");
+      return `<span class="${cls.join(" ")}" title="${esc(episodeChipTitle(ep))}">${esc(episodeChipLabel(ep))}</span>`;
+    });
+    el.innerHTML = `<span class="chip-label">EPISODES</span>${chips.join("")}`;
+  }
+
+  async function loadEpisodes(sessionId) {
+    try {
+      const q = new URLSearchParams({ limit: "16" });
+      if (sessionId) q.set("session", sessionId);
+      const res = await fetch("/api/context/episodes?" + q.toString());
+      if (!res.ok) {
+        renderEpisodeChips([]);
+        return;
+      }
+      const data = await res.json();
+      let eps = Array.isArray(data.episodes) ? data.episodes : [];
+      // If session filter returned empty but other sessions exist, show merged recent.
+      if (!eps.length && sessionId) {
+        const all = await fetch("/api/context/episodes?limit=16");
+        if (all.ok) {
+          const merged = await all.json();
+          eps = Array.isArray(merged.episodes) ? merged.episodes : [];
+        }
+      }
+      renderEpisodeChips(eps);
+    } catch (_) {
+      renderEpisodeChips([]);
+    }
+  }
+
+  function formatSpend(spend) {
+    const s = spend && typeof spend === "object" ? spend : {};
+    const tokens = Number(s.tokens) || 0;
+    const cost = Number(s.cost_usd) || 0;
+    const soft = !!s.soft_hit;
+    const hard = !!s.hard_hit;
+    if (!tokens && !cost && !soft && !hard) return null;
+    const parts = [];
+    parts.push(tokens.toLocaleString() + " tok");
+    if (cost > 0) parts.push("$" + cost.toFixed(cost >= 1 ? 2 : 4));
+    if (hard) parts.push("hard");
+    else if (soft) parts.push("soft");
+    return {
+      text: parts.join(" · "),
+      soft,
+      hard,
+      tokens,
+      cost,
+    };
+  }
+
+  function spendChipHTML(spend) {
+    const f = formatSpend(spend);
+    if (!f) return "";
+    const cls = f.hard ? "spend-chip hard" : f.soft ? "spend-chip soft" : "spend-chip";
+    const tip = [
+      f.tokens + " tokens",
+      f.cost > 0 ? ("$" + f.cost.toFixed(4)) : null,
+      f.hard ? "hard budget hit" : f.soft ? "soft budget hit" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return `<span class="${cls}" title="${esc(tip)}">${esc(f.text)}</span>`;
+  }
+
+  function aggregateHoopSpend(loops) {
+    const out = { tokens: 0, cost_usd: 0, soft_hit: false, hard_hit: false };
+    (loops || []).forEach((st) => {
+      const s = st && st.spend;
+      if (!s) return;
+      out.tokens += Number(s.tokens) || 0;
+      out.cost_usd += Number(s.cost_usd) || 0;
+      if (s.soft_hit) out.soft_hit = true;
+      if (s.hard_hit) out.hard_hit = true;
+    });
+    return out;
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -183,6 +653,8 @@
         tokenTotal = snap.token_stats.total;
         updateMetricsUI();
       }
+      if (viewingSessionId) loadEpisodes(viewingSessionId);
+      else loadEpisodes();
     } catch (_) {}
   }
 
@@ -588,13 +1060,13 @@
       const act = r.action || {};
       card.innerHTML = `
         <div class="rule-card-head">
-          <label title="Human-readable rule name">Name<input data-f="name" value="${esc(r.name || "")}" /></label>
-          <label title="Higher priority is evaluated first">Priority<input data-f="priority" type="number" value="${r.priority ?? 0}" /></label>
-          <label class="check" title="Disabled rules stay in config but are skipped by the router"><input data-f="enabled" type="checkbox" ${ruleEnabled(r) ? "checked" : ""}/> Enabled</label>
-          <button type="button" class="linkish rule-del" title="Remove this rule">Remove</button>
+          <label data-tip-key="rule-name">Name<input data-f="name" value="${esc(r.name || "")}" /></label>
+          <label data-tip-key="rule-priority">Priority<input data-f="priority" type="number" value="${r.priority ?? 0}" /></label>
+          <label class="check" data-tip-key="rule-enabled"><input data-f="enabled" type="checkbox" ${ruleEnabled(r) ? "checked" : ""}/> Enabled</label>
+          <button type="button" class="linkish rule-del" data-tip="Remove this rule from the draft list">Remove</button>
         </div>
         <div class="rule-card-grid">
-          <label title="explicit: /local /cloud commands | context_size: token threshold | script: Starlark file | always: default fallback | regex: pattern match">Trigger type
+          <label data-tip-key="rule-trigger-type">Trigger type
             <select data-f="trigger.type">
               ${opt("explicit", trig.type)}
               ${opt("context_size", trig.type)}
@@ -603,23 +1075,23 @@
               ${opt("regex", trig.type)}
             </select>
           </label>
-          <label title="Comma-separated commands for explicit triggers (e.g. /local,/fast)">Commands<input data-f="trigger.commands" value="${esc((trig.commands || []).join(", "))}" /></label>
-          <label title="Regex pattern (trigger type regex)">Pattern<input data-f="trigger.pattern" value="${esc(trig.pattern || "")}" /></label>
-          <label title="Starlark script path relative to process cwd">Script file<input data-f="trigger.file" value="${esc(trig.file || "")}" /></label>
-          <label title="Comparison operator for context_size (>, >=, <, <=, ==)">Operator<input data-f="trigger.operator" value="${esc(trig.operator || "")}" /></label>
-          <label title="Token count threshold for context_size rules">Value<input data-f="trigger.value" type="number" value="${trig.value ?? 0}" /></label>
-          <label title="local = Ollama/vLLM | cloud = BYOK (gateway) or origin passthrough (MITM)">Action target
+          <label data-tip-key="rule-commands">Commands<input data-f="trigger.commands" value="${esc((trig.commands || []).join(", "))}" /></label>
+          <label data-tip-key="rule-pattern">Pattern<input data-f="trigger.pattern" value="${esc(trig.pattern || "")}" /></label>
+          <label data-tip-key="rule-script">Script file<input data-f="trigger.file" value="${esc(trig.file || "")}" /></label>
+          <label data-tip-key="rule-operator">Operator<input data-f="trigger.operator" value="${esc(trig.operator || "")}" /></label>
+          <label data-tip-key="rule-value">Value<input data-f="trigger.value" type="number" value="${trig.value ?? 0}" /></label>
+          <label data-tip-key="rule-target">Action target
             <select data-f="action.target">
               ${opt("local", act.target)}
               ${opt("cloud", act.target)}
             </select>
           </label>
-          <label title="Optional backend name for cloud actions">Backend<input data-f="action.backend" value="${esc(act.backend || "")}" /></label>
-          <label title="Model to use when this rule matches">Model<input data-f="action.model" value="${esc(act.model || "")}" /></label>
-          <label title="Optional LoRA adapter name">Adapter<input data-f="action.adapter" value="${esc(act.adapter || "")}" /></label>
+          <label data-tip-key="rule-backend">Backend<input data-f="action.backend" value="${esc(act.backend || "")}" /></label>
+          <label data-tip-key="rule-model">Model<input data-f="action.model" value="${esc(act.model || "")}" /></label>
+          <label data-tip-key="rule-adapter">Adapter<input data-f="action.adapter" value="${esc(act.adapter || "")}" /></label>
         </div>`;
       root.appendChild(card);
-      tipAttrs(card);
+      bindCustomTips(card);
       card.querySelector(".rule-del").addEventListener("click", () => {
         const all = collectRulesFromEditor();
         all.splice(idx, 1);
@@ -632,13 +1104,6 @@
 
   function opt(v, cur) {
     return `<option value="${v}" ${cur === v ? "selected" : ""}>${v}</option>`;
-  }
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;");
   }
 
   function setPath(obj, path, value) {
@@ -752,6 +1217,7 @@
       viewingSessionId = current.id;
       liveMode = !!current.current;
       await loadSessionView(current.id, !!current.current);
+      await loadEpisodes(current.id);
     }
   }
 
@@ -820,6 +1286,7 @@
     logEl.innerHTML = "";
     if (isLive) resetLiveMetrics();
     await loadSessionView(id, isLive);
+    await loadEpisodes(id);
   });
 
   document.getElementById("session-refresh").addEventListener("click", () => loadSessions());
@@ -882,6 +1349,7 @@
   let hotswapGenCache = {};
   let stageDnd = { kind: null, from: null, index: -1, uid: null };
   let lastHoopsSnap = "";
+  let lastHoopsList = [];
   let lastHotswapSnap = "";
   let stageNodes = [];
   /** @type {{id:string,source:string,target:string,kind:string}[]} */
@@ -890,8 +1358,12 @@
   let stageSelectedEdgeId = null;
   let stageLiveStatus = {};
   let stageLivePath = []; // node ids/kinds on DecisionRoute path
-  let stageLiveEdges = {}; // edge id -> ok|running|next|fail
+  let stageLiveEdges = {}; // edge id -> taken|running|next|fail
   let stageLiveCurrent = "";
+  /** @type {object|null} last hoop state for run rail / node inspect */
+  let stageLiveHoopState = null;
+  let cyLiveMotionRaf = null;
+  let cyDashOffset = 0;
   let stageUidSeq = 0;
   let swarmThreads = [];
   let swarmWaveTimeline = null; // durable thread wave timeline overlay for Cytoscape
@@ -924,6 +1396,14 @@
   let agentLogViewLines = [];
   let agentLogPaused = false;
   let agentLogAutoScroll = true;
+  /** User-pinned stage-run-rail card key (kind|id); empty = no pin. */
+  let stageRunRailPin = "";
+  /** Open stage-run-rail card keys (user + auto-follow). */
+  let stageRunRailOpen = new Set();
+  /** When true, newly entered current stage auto-opens once. */
+  let stageRunRailFollowLive = true;
+  /** Last known current stage key for follow-live transitions. */
+  let stageRunRailCurKey = "";
 
   function cloneJSON(x) {
     return JSON.parse(JSON.stringify(x));
@@ -1109,9 +1589,11 @@
       agentLogFocus = null;
     } else {
       agentLogFocus = { scope, id };
+      const fold = document.getElementById("hoops-agent-log-fold");
+      if (fold) fold.open = true;
     }
     updateAgentLogChrome();
-    refreshAgentLogPanels();
+    refreshAgentLogPanels({ force: true });
   }
 
   function updateAgentLogChrome() {
@@ -1153,14 +1635,42 @@
     return "--";
   }
 
+  function agentLogEntryKey(e) {
+    if (!e) return "";
+    if (e.seq != null && e.seq !== "") return "seq:" + e.seq;
+    if (e.id != null && e.id !== "") return "id:" + e.id;
+    return (
+      "f:" +
+      (e.at || "") +
+      "|" +
+      (e.kind || "") +
+      "|" +
+      (e.level || "") +
+      "|" +
+      (e.message || "")
+    );
+  }
+
   function agentLogRowHTML(e) {
     const t = e.at ? new Date(e.at).toLocaleTimeString() : "--";
     const lvl = (e.level || "info").toUpperCase();
     const stage = agentLogStageLabel(e);
     const cls = e.level === "error" ? "error" : e.level === "warn" ? "warn" : "";
+    const attrBody = (e.attrs && (e.attrs.text || e.attrs.err)) || "";
+    const shortMsg = e.message || "";
+    // Prefer attrs body for "Full output" — never hide expander just because the
+    // message line embeds a truncated prefix of the same text.
+    const showDetail =
+      attrBody.length > 0 &&
+      (attrBody.length > Math.min(shortMsg.length || 0, 240) + 40 ||
+        (shortMsg && attrBody && !shortMsg.includes(attrBody)));
+    const full = attrBody || shortMsg;
+    const key = agentLogEntryKey(e);
     return (
       '<div class="log-row ' +
       cls +
+      '" data-log-key="' +
+      esc(key) +
       '">' +
       '<span class="log-time">' +
       esc(t) +
@@ -1168,13 +1678,20 @@
       '<span class="log-level">' +
       esc(lvl) +
       "</span>" +
-      '<span class="log-stage" title="' +
+      '<span class="log-stage" data-tip="' +
       esc(stage) +
       '">' +
       esc(stage) +
       "</span>" +
       '<span class="log-msg">' +
-      esc(e.message || "") +
+      esc(shortMsg) +
+      (showDetail
+        ? '<details class="log-expand"><summary>Full output</summary><pre class="log-err-detail">' +
+          esc(full) +
+          "</pre></details>"
+        : e.attrs && e.attrs.err && !(e.message || "").includes(e.attrs.err)
+          ? '<div class="log-err-detail">' + esc(e.attrs.err) + "</div>"
+          : "") +
       "</span>" +
       "</div>"
     );
@@ -1184,6 +1701,7 @@
     const div = document.createElement("div");
     const cls = e.level === "error" ? "error" : e.level === "warn" ? "warn" : "";
     div.className = "log-row" + (cls ? " " + cls : "");
+    div.dataset.logKey = agentLogEntryKey(e);
     const t = document.createElement("span");
     t.className = "log-time";
     t.textContent = e.at ? new Date(e.at).toLocaleTimeString() : "--";
@@ -1197,6 +1715,29 @@
     const msg = document.createElement("span");
     msg.className = "log-msg";
     msg.textContent = e.message || "";
+    const full = (e.attrs && (e.attrs.text || e.attrs.err)) || "";
+    const shortMsg = e.message || "";
+    const showDetail =
+      full.length > 0 &&
+      (full.length > Math.min(shortMsg.length || 0, 240) + 40 ||
+        (shortMsg && full && !shortMsg.includes(full)));
+    if (showDetail) {
+      const det = document.createElement("details");
+      det.className = "log-expand";
+      const sum = document.createElement("summary");
+      sum.textContent = "Full output";
+      const pre = document.createElement("pre");
+      pre.className = "log-err-detail";
+      pre.textContent = full;
+      det.appendChild(sum);
+      det.appendChild(pre);
+      msg.appendChild(det);
+    } else if (e.attrs && e.attrs.err && !(e.message || "").includes(e.attrs.err)) {
+      const detail = document.createElement("div");
+      detail.className = "log-err-detail";
+      detail.textContent = e.attrs.err;
+      msg.appendChild(detail);
+    }
     div.appendChild(t);
     div.appendChild(lvl);
     div.appendChild(stage);
@@ -1204,60 +1745,288 @@
     return div;
   }
 
-  function renderAgentLogPanels(entries) {
-    agentLogViewLines = Array.isArray(entries) ? entries.slice() : [];
+  function agentLogPanels() {
+    return [
+      document.getElementById("agent-log-panel"),
+      document.getElementById("hoops-agent-log-panel"),
+    ];
+  }
+
+  function updateAgentLogRowElement(row, e) {
+    if (!row || !e) return;
+    const openExpand = row.querySelector(".log-expand")?.open;
+    const next = agentLogRowElement(e);
+    if (openExpand) {
+      const det = next.querySelector(".log-expand");
+      if (det) det.open = true;
+    }
+    row.replaceWith(next);
+  }
+
+  function agentLogMaxSeq(lines) {
+    let max = 0;
+    (lines || []).forEach((e) => {
+      const s = Number(e && e.seq);
+      if (Number.isFinite(s) && s > max) max = s;
+    });
+    return max;
+  }
+
+  function mergeAgentLogIntoPanels(entries, opts) {
+    const incremental = !!(opts && opts.incremental);
+    const next = Array.isArray(entries) ? entries.slice() : [];
+    const byKey = new Map();
+    agentLogViewLines.forEach((e) => {
+      const k = agentLogEntryKey(e);
+      if (k) byKey.set(k, e);
+    });
+    next.forEach((e) => {
+      const k = agentLogEntryKey(e);
+      if (k) byKey.set(k, e);
+    });
+    if (incremental) {
+      // after_seq poll / WS-compatible upsert: empty payload means nothing new.
+      if (!next.length) return;
+      agentLogViewLines = Array.from(byKey.values()).sort((a, b) => {
+        const sa = Number(a && a.seq) || 0;
+        const sb = Number(b && b.seq) || 0;
+        return sa - sb;
+      });
+    } else {
+      // Full snapshot: prefer server order; empty clears the view.
+      const ordered = [];
+      const seen = new Set();
+      next.forEach((e) => {
+        const k = agentLogEntryKey(e);
+        if (!k || seen.has(k)) return;
+        seen.add(k);
+        ordered.push(byKey.get(k) || e);
+      });
+      if (!next.length) {
+        agentLogViewLines = [];
+      } else {
+        agentLogViewLines = ordered;
+      }
+    }
+    if (agentLogViewLines.length > 400) agentLogViewLines = agentLogViewLines.slice(-400);
+    const panels = agentLogPanels();
+    const wantKeys = new Set(agentLogViewLines.map(agentLogEntryKey));
+    panels.forEach((panel) => {
+      if (!panel) return;
+      const empty = panel.querySelector(".log-empty");
+      if (!agentLogViewLines.length) {
+        panel.innerHTML =
+          '<p class="log-empty">No log lines for this instance yet. Start a hoop or run a swarm while following it.</p>';
+        return;
+      }
+      if (empty) empty.remove();
+      const existing = new Map();
+      panel.querySelectorAll(".log-row[data-log-key]").forEach((row) => {
+        existing.set(row.dataset.logKey, row);
+      });
+      // Remove rows no longer present.
+      existing.forEach((row, k) => {
+        if (!wantKeys.has(k)) row.remove();
+      });
+      agentLogViewLines.forEach((e) => {
+        const k = agentLogEntryKey(e);
+        let row = existing.get(k);
+        if (row) {
+          // Refresh content only when message/attrs changed (cheap string check).
+          const msgEl = row.querySelector(".log-msg");
+          const msgText = msgEl?.childNodes?.[0]?.textContent || "";
+          const fullPre = row.querySelector(".log-err-detail")?.textContent || "";
+          const nextFull = (e.attrs && (e.attrs.text || e.attrs.err)) || "";
+          if (msgText !== (e.message || "") || (nextFull && fullPre && fullPre !== nextFull)) {
+            updateAgentLogRowElement(row, e);
+            row = panel.querySelector('.log-row[data-log-key="' + CSS.escape(k) + '"]');
+            if (row) existing.set(k, row);
+          }
+        } else {
+          row = agentLogRowElement(e);
+          panel.appendChild(row);
+          existing.set(k, row);
+        }
+      });
+      // Reorder to match agentLogViewLines.
+      agentLogViewLines.forEach((e) => {
+        const row = existing.get(agentLogEntryKey(e));
+        if (row) panel.appendChild(row);
+      });
+      if (agentLogAutoScroll) panel.scrollTop = panel.scrollHeight;
+    });
+  }
+
+  function renderAgentLogPanels(entries, opts) {
+    const force = opts && opts.force;
+    const incremental = opts && opts.incremental;
+    const next = Array.isArray(entries) ? entries.slice() : [];
+    const panels = agentLogPanels();
+    if (!force) {
+      mergeAgentLogIntoPanels(next, { incremental: !!incremental });
+      return;
+    }
+    // Full replace (focus change / clear / manual refresh): preserve open expands by key.
+    const openKeys = new Set();
+    const scrollTops = panels.map((p) => (p ? p.scrollTop : 0));
+    panels.forEach((panel) => {
+      if (!panel) return;
+      panel.querySelectorAll(".log-expand[open]").forEach((d) => {
+        const row = d.closest(".log-row");
+        if (row?.dataset.logKey) openKeys.add(row.dataset.logKey);
+      });
+    });
+    agentLogViewLines = next;
     const html =
       !agentLogViewLines.length
         ? '<p class="log-empty">No log lines for this instance yet. Start a hoop or run a swarm while following it.</p>'
         : agentLogViewLines.map(agentLogRowHTML).join("");
-    const panels = [
-      document.getElementById("agent-log-panel"),
-      document.getElementById("hoops-agent-log-panel"),
-    ];
-    panels.forEach((a) => {
+    panels.forEach((a, pi) => {
       if (!a) return;
       a.innerHTML = html;
+      if (openKeys.size) {
+        a.querySelectorAll(".log-row[data-log-key]").forEach((row) => {
+          if (!openKeys.has(row.dataset.logKey)) return;
+          const d = row.querySelector(".log-expand");
+          if (d) d.open = true;
+        });
+      }
       if (agentLogAutoScroll) a.scrollTop = a.scrollHeight;
+      else a.scrollTop = scrollTops[pi] || 0;
     });
   }
 
-  async function refreshAgentLogPanels() {
+  async function refreshAgentLogPanels(opts) {
     if (!agentLogFocus) {
-      renderAgentLogPanels([]);
+      renderAgentLogPanels([], { force: true });
       return;
     }
     try {
-      const q =
+      const force = !!(opts && opts.force);
+      let q =
         "/api/agent-logs?scope=" +
         encodeURIComponent(agentLogFocus.scope) +
         "&id=" +
         encodeURIComponent(agentLogFocus.id) +
         "&limit=200";
+      const afterSeq = !force ? agentLogMaxSeq(agentLogViewLines) : 0;
+      if (afterSeq > 0) {
+        q += "&after_seq=" + encodeURIComponent(String(afterSeq));
+      }
       const res = await fetch(q);
       const data = await res.json();
-      renderAgentLogPanels(Array.isArray(data.entries) ? data.entries : []);
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      if (force) {
+        renderAgentLogPanels(entries, { force: true });
+      } else if (afterSeq > 0) {
+        renderAgentLogPanels(entries, { incremental: true });
+      } else {
+        renderAgentLogPanels(entries, opts);
+      }
     } catch (_) {
-      renderAgentLogPanels([]);
+      if (opts && opts.force) renderAgentLogPanels([], { force: true });
     }
+  }
+
+  function formatAgentLogPlain(entries) {
+    return (entries || [])
+      .map((e) => {
+        const t = e.at ? new Date(e.at).toISOString() : "";
+        const stage = agentLogStageLabel(e);
+        const full = (e.attrs && (e.attrs.text || e.attrs.err)) || "";
+        let line = `[${t}] ${(e.level || "info").toUpperCase()} ${stage} ${e.message || ""}`;
+        if (full && full !== e.message) line += "\n" + full;
+        return line.trim();
+      })
+      .join("\n\n");
+  }
+
+  function formatHoopOutcomePlain(st, o) {
+    const id = st?.spec?.id || st?.spec?.name || "hoop";
+    const lines = [
+      `Hoop: ${id}`,
+      `Cycle: #${o.iteration}  success=${!!o.success}  route=${o.route || ""}  latency_ms=${o.latency_ms || 0}`,
+      "",
+      "=== Summary ===",
+      o.err || o.summary || "(empty)",
+    ];
+    (o.stages || []).forEach((s) => {
+      lines.push("");
+      lines.push(`=== ${s.kind || "stage"}${s.module_id ? " (" + s.module_id + ")" : ""} · ${s.success ? "ok" : "fail"} ===`);
+      lines.push(s.err || s.summary || "(empty)");
+    });
+    return lines.join("\n");
+  }
+
+  async function copyText(text, okMsg) {
+    const t = String(text || "");
+    try {
+      await navigator.clipboard.writeText(t);
+      showHoopsOk(okMsg || "Copied");
+    } catch (_) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+        showHoopsOk(okMsg || "Copied");
+      } catch (e) {
+        showHoopsError("Copy failed: " + e);
+      }
+    }
+  }
+
+  function copyFocusedAgentLogs() {
+    if (!agentLogViewLines.length) {
+      showHoopsError("No log lines to copy");
+      return;
+    }
+    const header = agentLogFocus
+      ? `Agent log · ${agentLogFocus.scope}:${agentLogFocus.id}\n\n`
+      : "Agent log\n\n";
+    copyText(header + formatAgentLogPlain(agentLogViewLines), "Copied agent log");
   }
 
   function appendLiveAgentLog(e) {
     if (!agentLogFocus || !e) return;
     if (e.scope !== agentLogFocus.scope || e.instance_id !== agentLogFocus.id) return;
     if (agentLogPaused) return;
-    agentLogViewLines.push(e);
-    if (agentLogViewLines.length > 400) agentLogViewLines = agentLogViewLines.slice(-400);
-    const panels = [
-      document.getElementById("agent-log-panel"),
-      document.getElementById("hoops-agent-log-panel"),
-    ];
-    panels.forEach((panel) => {
-      if (!panel) return;
-      const empty = panel.querySelector(".log-empty");
-      if (empty) empty.remove();
-      panel.appendChild(agentLogRowElement(e));
-      if (agentLogAutoScroll) panel.scrollTop = panel.scrollHeight;
-    });
+    const key = agentLogEntryKey(e);
+    const idx = agentLogViewLines.findIndex((x) => agentLogEntryKey(x) === key);
+    if (idx >= 0) {
+      agentLogViewLines[idx] = e;
+      agentLogPanels().forEach((panel) => {
+        if (!panel) return;
+        const row = panel.querySelector('.log-row[data-log-key="' + CSS.escape(key) + '"]');
+        if (row) updateAgentLogRowElement(row, e);
+      });
+    } else {
+      agentLogViewLines.push(e);
+      if (agentLogViewLines.length > 400) {
+        const drop = agentLogViewLines.length - 400;
+        const dropped = agentLogViewLines.splice(0, drop);
+        const dropKeys = new Set(dropped.map(agentLogEntryKey));
+        agentLogPanels().forEach((panel) => {
+          if (!panel) return;
+          dropKeys.forEach((k) => {
+            panel.querySelector('.log-row[data-log-key="' + CSS.escape(k) + '"]')?.remove();
+          });
+        });
+      }
+      agentLogPanels().forEach((panel) => {
+        if (!panel) return;
+        const empty = panel.querySelector(".log-empty");
+        if (empty) empty.remove();
+        panel.appendChild(agentLogRowElement(e));
+        if (agentLogAutoScroll) panel.scrollTop = panel.scrollHeight;
+      });
+    }
+    // Only refresh the running card's live text — never rebuild the rail.
+    if (stageLiveHoopState && agentLogFocus.scope === "hoop") {
+      updateStageRunRailLivePre(stageLiveHoopState);
+    }
   }
 
   function setAgentLogPaused(on) {
@@ -1276,19 +2045,31 @@
 
   function clearAgentLogView() {
     agentLogViewLines = [];
-    renderAgentLogPanels([]);
+    renderAgentLogPanels([], { force: true });
+  }
+
+  async function clearFocusedAgentLog() {
+    clearAgentLogView();
+    if (agentLogFocus) {
+      try {
+        await clearServerAgentLog(agentLogFocus.scope, agentLogFocus.id);
+      } catch (_) {}
+    }
   }
 
   function initAgentLogUI() {
-    const refresh = () => refreshAgentLogPanels();
-    const clear = () => clearAgentLogView();
+    const refresh = () => refreshAgentLogPanels({ force: true });
+    const clear = () => clearFocusedAgentLog();
     const togglePause = () => setAgentLogPaused(!agentLogPaused);
+    const copy = () => copyFocusedAgentLogs();
     document.getElementById("agent-log-refresh")?.addEventListener("click", refresh);
     document.getElementById("hoops-agent-log-refresh")?.addEventListener("click", refresh);
     document.getElementById("agent-log-clear-view")?.addEventListener("click", clear);
     document.getElementById("hoops-agent-log-clear")?.addEventListener("click", clear);
     document.getElementById("agent-log-pause")?.addEventListener("click", togglePause);
     document.getElementById("hoops-agent-log-pause")?.addEventListener("click", togglePause);
+    document.getElementById("agent-log-copy")?.addEventListener("click", copy);
+    document.getElementById("hoops-agent-log-copy")?.addEventListener("click", copy);
     ["agent-log-panel", "hoops-agent-log-panel"].forEach((id) => {
       const panel = document.getElementById(id);
       if (!panel) return;
@@ -1298,7 +2079,7 @@
       });
     });
     updateAgentLogChrome();
-    renderAgentLogPanels([]);
+    renderAgentLogPanels([], { force: true });
   }
 
   const CY_BASE_STYLE = [
@@ -1328,7 +2109,7 @@
         width: 108,
         height: 52,
         "background-color": "#f8fafc",
-        "border-color": "#2563eb",
+        "border-color": "#c45c26",
         "font-size": 10,
       },
     },
@@ -1336,8 +2117,8 @@
       selector: "node:selected",
       style: {
         "border-width": 2.5,
-        "border-color": "#2563eb",
-        "background-color": "#eff6ff",
+        "border-color": "#c45c26",
+        "background-color": "#fff4ed",
       },
     },
     {
@@ -1349,8 +2130,25 @@
       style: { "border-color": "#b91c1c" },
     },
     {
-      selector: "node.status-running",
-      style: { "border-color": "#2563eb", "border-width": 2.5 },
+      selector: "node.status-running, node.route-current",
+      style: {
+        "border-color": "#0d9488",
+        "border-width": 3.5,
+        "background-color": "#f0fdfa",
+        "border-style": "dashed",
+        "underlay-color": "#0d9488",
+        "underlay-opacity": 0.18,
+        "underlay-padding": 6,
+      },
+    },
+    {
+      selector: "node.status-pending",
+      style: {
+        "border-color": "#94a3b8",
+        "border-style": "dashed",
+        "background-color": "#f8fafc",
+        color: "#64748b",
+      },
     },
     {
       selector: "node.status-waiting",
@@ -1359,10 +2157,6 @@
     {
       selector: "node.route-path",
       style: { "background-color": "#ecfdf5" },
-    },
-    {
-      selector: "node.route-current",
-      style: { "border-color": "#2563eb", "border-width": 3, "background-color": "#dbeafe" },
     },
     {
       selector: "node.eh-handle",
@@ -1378,7 +2172,7 @@
     {
       selector: "node.eh-hover",
       style: {
-        "background-color": "#2563eb",
+        "background-color": "#c45c26",
       },
     },
     {
@@ -1396,8 +2190,8 @@
       selector: "edge:selected",
       style: {
         width: 2.5,
-        "line-color": "#2563eb",
-        "target-arrow-color": "#2563eb",
+        "line-color": "#c45c26",
+        "target-arrow-color": "#c45c26",
       },
     },
     {
@@ -1429,21 +2223,33 @@
     },
     {
       selector: "edge.status-ok, edge.route-taken",
-      style: { "line-color": "#16a34a", "target-arrow-color": "#16a34a", width: 2.2 },
+      style: {
+        "line-color": "#16a34a",
+        "target-arrow-color": "#16a34a",
+        width: 2.4,
+        "line-style": "solid",
+      },
     },
     {
       selector: "edge.status-fail",
       style: { "line-color": "#b91c1c", "target-arrow-color": "#b91c1c" },
     },
     {
-      selector: "edge.status-running, edge.route-next",
-      style: { "line-color": "#2563eb", "target-arrow-color": "#2563eb", width: 2.2 },
+      selector: "edge.status-running, edge.route-next, edge.live-flow",
+      style: {
+        "line-color": "#0d9488",
+        "target-arrow-color": "#0d9488",
+        width: 2.8,
+        "line-style": "dashed",
+        "line-dash-pattern": [10, 6],
+        "arrow-scale": 1.15,
+      },
     },
     {
       selector: ".eh-preview, .eh-ghost-edge",
       style: {
-        "line-color": "#2563eb",
-        "target-arrow-color": "#2563eb",
+        "line-color": "#c45c26",
+        "target-arrow-color": "#c45c26",
         "line-style": "dashed",
       },
     },
@@ -1729,6 +2535,21 @@
     } else {
       set("live-ctx", "--");
     }
+
+    const spendEl = document.getElementById("live-spend");
+    const spendCard = spendEl?.closest(".live-card");
+    const agg = aggregateHoopSpend(loops);
+    const fmt = formatSpend(agg);
+    if (spendEl) {
+      spendEl.textContent = fmt ? fmt.text : "--";
+      spendEl.title = fmt
+        ? (fmt.hard ? "Hard budget hit on a hoop" : fmt.soft ? "Soft budget hit on a hoop" : "Aggregate hoop BudgetSpend")
+        : "No hoop spend yet";
+    }
+    if (spendCard) {
+      spendCard.classList.toggle("soft", !!(fmt && fmt.soft && !fmt.hard));
+      spendCard.classList.toggle("hard", !!(fmt && fmt.hard));
+    }
   }
 
   function statusBadgeClass(status) {
@@ -1842,6 +2663,24 @@
       }
       suppressCySelect = false;
     }
+    const node = stageNodes.find((n) => n.uid === uid);
+    if (node) {
+      const body = document.getElementById("stage-run-rail-body");
+      body?.querySelectorAll(".stage-run-card").forEach((card) => {
+        const match =
+          stageNodeMatchesKey(node, card.dataset.stageId) ||
+          stageNodeMatchesKey(node, card.dataset.stageKind);
+        card.classList.toggle("is-selected", !!match);
+        if (match) {
+          const key = stageRunCardKey(card.dataset.stageKind, card.dataset.stageId);
+          stageRunRailPin = key;
+          stageRunRailFollowLive = false;
+          stageRunRailOpen.add(key);
+          if (!card.open) card.open = true;
+          card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      });
+    }
   }
 
   function selectStageEdge(eid) {
@@ -1910,12 +2749,13 @@
     const edges = stageEdges
       .filter((e) => uidSet.has(e.source) && uidSet.has(e.target))
       .map((e) => {
-        const tgt = stageNodes.find((n) => n.uid === e.target);
-        const st = stageLiveStatus[tgt?.id] || stageLiveStatus[tgt?.kind] || "idle";
         const routeSt = stageLiveEdges[e.id] || "";
         const kindClass = e.kind && e.kind !== "flow" ? e.kind : "";
-        const routeClass = routeSt === "taken" ? "route-taken" : routeSt === "next" ? "route-next" : "";
-        const classes = [kindClass, "status-" + st, routeClass].filter(Boolean).join(" ");
+        const routeBits = [];
+        if (routeSt === "taken") routeBits.push("route-taken", "status-ok");
+        else if (routeSt === "running" || routeSt === "next") routeBits.push("status-running", "route-next", "live-flow");
+        else if (routeSt === "fail") routeBits.push("status-fail");
+        const classes = [kindClass, ...routeBits].filter(Boolean).join(" ");
         return {
           group: "edges",
           data: {
@@ -1930,8 +2770,8 @@
     return nodes.concat(edges);
   }
 
-  function upsertStageEdge(source, target, kind) {
-    pushStageHistory();
+  function upsertStageEdge(source, target, kind, opts) {
+    if (!(opts && opts.skipHistory)) pushStageHistory();
     const k = kind === "feedback" ? "feedback" : "flow";
     if (!source || !target || source === target) return;
     if (!stageNodes.some((n) => n.uid === source) || !stageNodes.some((n) => n.uid === target)) return;
@@ -1949,8 +2789,8 @@
     if (k === "flow") reorderStagesFromFlowEdges();
   }
 
-  function removeStageEdgeById(eid) {
-    pushStageHistory();
+  function removeStageEdgeById(eid, opts) {
+    if (!(opts && opts.skipHistory)) pushStageHistory();
     stageEdges = stageEdges.filter((e) => e.id !== eid);
     if (stageSelectedEdgeId === eid) stageSelectedEdgeId = null;
   }
@@ -1967,7 +2807,7 @@
     }
     // Fallback: cycle kinds when dialog unavailable.
     pushStageHistory();
-    const cycle = ["flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge"];
+    const cycle = ["flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge", "feeds"];
     const i = Math.max(0, cycle.indexOf(e.kind || "flow"));
     e.kind = cycle[(i + 1) % cycle.length];
     if (e.kind === "flow") reorderStagesFromFlowEdges();
@@ -2062,13 +2902,33 @@
         selectStageEdge(ev.target.id());
         toggleSelectedStageEdgeKind();
       });
+      stageCy.on("grab", "node", (ev) => {
+        if (historySuspended || stageLinkMode || ev.target.hasClass("eh-handle")) return;
+        const node = stageNodes.find((n) => n.uid === ev.target.id());
+        if (!node) return;
+        const p = ev.target.position();
+        ev.target.scratch("_preDrag", { x: node.x, y: node.y, px: p.x, py: p.y });
+        pushStageHistory();
+        ev.target.scratch("_histPushed", true);
+      });
       stageCy.on("dragfree", "node", (ev) => {
         if (ev.target.hasClass("eh-handle")) return;
         const node = stageNodes.find((n) => n.uid === ev.target.id());
         if (!node) return;
         const p = ev.target.position();
+        const pre = ev.target.scratch("_preDrag");
+        const moved =
+          !pre ||
+          Math.abs((pre.px || 0) - p.x) > 2 ||
+          Math.abs((pre.py || 0) - p.y) > 2;
+        if (!moved && ev.target.scratch("_histPushed") && stageUndoStack.length) {
+          stageUndoStack.pop();
+          updateHistoryButtons();
+        }
         node.x = p.x;
         node.y = p.y;
+        ev.target.scratch("_preDrag", null);
+        ev.target.scratch("_histPushed", false);
         syncStagesJSON();
       });
       stageCy.on("mouseover", "node", (ev) => {
@@ -2231,17 +3091,32 @@
     const el = document.getElementById("mcp-github-card");
     if (!el) return;
     const tok = gh.token_configured
-      ? `<span class="live-value ok">configured</span> (<code>${escapeHtml(gh.token_env || "GITHUB_*")}</code>)`
-      : `<span class="live-value bad">missing</span> — set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code> / <code>GITHUB_TOKEN</code> / <code>GH_TOKEN</code>`;
-    const http = gh.http_connected ? `<span class="live-value ok">connected</span>` : `<span class="live-value bad">disconnected</span>`;
-    const stdio = gh.stdio_connected ? `<span class="live-value ok">connected</span>` : `<span class="live-value">idle</span>`;
+      ? `<span class="live-value ok">configured</span> (<code>${escapeHtml(gh.token_source || gh.token_env || "GITHUB_*")}</code>)`
+      : `<span class="live-value bad">missing</span> — Sign in or paste a PAT below`;
+    const http = gh.http_connected
+      ? `<span class="live-value ok">connected</span>`
+      : `<span class="live-value bad" title="${escapeAttr(gh.http_health_error || "")}">disconnected</span>`;
+    const stdio = gh.stdio_connected
+      ? `<span class="live-value ok">connected</span>`
+      : `<span class="live-value" title="${escapeAttr(gh.stdio_health_error || "")}">idle</span>`;
+    const oauth = gh.device_flow_ready
+      ? `<span class="live-value ok">ready</span>`
+      : `<span class="live-value">set GLIDER_GITHUB_OAUTH_CLIENT_ID</span>`;
     el.innerHTML = `
       <div class="mcp-github-grid">
-        <div><span class="live-label">Token</span>${tok}</div>
-        <div><span class="live-label">HTTP (github)</span>${http}</div>
-        <div><span class="live-label">Stdio (github-stdio)</span>${stdio}</div>
-        <div><span class="live-label">Endpoint</span><code>${escapeHtml(gh.remote_url || "")}</code></div>
-      </div>`;
+        <div data-tip="Whether a GitHub token is available from env or ~/.glider/credentials/github_token"><span class="live-label">Token</span>${tok}</div>
+        <div data-tip="Hosted GitHub MCP over HTTP (api.githubcopilot.com/mcp/)"><span class="live-label">HTTP (github)</span>${http}</div>
+        <div data-tip="Optional local stdio GitHub MCP process"><span class="live-label">Stdio (github-stdio)</span>${stdio}</div>
+        <div data-tip="OAuth device/browser flow readiness (needs GLIDER_GITHUB_OAUTH_CLIENT_ID)"><span class="live-label">Device flow</span>${oauth}</div>
+        <div data-tip="Remote MCP endpoint URL"><span class="live-label">Endpoint</span><code>${escapeHtml(gh.remote_url || "")}</code></div>
+      </div>
+      ${gh.hint ? `<p class="hint" style="margin:10px 0 0">${escapeHtml(gh.hint)}</p>` : ""}
+      <div class="mcp-github-actions">
+        <button type="button" class="primary" data-mcp-gh="signin" data-tip="Open GitHub OAuth (browser or device flow) to store a token and connect MCP">Sign in with GitHub</button>
+        <button type="button" class="linkish" data-mcp-gh="pat" data-tip="Paste a personal access token; saved to ~/.glider/credentials/github_token">Paste PAT</button>
+        <button type="button" class="linkish" data-mcp-gh="forget" data-tip="Remove saved credential file and disconnect GitHub MCP sessions">Forget token</button>
+      </div>
+      <div id="mcp-github-device-panel" class="mcp-device-panel" hidden></div>`;
   }
 
   function renderMCPServersTable(servers) {
@@ -2255,13 +3130,13 @@
       const health = s.connected && s.health_ok
         ? `<span class="live-value ok">connected</span>`
         : `<span class="live-value bad" title="${escapeAttr(s.health_error || "")}">disconnected</span>`;
-      const tok = s.token_configured ? "yes" : (s.token_env ? "no" : "—");
+      const tok = s.token_configured ? "yes" : (s.token_env ? "no" : "â€”");
       const active = s.id === mcpSelectedServerId ? " mcp-row-active" : "";
       return `<tr class="mcp-server-row${active}" data-mcp-id="${escapeAttr(s.id)}">
         <td><code>${escapeHtml(s.id)}</code><div class="graph-hint">${escapeHtml(s.name || "")}</div></td>
-        <td>${escapeHtml(s.transport || "—")}</td>
+        <td>${escapeHtml(s.transport || "â€”")}</td>
         <td>${health}</td>
-        <td>${s.tool_count != null ? s.tool_count : "—"}</td>
+        <td>${s.tool_count != null ? s.tool_count : "â€”"}</td>
         <td>${tok}</td>
         <td class="mcp-actions">
           <button type="button" class="linkish" data-mcp-act="tools" data-id="${escapeAttr(s.id)}">Tools</button>
@@ -2281,7 +3156,7 @@
     if (label) label.textContent = serverId ? `(${serverId})` : "";
     const list = document.getElementById("mcp-tools-list");
     if (!list) return;
-    list.innerHTML = "<p class=\"hint\">Loading…</p>";
+    list.innerHTML = "<p class=\"hint\">Loadingâ€¦</p>";
     document.querySelectorAll(".mcp-server-row").forEach((tr) => {
       tr.classList.toggle("mcp-row-active", tr.getAttribute("data-mcp-id") === serverId);
     });
@@ -2293,17 +3168,25 @@
       const src = data.source || "";
       const hint = document.getElementById("mcp-tools-hint");
       if (hint) {
-        hint.textContent = src === "live"
-          ? "Live tools from connected server."
-          : src === "catalog"
-            ? "Documented catalog (server not connected — connect for live list)."
-            : "Tools";
+        if (data.message) {
+          hint.textContent = data.message;
+        } else if (src === "live") {
+          hint.textContent = "Live tools from connected MCP session.";
+        } else if (src === "catalog") {
+          hint.textContent = "Documented catalog only â€” Glider is running, but this MCP session is not connected. Sign in / Connect for a live list.";
+        } else {
+          hint.textContent = "Tools";
+        }
+        hint.classList.toggle("cfg-warn", src === "catalog");
       }
       if (!tools.length) {
         list.innerHTML = "<p class=\"hint\">No tools.</p>";
         return;
       }
-      list.innerHTML = tools.map((t) => `
+      const badge = src === "live"
+        ? `<span class="live-value ok">live</span>`
+        : `<span class="live-value bad">catalog</span>`;
+      list.innerHTML = `<div class="hint" style="margin-bottom:8px">Source: ${badge}</div>` + tools.map((t) => `
         <div class="mcp-tool-row">
           <code>${escapeHtml(t.name)}</code>
           <span class="hint">${escapeHtml(t.description || "")}</span>
@@ -2312,6 +3195,152 @@
       list.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
     }
   }
+
+  let mcpDevicePollTimer = null;
+
+  async function mcpGitHubPastePAT() {
+    const token = await gliderPrompt(
+      "Paste GitHub PAT",
+      "Stored in ~/.glider/credentials/github_token (0600). Never put tokens in YAML.",
+      ""
+    );
+    if (token == null) return;
+    if (!String(token).trim()) {
+      showMCPError("Empty token");
+      return;
+    }
+    showMCPError("");
+    try {
+      const res = await fetch("/api/mcp/github/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: String(token).trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showMCPOk("GitHub token saved and HTTP MCP connect attempted");
+      await refreshMCPPanel();
+      await loadMCPToolsCatalog("github");
+    } catch (err) {
+      showMCPError(String(err.message || err));
+      await refreshMCPPanel();
+    }
+  }
+
+  async function mcpGitHubForgetToken() {
+    const ok = await gliderConfirm("Forget GitHub token", "Remove saved GitHub token and disconnect MCP sessions?");
+    if (!ok) return;
+    try {
+      const res = await fetch("/api/mcp/github/token", { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      showMCPOk("GitHub token cleared");
+      await refreshMCPPanel();
+    } catch (err) {
+      showMCPError(String(err.message || err));
+    }
+  }
+
+  async function mcpGitHubDeviceStart() {
+    // Prefer browser OAuth (classic OAuth App + client secret). Fall back to device flow.
+    showMCPError("");
+    const panel = document.getElementById("mcp-github-device-panel");
+    try {
+      const oauthRes = await fetch("/api/mcp/github/oauth/start", { method: "POST" });
+      if (oauthRes.ok) {
+        const data = await oauthRes.json();
+        if (data.authorize_url) {
+          if (panel) {
+            panel.hidden = false;
+            panel.innerHTML = `<span class="hint">Opening GitHub authorizationâ€¦</span>`;
+          }
+          window.location.href = data.authorize_url;
+          return;
+        }
+      } else {
+        const oauthErr = await oauthRes.text();
+        // If secret missing, try device flow next; otherwise show oauth error.
+        if (!/CLIENT_SECRET|client secret/i.test(oauthErr)) {
+          // still try device as fallback
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const res = await fetch("/api/mcp/github/device/start", { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (panel) {
+        panel.hidden = false;
+        const link = data.verification_uri_complete || data.verification_uri;
+        panel.innerHTML = `
+          <strong>Authorize GitHub (device flow)</strong><br/>
+          Code: <code style="font-size:1.2rem;letter-spacing:0.08em">${escapeHtml(data.user_code || "")}</code><br/>
+          <a href="${escapeAttr(link)}" target="_blank" rel="noopener">Open ${escapeHtml(data.verification_uri || "GitHub")}</a>
+          <span class="hint"> â€” waiting for authorizationâ€¦</span>`;
+      }
+      if (mcpDevicePollTimer) clearInterval(mcpDevicePollTimer);
+      const intervalMs = Math.max(5, Number(data.interval) || 5) * 1000;
+      mcpDevicePollTimer = setInterval(() => mcpGitHubDevicePoll(data.device_code, intervalMs), intervalMs);
+      if (data.verification_uri_complete || data.verification_uri) {
+        window.open(data.verification_uri_complete || data.verification_uri, "_blank", "noopener");
+      }
+    } catch (err) {
+      showMCPError(String(err.message || err));
+      if (panel) {
+        panel.hidden = false;
+        panel.innerHTML = `<span class="cfg-error">${escapeHtml(String(err.message || err))}</span>
+          <span class="hint"> For a classic OAuth App: set <code>GLIDER_GITHUB_OAUTH_CLIENT_SECRET</code> in <code>.env.local</code>,
+          callback <code>http://127.0.0.1:8081/oauth/callback</code>, rebuild Glider, then Sign in again.
+          Or enable Device Flow on the app, or use Paste PAT.</span>`;
+      }
+    }
+  }
+
+  async function mcpGitHubDevicePoll(deviceCode) {
+    try {
+      const res = await fetch("/api/mcp/github/device/poll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_code: deviceCode }),
+      });
+      const text = await res.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch (_) { throw new Error(text || res.statusText); }
+      if (!res.ok) throw new Error(data.error || text);
+      const panel = document.getElementById("mcp-github-device-panel");
+      if (data.status === "authorized") {
+        if (mcpDevicePollTimer) clearInterval(mcpDevicePollTimer);
+        mcpDevicePollTimer = null;
+        if (panel) {
+          panel.hidden = false;
+          panel.innerHTML = `<span class="live-value ok">Authorized</span> â€” GitHub MCP connect ${data.http_connected || data.connected ? "ok" : "attempted"}.`;
+        }
+        showMCPOk("GitHub device login complete");
+        await refreshMCPPanel();
+        await loadMCPToolsCatalog("github");
+        return;
+      }
+      if (data.status === "expired" || data.status === "error") {
+        if (mcpDevicePollTimer) clearInterval(mcpDevicePollTimer);
+        mcpDevicePollTimer = null;
+        showMCPError(data.error_description || data.error || data.status);
+      }
+      // pending / slow_down: keep polling
+    } catch (err) {
+      if (mcpDevicePollTimer) clearInterval(mcpDevicePollTimer);
+      mcpDevicePollTimer = null;
+      showMCPError(String(err.message || err));
+    }
+  }
+
+  document.getElementById("mcp-github-card")?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-mcp-gh]");
+    if (!btn) return;
+    const act = btn.getAttribute("data-mcp-gh");
+    if (act === "signin") mcpGitHubDeviceStart();
+    else if (act === "pat") mcpGitHubPastePAT();
+    else if (act === "forget") mcpGitHubForgetToken();
+  });
+
 
   async function mcpServerAction(id, act) {
     showMCPError("");
@@ -2397,7 +3426,7 @@
       : [{ id: "github", name: "GitHub MCP" }, { id: "github-stdio", name: "GitHub MCP (stdio)" }];
     pick.innerHTML = servers.map((s) => {
       const checked = stageEditMcpSelected.includes(s.id) ? "checked" : "";
-      return `<label class="mcp-check"><input type="checkbox" data-mcp-server="${escapeAttr(s.id)}" ${checked} /> <code>${escapeHtml(s.id)}</code> <span class="hint">${escapeHtml(s.name || "")}</span></label>`;
+      return `<label class="mcp-check" data-tip="Allow this stage to call tools from MCP server ${escapeAttr(s.id)}"><input type="checkbox" data-mcp-server="${escapeAttr(s.id)}" ${checked} /> <code>${escapeHtml(s.id)}</code> <span class="hint">${escapeHtml(s.name || "")}</span></label>`;
     }).join("");
     pick.querySelectorAll("input[data-mcp-server]").forEach((inp) => {
       inp.addEventListener("change", () => {
@@ -2416,7 +3445,7 @@
       toolsEl.innerHTML = "<p class=\"hint\" style=\"margin:0\">Select one or more MCP servers above.</p>";
       return;
     }
-    toolsEl.innerHTML = "<p class=\"hint\">Loading tools…</p>";
+    toolsEl.innerHTML = "<p class=\"hint\">Loading toolsâ€¦</p>";
     const blocks = [];
     for (const sid of stageEditMcpSelected) {
       let tools = [];
@@ -2428,13 +3457,14 @@
         }
       } catch (_) {}
       if (!tools.length) {
-        blocks.push(`<div class="mcp-tool-group"><strong>${escapeHtml(sid)}</strong><p class="hint">No tools listed — leave unchecked to bind all.</p></div>`);
+        blocks.push(`<div class="mcp-tool-group"><strong>${escapeHtml(sid)}</strong><p class="hint">No tools listed â€” leave unchecked to bind all.</p></div>`);
         continue;
       }
       const checks = tools.map((t) => {
         const key = `${sid}:${t.name}`;
         const checked = stageEditMcpToolNames.has(key) ? "checked" : "";
-        return `<label class="mcp-check"><input type="checkbox" data-mcp-tool-server="${escapeAttr(sid)}" data-mcp-tool-name="${escapeAttr(t.name)}" ${checked} /> <code>${escapeHtml(t.name)}</code></label>`;
+        const tip = escapeAttr(t.description || `Bind MCP tool ${t.name} from ${sid}`);
+        return `<label class="mcp-check" data-tip="${tip}"><input type="checkbox" data-mcp-tool-server="${escapeAttr(sid)}" data-mcp-tool-name="${escapeAttr(t.name)}" ${checked} /> <code>${escapeHtml(t.name)}</code></label>`;
       }).join("");
       blocks.push(`<div class="mcp-tool-group"><strong>${escapeHtml(sid)}</strong><div class="mcp-tool-checks">${checks}</div></div>`);
     }
@@ -2552,7 +3582,7 @@
       renderStageGraph();
       showHoopsOk("Updated stage: " + node.id);
     } else {
-      // rest of applyStageEditForm continues below — keep existing branch
+      // rest of applyStageEditForm continues below â€” keep existing branch
       pushStageHistory();
       const node = normalizeStageNode({
         kind,
@@ -2634,9 +3664,9 @@
     const next = stageNodes[at + 1];
     if (prev) {
       stageEdges = stageEdges.filter((e) => !(e.kind !== "feedback" && e.source === prev.uid && next && e.target === next.uid));
-      upsertStageEdge(prev.uid, node.uid, "flow");
+      upsertStageEdge(prev.uid, node.uid, "flow", { skipHistory: true });
     }
-    if (next) upsertStageEdge(node.uid, next.uid, "flow");
+    if (next) upsertStageEdge(node.uid, next.uid, "flow", { skipHistory: true });
     selectStageNode(node.uid);
     renderStageGraph();
   }
@@ -2649,7 +3679,7 @@
     const next = stageNodes[idx + 1];
     stageNodes.splice(idx, 1);
     stageEdges = stageEdges.filter((e) => e.source !== uid && e.target !== uid);
-    if (prev && next) upsertStageEdge(prev.uid, next.uid, "flow");
+    if (prev && next) upsertStageEdge(prev.uid, next.uid, "flow", { skipHistory: true });
     if (stageSelectedUid === uid) stageSelectedUid = null;
     renderStageGraph();
   }
@@ -2737,8 +3767,8 @@
       stageNodes.splice(at, 0, node);
       const prev = stageNodes[at - 1];
       const next = stageNodes[at + 1];
-      if (prev) upsertStageEdge(prev.uid, node.uid, "flow");
-      if (next) upsertStageEdge(node.uid, next.uid, "flow");
+      if (prev) upsertStageEdge(prev.uid, node.uid, "flow", { skipHistory: true });
+      if (next) upsertStageEdge(node.uid, next.uid, "flow", { skipHistory: true });
       selectStageNode(node.uid);
     } else {
       addStageNode(kind, insertAt);
@@ -2932,49 +3962,128 @@
     setPipelineStages(stages.length ? stages : DEFAULT_STAGES, spec.graph_edges || []);
     setHoopEditMode(spec.id, spec.name || spec.id);
     applyStageLiveFromHoop(st);
-    showHoopsOk("Loaded " + (spec.name || spec.id) + " -- edit graph then Update");
+    const running =
+      String(st.status || "").toLowerCase() === "running" ||
+      String(st.status || "").toLowerCase() === "waiting_human";
+    if (running) {
+      setAgentLogFocus("hoop", spec.id);
+      startHoopLiveFastPoll();
+      startCyLiveMotion();
+      refreshAgentLogPanels();
+    }
+    showHoopsOk(
+      running
+        ? "Live view: " + (spec.name || spec.id)
+        : "Loaded " + (spec.name || spec.id) + " -- edit graph then Update"
+    );
     if (opts && opts.openGraph) {
       openGraphEditor("stage");
+      requestAnimationFrame(() => {
+        renderStageGraph();
+        startCyLiveMotion();
+      });
     } else {
       document.getElementById("hoop-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
 
+  function stageNodeMatchesKey(node, key) {
+    if (!node || key == null || key === "") return false;
+    const k = String(key);
+    return node.id === k || node.uid === k || node.kind === k || node.name === k;
+  }
+
+  function findStageEdgeBetween(aKey, bKey) {
+    return stageEdges.find((e) => {
+      const src = stageNodes.find((n) => n.uid === e.source);
+      const tgt = stageNodes.find((n) => n.uid === e.target);
+      return stageNodeMatchesKey(src, aKey) && stageNodeMatchesKey(tgt, bKey);
+    });
+  }
+
   function applyStageLiveFromHoop(st) {
+    stageLiveHoopState = st || null;
     stageLiveStatus = {};
     stageLivePath = [];
     stageLiveEdges = {};
     stageLiveCurrent = "";
+    if (!st) {
+      paintStageRunRail(null);
+      return;
+    }
     const status = String(st.status || "").toLowerCase();
     const last = (st.outcomes || []).length ? st.outcomes[st.outcomes.length - 1] : null;
     const prog = st.progress || {};
     stageLiveCurrent = prog.current || prog.stage_id || prog.stage_kind || "";
     if (Array.isArray(prog.path_taken)) stageLivePath = prog.path_taken.slice();
     (prog.edges_taken || []).forEach((eid) => { stageLiveEdges[eid] = "taken"; });
-    (prog.next_edges || []).forEach((eid) => { stageLiveEdges[eid] = "next"; });
-    // Also match edges by source->target when ids differ from canvas.
-    (prog.branch_choices || []).forEach((b) => {
-      if (b.selected && b.edge_id) stageLiveEdges[b.edge_id] = "taken";
-      else if (b.edge_id && !stageLiveEdges[b.edge_id]) stageLiveEdges[b.edge_id] = "next";
+    (prog.next_edges || []).forEach((eid) => {
+      if (!stageLiveEdges[eid]) stageLiveEdges[eid] = "next";
     });
-    if (status === "running" || status === "waiting_human") {
-      (st.spec?.stages || []).forEach((s) => {
+    (prog.branch_choices || []).forEach((b) => {
+      if (!b || !b.edge_id) return;
+      if (b.selected) stageLiveEdges[b.edge_id] = "taken";
+      else if (!stageLiveEdges[b.edge_id]) stageLiveEdges[b.edge_id] = "next";
+    });
+    // Infer canvas edges from path sequence when SM edge ids don't match.
+    for (let i = 0; i < stageLivePath.length - 1; i++) {
+      const edge = findStageEdgeBetween(stageLivePath[i], stageLivePath[i + 1]);
+      if (edge) stageLiveEdges[edge.id] = "taken";
+    }
+    const running = status === "running" || status === "waiting_human";
+    if (running) {
+      (st.spec?.stages || stageNodes || []).forEach((s) => {
         if (s.enabled === false || s.disabled) return;
-        stageLiveStatus[s.kind] = "pending";
-        if (s.id) stageLiveStatus[s.id] = "pending";
+        const kind = s.kind || s;
+        const id = s.id;
+        if (kind) stageLiveStatus[kind] = stageLiveStatus[kind] || "pending";
+        if (id) stageLiveStatus[id] = stageLiveStatus[id] || "pending";
+      });
+      stageNodes.forEach((n) => {
+        if (!stageLiveStatus[n.kind]) stageLiveStatus[n.kind] = "pending";
+        if (n.id) stageLiveStatus[n.id] = stageLiveStatus[n.id] || "pending";
+      });
+      (st.live_stages || []).forEach((s) => {
+        const paint = s.success ? "ok" : "fail";
+        if (s.kind) stageLiveStatus[s.kind] = paint;
+        if (s.module_id) stageLiveStatus[s.module_id] = paint;
       });
       (stageLivePath || []).forEach((id) => {
-        stageLiveStatus[id] = "ok";
+        if (stageLiveStatus[id] === "pending" || !stageLiveStatus[id]) stageLiveStatus[id] = "ok";
       });
       const cur = prog.stage_kind || prog.stage_id || stageLiveCurrent;
       if (cur) {
         const paint = status === "waiting_human" ? "waiting" : "running";
         stageLiveStatus[cur] = paint;
         if (prog.stage_id) stageLiveStatus[prog.stage_id] = paint;
+        if (prog.stage_kind) stageLiveStatus[prog.stage_kind] = paint;
+        // Animate edges into the active node.
+        stageEdges.forEach((e) => {
+          const tgt = stageNodes.find((n) => n.uid === e.target);
+          if (!stageNodeMatchesKey(tgt, cur) && !stageNodeMatchesKey(tgt, prog.stage_id) && !stageNodeMatchesKey(tgt, prog.stage_kind)) {
+            return;
+          }
+          if (stageLiveEdges[e.id] !== "taken") stageLiveEdges[e.id] = "running";
+        });
+        // Also animate edge from last path node → current.
+        if (stageLivePath.length) {
+          const prev = stageLivePath[stageLivePath.length - 1];
+          if (prev !== cur) {
+            const edge = findStageEdgeBetween(prev, cur);
+            if (edge) stageLiveEdges[edge.id] = "running";
+          }
+        }
       }
+      startCyLiveMotion();
     } else if (last?.stages?.length) {
       last.stages.forEach((s) => {
         stageLiveStatus[s.kind] = s.success ? "ok" : "fail";
+        if (s.module_id) stageLiveStatus[s.module_id] = s.success ? "ok" : "fail";
+      });
+    } else if ((st.live_stages || []).length) {
+      st.live_stages.forEach((s) => {
+        stageLiveStatus[s.kind] = s.success ? "ok" : "fail";
+        if (s.module_id) stageLiveStatus[s.module_id] = s.success ? "ok" : "fail";
       });
     } else if (status === "completed") {
       (st.spec?.stages || []).forEach((s) => {
@@ -2985,6 +4094,347 @@
         stageLiveStatus[s.kind] = "fail";
       });
     }
+    paintStageRunRail(st);
+  }
+
+  function stageRunCardKey(kind, id) {
+    return String(kind || "") + "|" + String(id || "");
+  }
+
+  function stageRunLiveText(st, curKind, curId, status, prog) {
+    const wait = status === "waiting_human";
+    if (wait) {
+      return (
+        st.gate?.ask ||
+        [
+          st.gate?.reason || prog.note || "Waiting for human approval",
+          st.cursor?.critic_text && "--- CRITIC ---\n" + st.cursor.critic_text,
+          st.cursor?.actor_text && "--- ACTOR ---\n" + st.cursor.actor_text,
+          st.cursor?.plan_text && "--- PLAN ---\n" + st.cursor.plan_text,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      );
+    }
+    const liveLogs = (agentLogViewLines || [])
+      .filter((e) => {
+        const a = e.attrs || {};
+        return (
+          a.stage === curKind ||
+          a.stage_id === curId ||
+          a.module_id === curId ||
+          (e.message || "").includes(curKind)
+        );
+      })
+      .slice(-6);
+    return (
+      liveLogs
+        .map((e) => {
+          const full = (e.attrs && (e.attrs.text || e.attrs.err)) || e.message || "";
+          return full;
+        })
+        .filter(Boolean)
+        .join("\n\n") ||
+      (prog.note ? "note: " + prog.note : "Running…")
+    );
+  }
+
+  function updateStageRunRailLivePre(st) {
+    if (!st) return;
+    const body = document.getElementById("stage-run-rail-body");
+    if (!body) return;
+    const status = String(st.status || "").toLowerCase();
+    const prog = st.progress || {};
+    const curKind = prog.stage_kind || prog.stage_id || "";
+    const curId = prog.stage_id || "";
+    const curKey = stageRunCardKey(curKind, curId);
+    const card = [...body.querySelectorAll(".stage-run-card")].find(
+      (c) => stageRunCardKey(c.dataset.stageKind, c.dataset.stageId) === curKey
+    );
+    if (!card || !card.classList.contains("running")) return;
+    const pre = card.querySelector(".stage-run-pre");
+    if (!pre) return;
+    const liveText = stageRunLiveText(st, curKind, curId, status, prog);
+    if (pre.textContent !== (liveText || "(empty)")) {
+      pre.textContent = liveText || "(empty)";
+    }
+  }
+
+  function wireStageRunCard(card, key) {
+    if (card.dataset.wired === "1") return;
+    card.dataset.wired = "1";
+    card.addEventListener("toggle", () => {
+      if (card.open) {
+        stageRunRailOpen.add(key);
+        if (key !== stageRunRailCurKey) {
+          stageRunRailPin = key;
+          stageRunRailFollowLive = false;
+        } else {
+          stageRunRailPin = "";
+          stageRunRailFollowLive = true;
+        }
+      } else {
+        stageRunRailOpen.delete(key);
+        if (stageRunRailPin === key) stageRunRailPin = "";
+        if (key === stageRunRailCurKey) stageRunRailFollowLive = false;
+      }
+    });
+    card.addEventListener("click", (ev) => {
+      const kind = card.dataset.stageKind;
+      const id = card.dataset.stageId;
+      const node = stageNodes.find((n) => stageNodeMatchesKey(n, id) || stageNodeMatchesKey(n, kind));
+      if (!node) return;
+      // Summary click toggles open/close — don't call selectStageNode (it force-opens).
+      if (ev.target.closest("summary")) {
+        stageSelectedUid = node.uid;
+        stageSelectedEdgeId = null;
+        updateStageToolbar();
+        if (stageCy) {
+          suppressCySelect = true;
+          stageCy.elements().unselect();
+          const el = stageCy.getElementById(node.uid);
+          if (el && el.nonempty()) el.select();
+          suppressCySelect = false;
+        }
+        const body = document.getElementById("stage-run-rail-body");
+        body?.querySelectorAll(".stage-run-card").forEach((c) => {
+          const match =
+            stageNodeMatchesKey(node, c.dataset.stageId) ||
+            stageNodeMatchesKey(node, c.dataset.stageKind);
+          c.classList.toggle("is-selected", !!match);
+        });
+        return;
+      }
+      selectStageNode(node.uid);
+    });
+  }
+
+  function upsertStageRunCard(body, spec) {
+    let card = [...body.querySelectorAll(".stage-run-card")].find(
+      (c) => stageRunCardKey(c.dataset.stageKind, c.dataset.stageId) === spec.key
+    );
+    const selected = card?.classList.contains("is-selected");
+    if (!card) {
+      card = document.createElement("details");
+      card.className = "stage-run-card " + spec.className;
+      card.dataset.stageKind = spec.kind || "";
+      card.dataset.stageId = spec.id || "";
+      const summary = document.createElement("summary");
+      summary.innerHTML = spec.summaryHTML;
+      const pre = document.createElement("pre");
+      pre.className = "stage-run-pre";
+      pre.textContent = spec.preText || "(empty)";
+      card.appendChild(summary);
+      card.appendChild(pre);
+      wireStageRunCard(card, spec.key);
+      body.appendChild(card);
+      if (spec.wantOpen) card.open = true;
+    } else {
+      card.className = "stage-run-card " + spec.className + (selected ? " is-selected" : "");
+      card.dataset.stageKind = spec.kind || "";
+      card.dataset.stageId = spec.id || "";
+      const summary = card.querySelector("summary");
+      if (summary && summary.innerHTML !== spec.summaryHTML) summary.innerHTML = spec.summaryHTML;
+      const pre = card.querySelector(".stage-run-pre");
+      if (pre && pre.textContent !== (spec.preText || "(empty)")) {
+        pre.textContent = spec.preText || "(empty)";
+      }
+      // Never force-close / force-open on incremental update except explicit stage enter.
+      if (spec.forceOpen) card.open = true;
+      wireStageRunCard(card, spec.key);
+    }
+    return card;
+  }
+
+  function paintStageRunRail(st) {
+    const rail = document.getElementById("stage-run-rail");
+    const body = document.getElementById("stage-run-rail-body");
+    const meta = document.getElementById("stage-run-rail-meta");
+    if (!rail || !body) return;
+    if (!st) {
+      rail.hidden = true;
+      body.innerHTML = "";
+      if (meta) meta.textContent = "Idle";
+      stageRunRailPin = "";
+      stageRunRailOpen = new Set();
+      stageRunRailFollowLive = true;
+      stageRunRailCurKey = "";
+      return;
+    }
+    // Sync open set from live DOM (user toggles) before deciding auto-follow.
+    body.querySelectorAll(".stage-run-card").forEach((card) => {
+      const key = stageRunCardKey(card.dataset.stageKind, card.dataset.stageId);
+      if (card.open) stageRunRailOpen.add(key);
+      else stageRunRailOpen.delete(key);
+    });
+    const status = String(st.status || "").toLowerCase();
+    const prog = st.progress || {};
+    const live = Array.isArray(st.live_stages) ? st.live_stages : [];
+    const last = (st.outcomes || []).length ? st.outcomes[st.outcomes.length - 1] : null;
+    const done = live.length
+      ? live
+      : status === "running" || status === "waiting_human"
+        ? []
+        : last?.stages || [];
+    const running = status === "running" || status === "waiting_human";
+    const curKind = prog.stage_kind || prog.stage_id || "";
+    const curId = prog.stage_id || "";
+    const curKey = stageRunCardKey(curKind, curId);
+    const hasCurrent =
+      running &&
+      curKind &&
+      !done.some((s) => s.kind === curKind || (curId && s.module_id === curId));
+    if (!done.length && !hasCurrent && !running) {
+      rail.hidden = true;
+      body.innerHTML = "";
+      if (meta) meta.textContent = "Idle";
+      return;
+    }
+    rail.hidden = false;
+    if (meta) {
+      const spendFmt = formatSpend(st.spend);
+      const base = running
+        ? `Cycle #${prog.iteration || st.iteration || "?"} · ${prog.phase || status} · ${curKind || "…"}`
+        : `Last cycle · ${status}`;
+      meta.textContent = spendFmt ? `${base} · ${spendFmt.text}` : base;
+      meta.title = spendFmt
+        ? (spendFmt.hard ? "Hard budget hit" : spendFmt.soft ? "Soft budget hit" : "BudgetSpend")
+        : "";
+    }
+
+    const stageChanged = curKey !== stageRunRailCurKey;
+    if (stageChanged) {
+      stageRunRailCurKey = curKey;
+      // Auto-open the new current stage once when following live.
+      if (stageRunRailFollowLive && hasCurrent && curKey) {
+        stageRunRailOpen.add(curKey);
+        stageRunRailPin = "";
+      }
+    }
+
+    const desiredKeys = [];
+    const placeholder = body.querySelector(":scope > .muted");
+    if (placeholder) placeholder.remove();
+
+    done.forEach((s) => {
+      const text = s.err || s.summary || "";
+      const ok = !!s.success;
+      const key = stageRunCardKey(s.kind, s.module_id);
+      desiredKeys.push(key);
+      const wantOpen = stageRunRailOpen.has(key) || stageRunRailPin === key;
+      upsertStageRunCard(body, {
+        key,
+        kind: s.kind || "",
+        id: s.module_id || "",
+        className: ok ? "ok" : "fail",
+        summaryHTML:
+          `<span class="stage-pill ${ok ? "ok" : "fail"}">${esc(s.kind || "?")}</span> ` +
+          `${ok ? "done" : "fail"}` +
+          (s.module_id && s.module_id !== s.kind ? ` · ${esc(s.module_id)}` : ""),
+        preText: text || "(empty)",
+        wantOpen,
+        forceOpen: false,
+      });
+    });
+
+    if (hasCurrent) {
+      const wait = status === "waiting_human";
+      const liveText = stageRunLiveText(st, curKind, curId, status, prog);
+      desiredKeys.push(curKey);
+      const wantOpen =
+        stageRunRailOpen.has(curKey) ||
+        stageRunRailPin === curKey ||
+        (stageRunRailFollowLive && stageChanged);
+      upsertStageRunCard(body, {
+        key: curKey,
+        kind: curKind,
+        id: curId,
+        className: "running",
+        summaryHTML:
+          `<span class="stage-pill ${wait ? "fail" : "ok"}">${esc(curKind)}</span> ` +
+          `${wait ? "waiting" : "running now"}`,
+        preText: liveText || "(empty)",
+        wantOpen,
+        forceOpen: !!(stageRunRailFollowLive && stageChanged),
+      });
+    }
+
+    // Remove stale cards; keep open details on survivors.
+    [...body.querySelectorAll(".stage-run-card")].forEach((card) => {
+      const key = stageRunCardKey(card.dataset.stageKind, card.dataset.stageId);
+      if (!desiredKeys.includes(key)) card.remove();
+    });
+
+    // Stable order: done stages then current.
+    desiredKeys.forEach((key) => {
+      const card = [...body.querySelectorAll(".stage-run-card")].find(
+        (c) => stageRunCardKey(c.dataset.stageKind, c.dataset.stageId) === key
+      );
+      if (card) body.appendChild(card);
+    });
+
+    if (!desiredKeys.length) {
+      body.innerHTML = `<p class="muted">Waiting for first stage…</p>`;
+    }
+  }
+
+  function startCyLiveMotion() {
+    if (cyLiveMotionRaf) return;
+    const tick = () => {
+      cyDashOffset = (cyDashOffset - 1.5) % 64;
+      const pulse = 2.8 + Math.sin(Date.now() / 280) * 1.1;
+      const under = 0.12 + (Math.sin(Date.now() / 280) + 1) * 0.1;
+      let active = false;
+      if (stageCy) {
+        const runEdges = stageCy.$("edge.status-running, edge.route-next, edge.live-flow");
+        const runNodes = stageCy.$("node.status-running, node.route-current");
+        if (runEdges.nonempty() || runNodes.nonempty()) {
+          active = true;
+          stageCy.batch(() => {
+            if (runEdges.nonempty()) {
+              runEdges.style({
+                "line-style": "dashed",
+                "line-dash-pattern": [10, 6],
+                "line-dash-offset": cyDashOffset,
+              });
+            }
+            if (runNodes.nonempty()) {
+              runNodes.style({
+                "border-style": "dashed",
+                "border-width": pulse,
+                "underlay-opacity": under,
+              });
+            }
+          });
+        }
+      }
+      if (swarmCy) {
+        const runEdges = swarmCy.$("edge.status-running, edge.route-next, node.status-running");
+        const runNodes = swarmCy.$("node.status-running");
+        if (runEdges.nonempty() || runNodes.nonempty()) {
+          active = true;
+          swarmCy.batch(() => {
+            swarmCy.$("edge.status-running, edge.route-next").style({
+              "line-style": "dashed",
+              "line-dash-pattern": [10, 6],
+              "line-dash-offset": cyDashOffset,
+            });
+            if (runNodes.nonempty()) {
+              runNodes.style({
+                "border-style": "dashed",
+                "border-width": pulse,
+              });
+            }
+          });
+        }
+      }
+      if (!active && !hoopLiveFastTimer && !swarmLivePollTimer) {
+        cyLiveMotionRaf = null;
+        return;
+      }
+      cyLiveMotionRaf = requestAnimationFrame(tick);
+    };
+    cyLiveMotionRaf = requestAnimationFrame(tick);
   }
 
   function refreshStageLiveFromLoops(list) {
@@ -2992,9 +4442,26 @@
     if (!editId || !Array.isArray(list)) return;
     const st = list.find((x) => x.spec?.id === editId);
     if (!st) return;
-    const before = JSON.stringify(stageLiveStatus);
+    const before = JSON.stringify({
+      status: stageLiveStatus,
+      path: stageLivePath,
+      edges: stageLiveEdges,
+      current: stageLiveCurrent,
+      live: st.live_stages,
+      prog: st.progress,
+      run: st.status,
+    });
     applyStageLiveFromHoop(st);
-    if (JSON.stringify(stageLiveStatus) !== before) renderStageGraph();
+    const after = JSON.stringify({
+      status: stageLiveStatus,
+      path: stageLivePath,
+      edges: stageLiveEdges,
+      current: stageLiveCurrent,
+      live: st.live_stages,
+      prog: st.progress,
+      run: st.status,
+    });
+    if (after !== before) renderStageGraph();
   }
 
   /* ---- Swarm thread graph (Cytoscape) ---- */
@@ -3050,6 +4517,87 @@
       }
       suppressCySelect = false;
     }
+    const th = uid ? swarmThreads.find((t) => t.uid === uid) : null;
+    showSwarmNodeInspect(th || null);
+  }
+
+  function showSwarmNodeInspect(th) {
+    const box = document.getElementById("swarm-node-inspect");
+    const title = document.getElementById("swarm-node-inspect-title");
+    const status = document.getElementById("swarm-node-inspect-status");
+    const body = document.getElementById("swarm-node-inspect-body");
+    if (!box || !title || !status || !body) return;
+    if (!th) {
+      box.hidden = true;
+      body.textContent = "";
+      return;
+    }
+    box.hidden = false;
+    title.textContent = th.role || th.uid || "Worker";
+    status.textContent = th.status || "idle";
+    status.className = "muted" + (th.status === "fail" ? " is-error" : th.status === "ok" ? " is-ok" : "");
+    const bits = [];
+    if (th.err) bits.push("ERROR\n" + th.err);
+    if (th.summary) bits.push(th.summary);
+    body.textContent = bits.join("\n\n") || "(no output yet — run swarm or wait for live progress)";
+  }
+
+  function paintSwarmRunInspect(data, rawText) {
+    const wrap = document.getElementById("swarm-run-inspect");
+    const meta = document.getElementById("swarm-run-inspect-meta");
+    const body = document.getElementById("swarm-run-inspect-body");
+    const raw = document.getElementById("swarm-result");
+    if (!wrap || !body) return;
+    wrap.hidden = false;
+    if (raw) {
+      try {
+        raw.textContent = typeof rawText === "string" && rawText.trim().startsWith("{")
+          ? JSON.stringify(JSON.parse(rawText), null, 2)
+          : (rawText || "");
+      } catch (_) {
+        raw.textContent = rawText || "";
+      }
+    }
+    if (!data || typeof data !== "object") {
+      if (meta) meta.textContent = "parse error";
+      body.innerHTML = `<pre class="run-inspect-pre">${esc(rawText || "")}</pre>`;
+      return;
+    }
+    const results = data.results || [];
+    const okN = results.filter((r) => !r.err).length;
+    const failN = results.length - okN;
+    if (meta) {
+      meta.textContent =
+        `${okN} ok / ${failN} fail · ${data.elapsed_ms || 0}ms` +
+        (data.waves ? ` · ${data.waves} wave(s)` : "") +
+        (data.weave_policy ? ` · ${data.weave_policy}` : "");
+    }
+    const summary = data.summary || data.episode?.summary || "";
+    const workerBlocks = results
+      .map((r, i) => {
+        const label = r.role || r.worker_id || `worker-${i + 1}`;
+        const text = r.err || r.summary || r.episode?.summary || "";
+        const head = String(text).slice(0, 120);
+        return (
+          `<details class="hoop-stage-detail"${r.err || i === 0 ? " open" : ""}>` +
+          `<summary><span class="stage-pill ${r.err ? "fail" : "ok"}">${esc(label)}</span> ` +
+          `${r.err ? "fail" : "ok"}` +
+          (r.tokens ? ` · ${r.tokens} tok` : "") +
+          (r.model ? ` · ${esc(r.model)}` : "") +
+          (head ? ` · ${esc(head)}${text.length > 120 ? "…" : ""}` : "") +
+          `</summary>` +
+          `<pre class="hoop-stage-pre">${esc(text) || "(empty)"}</pre></details>`
+        );
+      })
+      .join("");
+    body.innerHTML =
+      (summary
+        ? `<details class="hoop-stage-detail" open><summary>Merged summary</summary>` +
+          `<pre class="hoop-stage-pre">${esc(summary)}</pre></details>`
+        : "") +
+      (workerBlocks
+        ? `<div class="hoop-stage-details" style="margin-top:8px">${workerBlocks}</div>`
+        : `<p class="muted">No per-worker results</p>`);
   }
 
   function buildSwarmCyElements() {
@@ -3258,13 +4806,33 @@
         selectSwarmThread(id);
         editSelectedSwarmThread();
       });
+      swarmCy.on("grab", "node", (ev) => {
+        if (historySuspended || swarmLinkMode || ev.target.hasClass("eh-handle") || ev.target.id() === "orch") return;
+        const th = swarmThreads.find((t) => t.uid === ev.target.id());
+        if (!th) return;
+        const p = ev.target.position();
+        ev.target.scratch("_preDrag", { x: th.x, y: th.y, px: p.x, py: p.y });
+        pushSwarmHistory();
+        ev.target.scratch("_histPushed", true);
+      });
       swarmCy.on("dragfree", "node", (ev) => {
         if (ev.target.hasClass("eh-handle") || ev.target.id() === "orch") return;
         const th = swarmThreads.find((t) => t.uid === ev.target.id());
         if (!th) return;
         const p = ev.target.position();
+        const pre = ev.target.scratch("_preDrag");
+        const moved =
+          !pre ||
+          Math.abs((pre.px || 0) - p.x) > 2 ||
+          Math.abs((pre.py || 0) - p.y) > 2;
+        if (!moved && ev.target.scratch("_histPushed") && swarmUndoStack.length) {
+          swarmUndoStack.pop();
+          updateHistoryButtons();
+        }
         th.x = p.x;
         th.y = p.y;
+        ev.target.scratch("_preDrag", null);
+        ev.target.scratch("_histPushed", false);
       });
       swarmCy.on("mouseover", "node", (ev) => {
         if (ev.target.hasClass("eh-handle")) return;
@@ -3279,7 +4847,7 @@
           th.role +
           " | status: " +
           (th.status || "idle") +
-          (th.summary ? " | " + th.summary.slice(0, 80) : "");
+          " — click for full output";
       });
       swarmCy.on("mouseout", "node", () => {
         host.title = "";
@@ -3289,6 +4857,7 @@
         if (source === "orch" && target !== "orch") threadId = target;
         else if (target === "orch" && source !== "orch") threadId = source;
         else if (source !== "orch" && target !== "orch") {
+          pushSwarmHistory();
           if (!swarmLinks.includes(source)) swarmLinks.push(source);
           if (!swarmLinks.includes(target)) swarmLinks.push(target);
           syncSwarmRolesFromGraph();
@@ -3297,7 +4866,9 @@
           return;
         }
         if (!threadId || !swarmThreads.some((t) => t.uid === threadId)) return;
-        if (!swarmLinks.includes(threadId)) swarmLinks.push(threadId);
+        if (swarmLinks.includes(threadId)) return;
+        pushSwarmHistory();
+        swarmLinks.push(threadId);
         syncSwarmRolesFromGraph();
         renderSwarmGraph();
         showHoopsOk("Linked thread to orchestrator");
@@ -3307,6 +4878,8 @@
         const id = ev.target.id();
         if (id.startsWith("se-")) {
           const uid = id.slice(3);
+          if (!swarmLinks.includes(uid)) return;
+          pushSwarmHistory();
           swarmLinks = swarmLinks.filter((x) => x !== uid);
           syncSwarmRolesFromGraph();
           renderSwarmGraph();
@@ -3442,27 +5015,58 @@
       refreshStageLiveFromLoops(Array.isArray(list) ? list : []);
       const snap = JSON.stringify(list);
       if (snap === lastHoopsSnap && el.querySelector(".hoop-card, .hint, .cfg-error")) return;
+      // Preserve nested open details across live list rebuilds.
+      const openNested = new Set();
+      el.querySelectorAll(".hoop-card").forEach((card) => {
+        const hid = card.dataset.id || "";
+        card.querySelectorAll(".hoop-stage-detail[open], .hoop-hitl-ask[open]").forEach((d, i) => {
+          const label = d.querySelector("summary")?.textContent?.slice(0, 48) || String(i);
+          openNested.add(hid + "|" + d.className + "|" + label);
+        });
+      });
       lastHoopsSnap = snap;
+      lastHoopsList = Array.isArray(list) ? list : [];
       if (!Array.isArray(list) || list.length === 0) {
         el.innerHTML = `<p class="hint">No hoops yet. Build a stage graph and create one.</p>`;
         return;
       }
       el.innerHTML = list.map((st) => {
+        const name = esc(st.spec?.name || st.spec?.id || "");
+        const id = esc(st.spec?.id || "");
         const outcomes = (st.outcomes || []).slice(-8).reverse();
         const last = (st.outcomes || []).length
           ? (st.outcomes)[(st.outcomes).length - 1]
           : null;
-        const rows = outcomes.map((o) => {
+        const rows = outcomes.map((o, oi) => {
           const pills = (o.stages || []).map((s) =>
             `<span class="stage-pill ${s.success ? "ok" : "fail"}">${esc(s.kind)}</span>`
           ).join("");
-          return `<div class="hoop-outcome ${o.success ? "ok" : "fail"}">` +
+          const detail = o.success
+            ? (o.summary || "")
+            : (o.err || o.summary || "");
+          const detailCls = o.success ? "hoop-outcome-detail" : "hoop-outcome-detail is-error";
+          const stageBlocks = (o.stages || [])
+            .filter((s) => (s.summary && s.summary.trim()) || (s.err && s.err.trim()))
+            .map((s) => {
+              const body = s.err || s.summary || "";
+              return (
+                `<details class="hoop-stage-detail">` +
+                `<summary><span class="stage-pill ${s.success ? "ok" : "fail"}">${esc(s.kind)}</span> ` +
+                `${s.success ? "ok" : "fail"} · ${esc(String(body).slice(0, 96))}${String(body).length > 96 ? "…" : ""}</summary>` +
+                `<pre class="hoop-stage-pre">${esc(body)}</pre></details>`
+              );
+            })
+            .join("");
+          return `<div class="hoop-outcome ${o.success ? "ok" : "fail"}" data-outcome-idx="${oi}" data-hoop-id="${id}">` +
             `<span>#${o.iteration}</span><span>${esc(o.route || "")}</span>` +
             `<span>${o.latency_ms || 0}ms</span>` +
-            `<span>${pills} ${esc((o.summary || o.err || "").slice(0, 100))}</span></div>`;
+            `<button type="button" class="linkish hoop-copy-outcome" data-hoop-id="${id}" data-outcome-idx="${oi}" title="Copy this cycle's stage logs">Copy logs</button>` +
+            `<div class="${detailCls}">` +
+            `<div class="hoop-outcome-head">${pills}</div>` +
+            `<pre class="hoop-outcome-pre">${esc(detail)}</pre>` +
+            (stageBlocks ? `<div class="hoop-stage-details">${stageBlocks}</div>` : "") +
+            `</div></div>`;
         }).join("");
-        const name = esc(st.spec?.name || st.spec?.id || "");
-        const id = esc(st.spec?.id || "");
         const status = String(st.status || "idle");
         const badge = statusBadgeClass(status);
         const isRunning = badge === "running";
@@ -3482,57 +5086,146 @@
           ? `<p class="hint hoop-progress">Cycle #${prog.iteration || st.iteration || "?"} | ${esc(prog.phase || "")} | ${esc(prog.stage_kind || prog.stage_id || prog.current || "")}${prog.note ? " | " + esc(String(prog.note).slice(0, 60)) : ""}${routeBits.length ? " | " + esc(routeBits.join(" / ")) : ""}</p>`
           : "";
         const gate = st.gate || {};
+        const cursor = st.cursor || {};
+        const hitlAsk =
+          gate.ask ||
+          [
+            gate.reason || "approval required",
+            cursor.critic_text && "--- CRITIC ---\n" + cursor.critic_text,
+            cursor.actor_text && "--- ACTOR OUTPUT TO REVIEW ---\n" + cursor.actor_text,
+            cursor.plan_text && "--- PLAN ---\n" + cursor.plan_text,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
         const hitlBox = status === "waiting_human"
           ? `<div class="hoop-hitl">
-              <p class="hint">Waiting for human: ${esc((gate.reason || "approval required").slice(0, 120))}</p>
-              <label class="span2">Comment <input type="text" class="hoop-hitl-comment" data-id="${id}" placeholder="optional note" /></label>
+              <p class="hint"><strong>Waiting for human</strong> — ${esc((gate.reason || "approval required").slice(0, 160))}</p>
+              <details class="hoop-hitl-ask" open>
+                <summary>What the agent asks you to review</summary>
+                <pre class="hoop-hitl-ask-pre">${esc(hitlAsk)}</pre>
+              </details>
+              <label class="span2" title="Optional note stored with the human gate decision">Comment <input type="text" class="hoop-hitl-comment" data-id="${id}" placeholder="optional note" title="Optional note stored with the human gate decision" /></label>
               <span class="hoop-actions">
                 <button type="button" class="linkish hoop-approve" data-id="${id}">Approve + resume</button>
                 <button type="button" class="linkish hoop-reject" data-id="${id}">Reject</button>
+                <button type="button" class="linkish hoop-copy-hitl" data-id="${id}" title="Copy review text">Copy ask</button>
               </span>
             </div>`
           : "";
         let lastOut = "No cycles yet";
+        let lastTip = lastOut;
         if (last) {
-          const bit = (last.summary || last.err || (last.success ? "ok" : "fail") || "").slice(0, 80);
-          lastOut = `#${last.iteration} ${last.success ? "ok" : "fail"} * ${bit}`;
+          const bit = last.success
+            ? (last.summary || "ok")
+            : (last.err || last.summary || "fail");
+          const short = String(bit).replace(/\s+/g, " ").trim();
+          lastOut =
+            `#${last.iteration} ${last.success ? "ok" : "fail"}` +
+            (last.route ? ` · ${last.route}` : "") +
+            ` · ${last.latency_ms || 0}ms · ` +
+            (short.length > 140 ? short.slice(0, 140) + "…" : short);
+          lastTip = `#${last.iteration} ${last.success ? "ok" : "fail"} — full text in Outcomes below`;
         }
-        return `<div class="hoop-card ${isRunning ? "is-running" : ""} ${status === "waiting_human" ? "is-waiting" : ""}" data-id="${id}" data-status="${esc(status)}">
-          <div class="hoop-card-head">
+        const forceOpen =
+          status === "running" ||
+          status === "waiting_human" ||
+          hoopFoldOpen(id);
+        return `<details class="hoop-card fold-card ${isRunning ? "is-running" : ""} ${status === "waiting_human" ? "is-waiting" : ""}" data-id="${id}" data-status="${esc(status)}" ${forceOpen ? "open" : ""}>
+          <summary class="hoop-card-head">
             <strong>${name}</strong>
             <span class="status-badge ${badge}">${esc(status)}</span>
+            ${spendChipHTML(st.spend)}
             <span class="muted">bias ${bias}</span>
             <span class="muted">score ${score}</span>
-            <span class="hoop-actions">
+            <span class="hoop-actions" onclick="event.preventDefault()">
               <button type="button" class="linkish hoop-edit-graph hoop-load-graph" data-id="${id}">Edit graph</button>
               <button type="button" class="linkish hoop-start" data-id="${id}">Start</button>
               <button type="button" class="linkish hoop-stop" data-id="${id}">Stop</button>
+              <button type="button" class="linkish hoop-clear-results" data-id="${id}" title="Clear outcomes + agent log for this hoop">Clear results</button>
               <button type="button" class="linkish hoop-del" data-id="${id}">Delete</button>
             </span>
-          </div>
+          </summary>
+          <div class="hoop-card-body">
           ${progLine}
           ${hitlBox}
-          <p class="hoop-last-outcome" title="Last outcome">${esc(lastOut)}</p>
+          <p class="hoop-last-outcome ${last && !last.success ? "is-error" : ""}" data-tip="${esc(lastTip)}">${esc(lastOut)}</p>
           <p class="hint" style="margin:8px 0">Goal: ${esc((st.spec?.goal || st.spec?.prompt || "").slice(0, 160))}</p>
           ${evalGoal ? `<p class="hint" style="margin:0 0 8px">Eval: ${evalGoal}</p>` : ""}
           <div class="hoop-stage-pills">${stageTags}</div>
           <div class="hoop-outcomes">${rows || `<span class="muted">No cycles yet -- start to run the pipeline</span>`}</div>
-        </div>`;
+          </div>
+        </details>`;
       }).join("");
-      el.querySelectorAll(".hoop-start").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "start")));
-      el.querySelectorAll(".hoop-stop").forEach((b) => b.addEventListener("click", () => hoopAction(b.dataset.id, "stop")));
-      el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", () => deleteHoop(b.dataset.id)));
-      el.querySelectorAll(".hoop-approve").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, true)));
-      el.querySelectorAll(".hoop-reject").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, false)));
+      if (openNested.size) {
+        el.querySelectorAll(".hoop-card").forEach((card) => {
+          const hid = card.dataset.id || "";
+          card.querySelectorAll(".hoop-stage-detail, .hoop-hitl-ask").forEach((d, i) => {
+            const label = d.querySelector("summary")?.textContent?.slice(0, 48) || String(i);
+            if (openNested.has(hid + "|" + d.className + "|" + label)) d.open = true;
+          });
+        });
+      }
+      el.querySelectorAll(".hoop-start").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); hoopAction(b.dataset.id, "start"); }));
+      el.querySelectorAll(".hoop-stop").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); hoopAction(b.dataset.id, "stop"); }));
+      el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); deleteHoop(b.dataset.id); }));
+      el.querySelectorAll(".hoop-clear-results").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); clearHoopResults(b.dataset.id); }));
+      el.querySelectorAll(".hoop-approve").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); hoopGate(b.dataset.id, true); }));
+      el.querySelectorAll(".hoop-reject").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); hoopGate(b.dataset.id, false); }));
+      el.querySelectorAll(".hoop-copy-outcome").forEach((b) => b.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const hid = b.dataset.hoopId;
+        const idx = Number(b.dataset.outcomeIdx);
+        const st = lastHoopsList.find((x) => x.spec?.id === hid);
+        if (!st) {
+          showHoopsError("Hoop not found for copy");
+          return;
+        }
+        const outcomes = (st.outcomes || []).slice(-8).reverse();
+        const o = outcomes[idx];
+        if (!o) {
+          showHoopsError("Outcome not found");
+          return;
+        }
+        copyText(formatHoopOutcomePlain(st, o), "Copied cycle #" + o.iteration + " logs");
+      }));
+      el.querySelectorAll(".hoop-copy-hitl").forEach((b) => b.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const st = lastHoopsList.find((x) => x.spec?.id === b.dataset.id);
+        const ask =
+          st?.gate?.ask ||
+          [
+            st?.gate?.reason,
+            st?.cursor?.critic_text && "--- CRITIC ---\n" + st.cursor.critic_text,
+            st?.cursor?.actor_text && "--- ACTOR ---\n" + st.cursor.actor_text,
+            st?.cursor?.plan_text && "--- PLAN ---\n" + st.cursor.plan_text,
+          ]
+            .filter(Boolean)
+            .join("\n\n") ||
+          "";
+        copyText(ask || "(empty)", "Copied HITL ask");
+      }));
       el.querySelectorAll(".hoop-card").forEach((card) => {
+        card.addEventListener("toggle", () => {
+          const hid = card.dataset.id;
+          if (hid) setHoopFoldOpen(hid, card.open);
+        });
         card.addEventListener("click", (ev) => {
           if (ev.target.closest("button")) return;
+          if (ev.target.closest("summary")) {
+            const hid = card.dataset.id;
+            if (hid) setAgentLogFocus("hoop", hid);
+            return;
+          }
           const hid = card.dataset.id;
           if (hid) setAgentLogFocus("hoop", hid);
         });
       });
       updateAgentLogChrome();
-      el.querySelectorAll(".hoop-edit-graph").forEach((b) => b.addEventListener("click", async () => {
+      el.querySelectorAll(".hoop-edit-graph").forEach((b) => b.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
         const res = await fetch(`/api/loops/${encodeURIComponent(b.dataset.id)}`);
         if (!res.ok) {
           showHoopsError(await res.text());
@@ -3545,17 +5238,220 @@
       el.innerHTML = `<p class="cfg-error">${esc(String(e))}</p>`;
     }
   }
+
+  function hoopFoldOpen(id) {
+    try {
+      return localStorage.getItem("glider.hoop.open." + id) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setHoopFoldOpen(id, open) {
+    try {
+      if (open) localStorage.setItem("glider.hoop.open." + id, "1");
+      else localStorage.removeItem("glider.hoop.open." + id);
+    } catch (_) {}
+  }
+
+  function setAllHoopFolds(open) {
+    document.querySelectorAll("#hoops-list .hoop-card").forEach((card) => {
+      card.open = open;
+      if (card.dataset.id) setHoopFoldOpen(card.dataset.id, open);
+    });
+  }
+
+  async function clearHoopResults(id) {
+    if (!id) return;
+    if (!confirm("Clear outcomes and agent log for " + id + "?")) return;
+    const res = await fetch("/api/loops/" + encodeURIComponent(id) + "/clear-results", { method: "POST" });
+    if (!res.ok) {
+      showHoopsError(await res.text());
+      return;
+    }
+    if (agentLogFocus && agentLogFocus.scope === "hoop" && agentLogFocus.id === id) {
+      clearAgentLogView();
+    }
+    showHoopsOk("Cleared results for " + id);
+    lastHoopsSnap = "";
+    await loadHoops();
+  }
+
+  async function clearAllHoopResults() {
+    if (!confirm("Clear outcomes + agent logs for all stopped hoops (running/waiting skipped)?")) return;
+    const res = await fetch("/api/loops/clear-all-results", { method: "POST" });
+    const text = await res.text();
+    if (!res.ok) {
+      showHoopsError(text);
+      return;
+    }
+    clearAgentLogView();
+    let msg = "Cleared logs & results";
+    try {
+      const data = JSON.parse(text);
+      msg = `Cleared ${data.cleared || 0} hoop(s)` +
+        (data.skipped && data.skipped.length ? `; skipped running: ${data.skipped.join(", ")}` : "");
+    } catch (_) {}
+    showHoopsOk(msg);
+    lastHoopsSnap = "";
+    await loadHoops();
+  }
+
+  async function clearServerAgentLog(scope, id) {
+    if (!scope) {
+      await fetch("/api/agent-logs?all=1", { method: "DELETE" });
+      return;
+    }
+    const q = id
+      ? "/api/agent-logs?scope=" + encodeURIComponent(scope) + "&id=" + encodeURIComponent(id)
+      : "/api/agent-logs?scope=" + encodeURIComponent(scope);
+    await fetch(q, { method: "DELETE" });
+  }
+
   async function hoopAction(id, action) {
     const res = await fetch("/api/loops/" + encodeURIComponent(id) + "/" + action, { method: "POST" });
     if (!res.ok) {
       showHoopsError(await res.text());
       return;
     }
-    if (action === "start" || action === "resume") setAgentLogFocus("hoop", id);
+    if (action === "start" || action === "resume") {
+      setAgentLogFocus("hoop", id);
+      try {
+        const det = await fetch("/api/loops/" + encodeURIComponent(id));
+        if (det.ok) {
+          loadHoopIntoComposer(await det.json(), { openGraph: true });
+        } else {
+          openGraphEditor("stage");
+        }
+      } catch (_) {
+        openGraphEditor("stage");
+      }
+      startLiveBoardPoll();
+      startHoopLiveFastPoll();
+    }
     showHoopsOk(action + " " + id);
     lastHoopsSnap = "";
     await loadHoops();
     if (isLiveLoopTabActive()) refreshLiveBoard();
+  }
+
+  let hoopLiveFastTimer = null;
+  function startHoopLiveFastPoll() {
+    if (hoopLiveFastTimer) clearInterval(hoopLiveFastTimer);
+    let awayTicks = 0;
+    let doneTicks = 0;
+    hoopLiveFastTimer = setInterval(async () => {
+      if (!isLiveLoopTabActive()) {
+        awayTicks += 1;
+        if (awayTicks > 25) {
+          clearInterval(hoopLiveFastTimer);
+          hoopLiveFastTimer = null;
+          return;
+        }
+      } else {
+        awayTicks = 0;
+      }
+      try {
+        const res = await fetch("/api/loops");
+        const list = await res.json();
+        refreshStageLiveFromLoops(Array.isArray(list) ? list : []);
+        const editId = document.getElementById("hoop-edit-id")?.value;
+        const st = Array.isArray(list) && editId ? list.find((x) => x.spec?.id === editId) : null;
+        const running = st && (st.status === "running" || st.status === "waiting_human");
+        if (running) {
+          doneTicks = 0;
+          startCyLiveMotion();
+          if (st.status === "waiting_human") {
+            updateGraphsLiveBadge("WAITING for human · Approve / Reject below or on Hoops tab");
+            paintGraphsHitl(st);
+          } else {
+            updateGraphsLiveBadge(
+              `Hoop live · ${st.progress?.stage_kind || st.progress?.current || st.progress?.stage_id || "…"}`
+            );
+            paintGraphsHitl(null);
+          }
+          // Rail already updated via refreshStageLiveFromLoops → applyStageLiveFromHoop.
+        } else {
+          paintGraphsHitl(null);
+          doneTicks += 1;
+          if (doneTicks > 8) {
+            clearInterval(hoopLiveFastTimer);
+            hoopLiveFastTimer = null;
+            if (!swarmLivePollTimer) updateGraphsLiveBadge("");
+          }
+        }
+      } catch (_) {}
+    }, 400);
+  }
+
+  function updateGraphsLiveBadge(text) {
+    let el = document.getElementById("graphs-live-badge");
+    if (!el) {
+      const head = document.querySelector(".graphs-panel-head > div");
+      if (!head) return;
+      el = document.createElement("p");
+      el.id = "graphs-live-badge";
+      el.className = "graphs-live-badge";
+      head.appendChild(el);
+    }
+    if (!text) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle("is-waiting", /waiting/i.test(text));
+  }
+
+  function paintGraphsHitl(st) {
+    let box = document.getElementById("graphs-hitl");
+    if (!st || String(st.status || "").toLowerCase() !== "waiting_human") {
+      if (box) box.hidden = true;
+      return;
+    }
+    const id = st.spec?.id || "";
+    if (!box) {
+      const head = document.querySelector(".graphs-panel-head");
+      if (!head) return;
+      box = document.createElement("div");
+      box.id = "graphs-hitl";
+      box.className = "hoop-hitl graphs-hitl";
+      head.insertAdjacentElement("afterend", box);
+    }
+    box.hidden = false;
+    const reason = st.gate?.reason || st.progress?.note || "approval required";
+    const ask =
+      st.gate?.ask ||
+      [
+        reason,
+        st.cursor?.critic_text && "--- CRITIC ---\n" + st.cursor.critic_text,
+        st.cursor?.actor_text && "--- ACTOR OUTPUT TO REVIEW ---\n" + st.cursor.actor_text,
+        st.cursor?.plan_text && "--- PLAN ---\n" + st.cursor.plan_text,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    const sig = id + "|" + reason + "|" + ask;
+    if (box.dataset.hitlSig === sig) return;
+    // Preserve comment + open ask while refreshing.
+    const prevComment = box.querySelector(".hoop-hitl-comment")?.value || "";
+    const askWasOpen = box.querySelector(".hoop-hitl-ask")?.open !== false;
+    box.dataset.hitlSig = sig;
+    box.innerHTML =
+      `<strong>Human gate</strong> — ${esc(reason)}` +
+      `<details class="hoop-hitl-ask"${askWasOpen ? " open" : ""}><summary>What to review</summary>` +
+      `<pre class="hoop-hitl-ask-pre">${esc(ask)}</pre></details>` +
+      `<label class="span2">Comment <input type="text" class="hoop-hitl-comment" data-id="${esc(id)}" placeholder="optional note" /></label>` +
+      `<div class="cfg-actions">` +
+      `<button type="button" class="linkish graphs-hitl-approve" data-id="${esc(id)}">Approve + resume</button>` +
+      `<button type="button" class="linkish graphs-hitl-reject" data-id="${esc(id)}">Reject</button>` +
+      `<button type="button" class="linkish graphs-hitl-copy" data-id="${esc(id)}">Copy ask</button>` +
+      `</div>`;
+    const commentInput = box.querySelector(".hoop-hitl-comment");
+    if (commentInput) commentInput.value = prevComment;
+    box.querySelector(".graphs-hitl-approve")?.addEventListener("click", () => hoopGate(id, true));
+    box.querySelector(".graphs-hitl-reject")?.addEventListener("click", () => hoopGate(id, false));
+    box.querySelector(".graphs-hitl-copy")?.addEventListener("click", () => copyText(ask, "Copied HITL ask"));
   }
 
   async function hoopGate(id, approve) {
@@ -3635,10 +5531,10 @@
         if (Array.isArray(s.roles) && s.roles.length) row.roles = s.roles;
         if (Array.isArray(s.tools) && s.tools.length) {
           row.tools = s.tools.filter((t) => t && t.name && t.name !== "*");
-          // MCP server bindings without specific tools → bind server for catalog fill.
+          // MCP server bindings without specific tools → keep "*" for runtime ExpandRefs.
           const wild = s.tools.filter((t) => t && t.kind === "mcp" && (t.name === "*" || !t.name));
           wild.forEach((t) => {
-            if (t.server) row.tools.push({ name: "list_tools", kind: "mcp", server: t.server });
+            if (t.server) row.tools.push({ name: "*", kind: "mcp", server: t.server });
           });
         }
         return row;
@@ -3710,6 +5606,19 @@
   });
   const hoopsRefresh = document.getElementById("hoops-refresh");
   if (hoopsRefresh) hoopsRefresh.addEventListener("click", () => refreshHoopsPanel());
+  document.getElementById("hoops-expand-all")?.addEventListener("click", () => setAllHoopFolds(true));
+  document.getElementById("hoops-collapse-all")?.addEventListener("click", () => setAllHoopFolds(false));
+  document.getElementById("hoops-clear-all-results")?.addEventListener("click", () => clearAllHoopResults());
+  document.getElementById("swarm-clear-logs")?.addEventListener("click", async () => {
+    if (!confirm("Clear all swarm agent logs?")) return;
+    try {
+      await clearServerAgentLog("swarm");
+      if (agentLogFocus && agentLogFocus.scope === "swarm") clearAgentLogView();
+      showHoopsOk("Cleared swarm logs");
+    } catch (e) {
+      showHoopsError(String(e));
+    }
+  });
 
   const loadSampleBtn = document.getElementById("hoops-load-sample");
   if (loadSampleBtn) {
@@ -3759,7 +5668,7 @@
           '<span class="tag">' + esc(m.kind || "") + '</span>' +
           '<span class="tag">' + esc(m.reload || (m.hot ? "hot" : "restart")) + '</span>' +
           '<span class="hotswap-gen ' + (bumped ? "live" : "") + '" title="' + esc(m.description || "") + '">gen ' + gen + '</span>' +
-          '<label class="check"><input type="checkbox" data-mod="' + esc(m.name) + '" ' + (en ? "checked" : "") + " " + (m.hot ? "" : "disabled") + ' /> enabled</label>' +
+          '<label class="check" title="' + esc(m.description || (m.hot ? "Hot-toggle this module without restart" : "Requires restart; toggle is informational")) + '"><input type="checkbox" data-mod="' + esc(m.name) + '" ' + (en ? "checked" : "") + " " + (m.hot ? "" : "disabled") + ' title="' + esc(m.description || "Enable or disable this module") + '" /> enabled</label>' +
           '</div>';
       }).join("") || '<p class="hint">No modules registered.</p>';
       el.querySelectorAll("input[data-mod]").forEach((inp) => {
@@ -3794,17 +5703,21 @@
         return;
       }
       el.innerHTML = list.map((t) =>
-        `<div class="hoop-card" data-tpl="${esc(t.id)}">` +
-        `<div class="hoop-card-head"><strong>${esc(t.name || t.id)}</strong> ` +
+        `<details class="hoop-card fold-card" data-tpl="${esc(t.id)}">` +
+        `<summary class="hoop-card-head"><strong>${esc(t.name || t.id)}</strong> ` +
         `<span class="tag">${t.enabled ? "on" : "off"}</span>` +
-        `<span class="hoop-actions">` +
+        `<span class="hoop-actions" onclick="event.preventDefault()">` +
         `<button type="button" class="linkish tpl-load-graph" data-id="${esc(t.id)}">Load threads</button>` +
-        `</span></div>` +
-        `<p class="hint">${esc((t.prompt || "").slice(0, 120))}</p>` +
-        `<p class="muted">roles: ${esc((t.roles || []).join(", ") || "--")}</p></div>`
+        `</span></summary>` +
+        `<div class="hoop-card-body">` +
+        `<p class="hint">${esc(t.prompt || "")}</p>` +
+        `<p class="muted">roles: ${esc((t.roles || []).join(", ") || "--")}</p>` +
+        `</div></details>`
       ).join("");
       el.querySelectorAll(".tpl-load-graph").forEach((b) => {
-        b.addEventListener("click", () => {
+        b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
           const tpl = list.find((x) => x.id === b.dataset.id);
           if (!tpl) return;
           const roles = (tpl.roles || []).length ? tpl.roles : ["plan", "exec"];
@@ -3813,6 +5726,12 @@
           if (tpl.prompt) document.getElementById("swarm-prompt").value = tpl.prompt;
           const workers = document.getElementById("swarm-workers");
           if (workers) workers.value = String(tpl.max_workers || Math.min(4, roles.length) || 2);
+          const waves = document.getElementById("swarm-waves");
+          if (waves && tpl.waves) waves.value = String(tpl.waves);
+          const weave = document.getElementById("swarm-weave-policy");
+          if (weave && tpl.weave_policy) weave.value = tpl.weave_policy;
+          const route = document.getElementById("swarm-route");
+          if (route && tpl.prefer_local) route.value = "local";
           showHoopsOk(`Loaded template ${tpl.name || tpl.id} into thread graph`);
         });
       });
@@ -3821,54 +5740,114 @@
     }
   }
 
+  let swarmLivePollTimer = null;
+  function stopSwarmLivePoll() {
+    if (swarmLivePollTimer) {
+      clearInterval(swarmLivePollTimer);
+      swarmLivePollTimer = null;
+    }
+  }
+  function startSwarmLivePoll(turnId) {
+    stopSwarmLivePoll();
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/swarm/runs/" + encodeURIComponent(turnId) + "/progress");
+        if (res.status === 404 || !res.ok) return;
+        applySwarmLiveProgress(await res.json());
+      } catch (_) {}
+    };
+    tick();
+    swarmLivePollTimer = setInterval(tick, 400);
+  }
+  function applySwarmLiveProgress(data) {
+    if (!data) return;
+    const workers = Array.isArray(data.workers) ? data.workers : [];
+    workers.forEach((w) => {
+      const role = String(w.role || "").toLowerCase();
+      const th = swarmThreads.find((t) => String(t.role || "").toLowerCase() === role);
+      if (!th) return;
+      if (w.status) th.status = w.status;
+      if (w.summary) th.summary = w.summary;
+      if (w.err) th.err = w.err;
+    });
+    const phase = data.phase || data.status || "running";
+    const waveBit = data.waves > 1 ? ` wave ${(data.wave || 0) + 1}/${data.waves}` : "";
+    const runningN = workers.filter((w) => w.status === "running").length;
+    const doneN = workers.filter((w) => w.status === "ok" || w.status === "fail").length;
+    if (data.status === "completed" || data.status === "failed") {
+      updateGraphsLiveBadge("");
+    } else {
+      updateGraphsLiveBadge(
+        `Swarm live · ${phase}${waveBit} · ${runningN} running · ${doneN}/${workers.length || "?"} done`
+      );
+    }
+    renderSwarmGraph();
+  }
+
   const swarmForm = document.getElementById("swarm-form");
   if (swarmForm) {
     swarmForm.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const out = document.getElementById("swarm-result");
       const roles = rolesFromInput();
       setSwarmThreadsFromRoles(roles);
       swarmThreads.forEach((t) => {
-        t.status = "running";
+        t.status = "pending";
         t.summary = "";
         t.err = "";
       });
       renderSwarmGraph();
+      openGraphEditor("swarm");
+      const turnId =
+        "swarm-" +
+        (typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : String(Date.now()) + "-" + Math.random().toString(16).slice(2));
+      lastSwarmRunId = turnId;
+      setAgentLogFocus("swarm", turnId);
+      startSwarmLivePoll(turnId);
+      updateGraphsLiveBadge("Swarm live · fan-out…");
       const body = {
+        turn_id: turnId,
         prompt: document.getElementById("swarm-prompt").value.trim(),
         roles,
         max_workers: Number(document.getElementById("swarm-workers").value) || 2,
-        prefer_local: true,
+        prefer_local: (document.getElementById("swarm-route")?.value || "local") === "local",
+        route: document.getElementById("swarm-route")?.value || "local",
         waves: Number(document.getElementById("swarm-waves")?.value) || 1,
         weave_policy: document.getElementById("swarm-weave-policy")?.value || "critic",
         decompose: !!document.getElementById("swarm-decompose")?.checked,
         free_spawn: !!document.getElementById("swarm-free-spawn")?.checked,
       };
-      const res = await fetch("/api/swarm/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const text = await res.text();
-      if (out) {
-        out.hidden = false;
-        out.textContent = text;
+      let res;
+      try {
+        res = await fetch("/api/swarm/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } finally {
+        stopSwarmLivePoll();
       }
+      const text = await res.text();
       if (!res.ok) {
-        swarmThreads.forEach((t) => { t.status = "fail"; t.err = text.slice(0, 120); });
+        paintSwarmRunInspect(null, text);
+        swarmThreads.forEach((t) => {
+          t.status = "fail";
+          t.err = text.slice(0, 4000);
+        });
         renderSwarmGraph();
+        updateGraphsLiveBadge("");
         showHoopsError(text);
         return;
       }
       try {
         const data = JSON.parse(text);
+        paintSwarmRunInspect(data, text);
         if (data.turn_id) {
           lastSwarmRunId = data.turn_id;
-          const focusId = data.thread_id || data.turn_id;
-          setAgentLogFocus("swarm", focusId);
+          setAgentLogFocus("swarm", data.thread_id || data.turn_id);
         }
         if (data.thread_id || data.waves) {
-          // Weave status on graph: mark orch as woven.
           const orch = swarmThreads.find((t) => t.uid === "orch");
           if (orch) {
             orch.status = "ok";
@@ -3877,7 +5856,6 @@
         }
         const results = data.results || [];
         const prog = data.progress || {};
-        const pathSet = new Set(prog.path_taken || []);
         swarmThreads.forEach((t, i) => {
           const r = results.find((x) => String(x.role || "").toLowerCase() === t.role) || results[i];
           if (!r) {
@@ -3887,26 +5865,20 @@
           t.status = r.err ? "fail" : "ok";
           t.summary = r.summary || r.episode?.summary || "";
           t.err = r.err || "";
-          // Live DecisionRoute: mark workers on path.
-          const wid = "worker-" + String(t.role || "").toLowerCase();
-          if (pathSet.has(wid) && t.status === "ok") t.status = "ok";
         });
-        if (prog.merge_failed) {
-          swarmThreads.forEach((t) => {
-            if (t.status !== "fail" && t.err) t.status = "fail";
-          });
-          if (out) {
-            out.textContent = (prog.merge_narrative || data.summary || text) +
-              (prog.path_taken ? "\n\npath: " + (prog.path_taken || []).join(" -> ") : "");
-          }
-        } else if (prog.path_taken && out) {
-          out.textContent = (data.summary || text) + "\n\nroute: " + prog.path_taken.join(" -> ");
+        if (prog.merge_failed && data.summary) {
+          /* inspect already has full summary */
         }
       } catch (_) {
-        swarmThreads.forEach((t) => { t.status = "ok"; });
+        paintSwarmRunInspect(null, text);
+        swarmThreads.forEach((t) => {
+          t.status = "ok";
+        });
       }
       renderSwarmGraph();
+      updateGraphsLiveBadge("");
       showHoopsOk("Swarm finished");
+      refreshSwarmThreads();
     });
   }
 
@@ -3921,18 +5893,22 @@
         return;
       }
       el.innerHTML = list.map((t) =>
-        `<div class="hoop-card" data-thread="${esc(t.id)}">` +
-        `<div class="hoop-card-head"><strong>${esc(t.id)}</strong> ` +
+        `<details class="hoop-card fold-card" data-thread="${esc(t.id)}">` +
+        `<summary class="hoop-card-head"><strong>${esc(t.id)}</strong> ` +
         `<span class="tag">${esc(t.status || "?")}</span>` +
-        `<span class="hoop-actions">` +
+        `<span class="hoop-actions" onclick="event.preventDefault()">` +
         `<button type="button" class="linkish thr-resume" data-id="${esc(t.id)}">Resume</button>` +
         `<button type="button" class="linkish thr-view" data-id="${esc(t.id)}">View</button>` +
-        `</span></div>` +
+        `</span></summary>` +
+        `<div class="hoop-card-body">` +
         `<p class="hint">waves=${t.wave_count || 0} policy=${esc(t.weave_policy || "-")}</p>` +
-        `<p class="muted">${esc((t.merged_summary || t.goal || "").slice(0, 140))}</p></div>`
+        `<pre class="hoop-stage-pre">${esc(t.merged_summary || t.goal || "(empty)")}</pre>` +
+        `</div></details>`
       ).join("");
       el.querySelectorAll(".thr-resume").forEach((b) => {
-        b.addEventListener("click", async () => {
+        b.addEventListener("click", async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
           const id = b.dataset.id;
           try {
             const res = await fetch("/api/swarm/threads/" + encodeURIComponent(id) + "/resume", {
@@ -3941,15 +5917,16 @@
               body: JSON.stringify({ waves: 1 }),
             });
             const text = await res.text();
-            const out = document.getElementById("swarm-result");
-            if (out) { out.hidden = false; out.textContent = text; }
-            if (!res.ok) { showHoopsError(text); return; }
             try {
               const data = JSON.parse(text);
+              paintSwarmRunInspect(data, text);
               if (data.thread_id || data.turn_id) {
                 setAgentLogFocus("swarm", data.thread_id || data.turn_id);
               }
-            } catch (_) {}
+            } catch (_) {
+              paintSwarmRunInspect(null, text);
+            }
+            if (!res.ok) { showHoopsError(text); return; }
             showHoopsOk("Resumed thread " + id);
             refreshSwarmThreads();
           } catch (e) {
@@ -3958,18 +5935,32 @@
         });
       });
       el.querySelectorAll(".thr-view").forEach((b) => {
-        b.addEventListener("click", async () => {
+        b.addEventListener("click", async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
           const res = await fetch("/api/swarm/threads/" + encodeURIComponent(b.dataset.id));
           const text = await res.text();
-          const out = document.getElementById("swarm-result");
-          if (out) { out.hidden = false; out.textContent = text; }
           setAgentLogFocus("swarm", b.dataset.id);
           try {
             const st = JSON.parse(text);
+            paintSwarmRunInspect(
+              {
+                summary: st.merged_summary || st.merged?.summary || "",
+                episode: st.merged,
+                results: (st.waves || []).flatMap((wv) => wv.results || []),
+                waves: (st.waves || []).length,
+                weave_policy: st.weave_policy,
+                turn_id: st.turn_id,
+                thread_id: st.id,
+              },
+              text
+            );
             if (st && Array.isArray(st.waves)) {
               paintWaveTimeline(st);
             }
-          } catch (_) {}
+          } catch (_) {
+            paintSwarmRunInspect(null, text);
+          }
         });
       });
     } catch (e) {
@@ -4014,6 +6005,249 @@
   initStageDnD();
 
   // Quick log-level change from config still goes through full save; also listen for select blur optional -- covered by Save.
+
+  // ── Workspace browser ─────────────────────────────────────────────────────
+  let wsSelectedFile = "";
+
+  function showWsError(msg) {
+    const el = document.getElementById("ws-error");
+    if (!el) return;
+    if (!msg) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    el.hidden = false;
+    el.textContent = msg;
+  }
+
+  function joinWsPath(base, name) {
+    const b = String(base || "").replace(/\/+$/, "");
+    const n = String(name || "").replace(/^\/+/, "");
+    if (!b || b === ".") return n;
+    if (!n) return b;
+    return b + "/" + n;
+  }
+
+  function parentWsPath(p) {
+    const parts = String(p || "").replace(/\/+$/, "").split("/").filter(Boolean);
+    if (parts.length <= 1) return "runs";
+    parts.pop();
+    return parts.join("/") || "runs";
+  }
+
+  async function refreshWorkspacePanel() {
+    showWsError("");
+    const runEl = document.getElementById("ws-run");
+    if (runEl && runEl.value.trim()) {
+      await loadWorkspaceRun();
+      return;
+    }
+    await loadWorkspaceList();
+  }
+
+  async function loadWorkspaceList() {
+    const pathEl = document.getElementById("ws-path");
+    const recEl = document.getElementById("ws-recursive");
+    const listEl = document.getElementById("ws-file-list");
+    const metaEl = document.getElementById("ws-files-meta");
+    const rootEl = document.getElementById("ws-root-label");
+    if (!listEl) return;
+    const path = (pathEl && pathEl.value.trim()) || "runs";
+    const recursive = !!(recEl && recEl.checked);
+    const q = new URLSearchParams({ path, recursive: recursive ? "1" : "0", limit: "400" });
+    try {
+      const res = await fetch("/api/workspace?" + q.toString());
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const data = JSON.parse(text);
+      if (rootEl) rootEl.textContent = data.workspace || "";
+      if (metaEl) metaEl.textContent = data.path || path;
+      const files = Array.isArray(data.files) ? data.files : [];
+      renderWorkspaceFiles(files, data.path || path, !recursive);
+    } catch (err) {
+      showWsError(err.message || String(err));
+      listEl.innerHTML = `<li class="hint">Failed to list</li>`;
+    }
+  }
+
+  async function loadWorkspaceRun() {
+    const runEl = document.getElementById("ws-run");
+    const listEl = document.getElementById("ws-file-list");
+    const metaEl = document.getElementById("ws-files-meta");
+    const rootEl = document.getElementById("ws-root-label");
+    const pathEl = document.getElementById("ws-path");
+    if (!listEl || !runEl) return;
+    const run = runEl.value.trim();
+    if (!run) {
+      showWsError("Enter a run id");
+      return;
+    }
+    showWsError("");
+    try {
+      const res = await fetch("/api/workspace?run=" + encodeURIComponent(run) + "&limit=400");
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const data = JSON.parse(text);
+      if (rootEl) rootEl.textContent = data.workspace || "";
+      if (metaEl) metaEl.textContent = "run " + (data.run || run);
+      if (pathEl && data.work_dir) pathEl.value = data.work_dir.replace(/\/work$/, "") || "runs/" + (data.run || run);
+      const work = (Array.isArray(data.work) ? data.work : []).map((f) => ({ path: f, label: f, kind: "work" }));
+      const out = (Array.isArray(data.out) ? data.out : []).map((f) => ({ path: f, label: f, kind: "out" }));
+      const rows = work.concat(out);
+      if (!rows.length) {
+        listEl.innerHTML = `<li class="hint">No files under work/ or out/ for this run</li>`;
+        return;
+      }
+      listEl.innerHTML = rows.map((r) =>
+        `<li><button type="button" class="ws-file-btn" data-ws-file="${esc(r.path)}">` +
+        `<span class="ws-file-kind">${esc(r.kind)}</span> ${esc(r.label)}</button></li>`
+      ).join("");
+      listEl.querySelectorAll("[data-ws-file]").forEach((btn) => {
+        btn.addEventListener("click", () => openWorkspaceFile(btn.getAttribute("data-ws-file")));
+      });
+    } catch (err) {
+      showWsError(err.message || String(err));
+      listEl.innerHTML = `<li class="hint">Failed to load run</li>`;
+    }
+  }
+
+  function renderWorkspaceFiles(files, basePath, dirsNavigable) {
+    const listEl = document.getElementById("ws-file-list");
+    if (!listEl) return;
+    const items = [];
+    if (basePath && basePath !== "runs" && basePath !== ".") {
+      items.push(`<li><button type="button" class="ws-file-btn ws-up" data-ws-dir="${esc(parentWsPath(basePath))}">../</button></li>`);
+    }
+    if (!files.length) {
+      items.push(`<li class="hint">Empty</li>`);
+    }
+    files.forEach((name) => {
+      const isDir = String(name).endsWith("/");
+      const clean = String(name).replace(/\/$/, "");
+      const full = joinWsPath(basePath, clean);
+      if (isDir && dirsNavigable) {
+        items.push(
+          `<li><button type="button" class="ws-file-btn ws-dir" data-ws-dir="${esc(full)}">${esc(name)}</button></li>`
+        );
+      } else if (isDir) {
+        items.push(`<li class="hint">${esc(name)}</li>`);
+      } else {
+        const filePath = dirsNavigable ? full : String(name);
+        items.push(
+          `<li><button type="button" class="ws-file-btn" data-ws-file="${esc(filePath)}">${esc(name)}</button></li>`
+        );
+      }
+    });
+    listEl.innerHTML = items.join("");
+    listEl.querySelectorAll("[data-ws-dir]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pathEl = document.getElementById("ws-path");
+        if (pathEl) pathEl.value = btn.getAttribute("data-ws-dir") || "runs";
+        const runEl = document.getElementById("ws-run");
+        if (runEl) runEl.value = "";
+        loadWorkspaceList();
+      });
+    });
+    listEl.querySelectorAll("[data-ws-file]").forEach((btn) => {
+      btn.addEventListener("click", () => openWorkspaceFile(btn.getAttribute("data-ws-file")));
+    });
+  }
+
+  async function openWorkspaceFile(path) {
+    if (!path) return;
+    wsSelectedFile = path;
+    showWsError("");
+    const preview = document.getElementById("ws-preview");
+    const pathLabel = document.getElementById("ws-preview-path");
+    const diffA = document.getElementById("ws-diff-a");
+    if (pathLabel) pathLabel.textContent = path;
+    if (diffA && !diffA.value.trim()) diffA.value = path;
+    if (preview) preview.textContent = "Loading…";
+    try {
+      const res = await fetch("/api/workspace?file=" + encodeURIComponent(path));
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const data = JSON.parse(text);
+      let body = data.content || "";
+      if (data.binary) body = "(binary file — preview skipped)\n" + body.slice(0, 200);
+      if (data.truncated) body += "\n\n… truncated (" + (data.size || "?") + " bytes)";
+      if (preview) preview.textContent = body || "(empty)";
+    } catch (err) {
+      showWsError(err.message || String(err));
+      if (preview) preview.textContent = "Failed to load file";
+    }
+  }
+
+  async function runWorkspaceFileDiff() {
+    const a = document.getElementById("ws-diff-a")?.value.trim();
+    const b = document.getElementById("ws-diff-b")?.value.trim();
+    const out = document.getElementById("ws-diff");
+    if (!a || !b) {
+      showWsError("Diff needs both A and B paths");
+      return;
+    }
+    showWsError("");
+    if (out) out.textContent = "Diffing…";
+    try {
+      const q = new URLSearchParams({ diff: "1", a, b });
+      const res = await fetch("/api/workspace?" + q.toString());
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const data = JSON.parse(text);
+      if (out) out.textContent = data.diff || "(empty diff)";
+    } catch (err) {
+      showWsError(err.message || String(err));
+      if (out) out.textContent = "Diff failed";
+    }
+  }
+
+  async function runWorkspaceGitDiff() {
+    const path = wsSelectedFile || document.getElementById("ws-diff-a")?.value.trim() ||
+      document.getElementById("ws-path")?.value.trim();
+    const out = document.getElementById("ws-diff");
+    if (!path) {
+      showWsError("Select a file/folder under a git clone first");
+      return;
+    }
+    showWsError("");
+    if (out) out.textContent = "git diff…";
+    try {
+      const q = new URLSearchParams({ diff: "1", path });
+      const res = await fetch("/api/workspace?" + q.toString());
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const data = JSON.parse(text);
+      const head = data.repo ? "repo: " + data.repo + "\n\n" : "";
+      if (out) out.textContent = head + (data.diff || "(empty)");
+    } catch (err) {
+      showWsError(err.message || String(err));
+      if (out) out.textContent = "Git diff failed";
+    }
+  }
+
+  document.getElementById("ws-refresh")?.addEventListener("click", () => refreshWorkspacePanel());
+  document.getElementById("ws-load")?.addEventListener("click", () => {
+    const runEl = document.getElementById("ws-run");
+    if (runEl) runEl.value = "";
+    loadWorkspaceList();
+  });
+  document.getElementById("ws-load-run")?.addEventListener("click", () => loadWorkspaceRun());
+  document.getElementById("ws-diff-files")?.addEventListener("click", () => runWorkspaceFileDiff());
+  document.getElementById("ws-diff-git")?.addEventListener("click", () => runWorkspaceGitDiff());
+  document.getElementById("ws-path")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      document.getElementById("ws-run").value = "";
+      loadWorkspaceList();
+    }
+  });
+  document.getElementById("ws-run")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      loadWorkspaceRun();
+    }
+  });
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(proto + "://" + location.host + "/ws");

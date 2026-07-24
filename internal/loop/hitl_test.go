@@ -82,12 +82,12 @@ func TestHITLDecideAndResume(t *testing.T) {
 	mgr.Tools = tools.NewRegistry(tools.Options{})
 
 	st, err := mgr.Create(LoopSpec{
-		ID:        "hitl1",
-		Goal:      "need approval",
-		Prompt:    "need approval",
-		Route:     RouteLocal,
-		Autonomy:  AutonomyL1,
-		HumanGate: true,
+		ID:            "hitl1",
+		Goal:          "need approval",
+		Prompt:        "need approval",
+		Route:         RouteLocal,
+		Autonomy:      AutonomyL1,
+		HumanGate:     true,
 		MaxIterations: 2,
 		Stages: []StageSpec{
 			{ID: "actor", Kind: StageActor, Prompt: "do it"},
@@ -157,5 +157,114 @@ func TestPickFeedbackTarget(t *testing.T) {
 	target := pickFeedbackTarget(spec, 0.2, false)
 	if target != "planner" {
 		t.Fatalf("target=%s", target)
+	}
+}
+
+func TestCriticFailHITLStopsAfterOnFailN(t *testing.T) {
+	dir := t.TempDir()
+	mc := &mockCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+		msg := ""
+		if len(req.Messages) > 0 {
+			msg = req.Messages[len(req.Messages)-1].Content
+		}
+		if strings.Contains(strings.ToLower(msg), "checker") || strings.Contains(msg, "SCORE") || strings.Contains(msg, "ACTOR_OUTPUT") {
+			return streamText("SCORE: 0.0\nREASON: incomplete audit"), nil
+		}
+		return streamText("actor draft without real findings"), nil
+	}}
+	mgr := NewManager(NewStore(filepath.Join(dir, "loops")), mc, nil, RunnerConfig{DefaultRoute: RouteLocal})
+	mgr.Logs = agentlog.NewStore(32)
+
+	st, err := mgr.Create(LoopSpec{
+		ID:            "hitl-nofail-loop",
+		Goal:          "clone then audit",
+		Prompt:        "clone then audit",
+		Route:         RouteLocal,
+		Autonomy:      AutonomyL1,
+		HumanGate:     true,
+		MaxIterations: 8,
+		Stop:          StopConditions{OnFailN: 2},
+		Stages: []StageSpec{
+			{ID: "actor", Kind: StageActor, Prompt: "do it"},
+			{ID: "critic", Kind: StageCritic, EvalMin: 0.9, Prompt: defaultCriticPrompt},
+		},
+		Eval: EvalSpec{MinScore: 0.9, OnFailN: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Start(context.Background(), st.Spec.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	waitStatus := func(want Status, timeout time.Duration) *LoopState {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			cur, _ := mgr.Get(st.Spec.ID)
+			if cur != nil && cur.Status == want {
+				return cur
+			}
+			if cur != nil && (cur.Status == StatusFailed || cur.Status == StatusCompleted) && want == StatusWaitingHuman {
+				t.Fatalf("expected %s, got %s wake=%s err=%s", want, cur.Status, cur.Checkpoint.WakeReason, cur.LastError)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		cur, _ := mgr.Get(st.Spec.ID)
+		t.Fatalf("timeout waiting for %s; got status=%v", want, cur)
+		return nil
+	}
+
+	// First critic fail → HITL.
+	cur := waitStatus(StatusWaitingHuman, 5*time.Second)
+	if !cur.Gate.Active {
+		t.Fatal("expected active gate on first critic fail")
+	}
+	if _, err := mgr.DecideGate(st.Spec.ID, GateDecision{Approve: true, Resume: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Further critic fails must eventually StatusFailed via on_fail_n — not infinite HITL.
+	deadline := time.Now().Add(8 * time.Second)
+	var final *LoopState
+	approves := 0
+	for time.Now().Before(deadline) {
+		final, _ = mgr.Get(st.Spec.ID)
+		if final == nil {
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		if final.Status == StatusFailed {
+			break
+		}
+		if final.Status == StatusWaitingHuman {
+			approves++
+			if approves > 3 {
+				t.Fatalf("HITL soft-loop: approved %d times; consecutive_fail=%d", approves, final.ConsecutiveFail)
+			}
+			if _, err := mgr.DecideGate(st.Spec.ID, GateDecision{Approve: true, Resume: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if final == nil || final.Status != StatusFailed {
+		t.Fatalf("want failed after HITL safety valve, got status=%v wake=%s failN=%d", final.Status, final.Checkpoint.WakeReason, final.ConsecutiveFail)
+	}
+	if final.Checkpoint.WakeReason != "on_fail_n" && !strings.Contains(final.LastError, "on_fail_n") {
+		t.Fatalf("wake=%s err=%s", final.Checkpoint.WakeReason, final.LastError)
+	}
+	_ = mgr.Stop(st.Spec.ID)
+	mgr.Shutdown()
+}
+
+func TestParseToolCallsFromTextJSON(t *testing.T) {
+	calls := parseToolCallsFromText(`{"name":"fs_list","arguments":{"path":"audit-target"}}`)
+	if len(calls) != 1 || calls[0].Name != "fs_list" {
+		t.Fatalf("%+v", calls)
+	}
+	calls = parseToolCallsFromText("__TOOL_CALLS__:" + `[{"id":"1","function":{"name":"datetime","arguments":"{}"}}]`)
+	if len(calls) != 1 || calls[0].Name != "datetime" {
+		t.Fatalf("marker path: %+v", calls)
 	}
 }

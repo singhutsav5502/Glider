@@ -11,11 +11,11 @@ import (
 type State string
 
 const (
-	StateRegistered State = "registered"
+	StateRegistered  State = "registered"
 	StateInitialized State = "initialized"
-	StateStarted    State = "started"
-	StateStopped    State = "stopped"
-	StateFailed     State = "failed"
+	StateStarted     State = "started"
+	StateStopped     State = "stopped"
+	StateFailed      State = "failed"
 )
 
 // Capability flags what a plugin can provide.
@@ -30,11 +30,11 @@ const (
 
 // Meta is static plugin identity.
 type Meta struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name,omitempty"`
-	Version     string   `json:"version,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Author      string   `json:"author,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Description string `json:"description,omitempty"`
+	Author      string `json:"author,omitempty"`
 }
 
 // Health is a liveness/readiness report.
@@ -46,8 +46,8 @@ type Health struct {
 
 // ToolSchema is a JSON-Schema-ish tool definition (OpenAI/MCP compatible shape).
 type ToolSchema struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 	// InputSchema is raw JSON Schema for arguments (object type).
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 	// OutputSchema optional.
@@ -78,6 +78,22 @@ type ToolProvider interface {
 	CallTool(ctx context.Context, call ToolCall) (ToolResult, error)
 }
 
+// StageHook is the payload for CapHooks enter/exit callbacks.
+type StageHook struct {
+	Phase     string // enter | exit
+	HoopID    string
+	StageID   string
+	StageKind string
+	Iteration int
+	Attrs     map[string]string
+}
+
+// HookProvider is optional CapHooks surface (enter/exit stage).
+type HookProvider interface {
+	OnStageEnter(ctx context.Context, h StageHook) error
+	OnStageExit(ctx context.Context, h StageHook) error
+}
+
 // Plugin is the full lifecycle contract.
 type Plugin interface {
 	Meta() Meta
@@ -92,6 +108,8 @@ type Plugin interface {
 
 	// Tools may be nil if CapTools is absent.
 	Tools() ToolProvider
+	// Hooks may be nil if CapHooks is absent.
+	Hooks() HookProvider
 }
 
 // Host is what the runtime provides to plugins (logging, shared context hooks).
@@ -112,11 +130,13 @@ type Registry interface {
 	HealthAll(ctx context.Context) map[string]Health
 	// ToolProviders returns all started plugins that expose tools.
 	ToolProviders() []ToolProvider
+	// HookProviders returns plugins that expose CapHooks enter/exit.
+	HookProviders() []HookProvider
 }
 
 // SimpleHost is a minimal Host for tests and default wiring.
 type SimpleHost struct {
-	Root string
+	Root   string
 	OnEmit func(kind, message string, attrs map[string]string)
 }
 

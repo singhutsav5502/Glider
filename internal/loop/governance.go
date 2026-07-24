@@ -42,9 +42,9 @@ type BudgetSpend struct {
 // MachineCursor persists mid-cycle / mid-machine position for HITL resume.
 type MachineCursor struct {
 	Active         bool     `json:"active,omitempty"`
-	ResumeStageID  string   `json:"resume_stage_id,omitempty"`  // continue AFTER this stage
-	ResumeIndex    int      `json:"resume_index,omitempty"`     // index in enabled walk order
-	Iteration      int      `json:"iteration,omitempty"`        // cycle iteration to keep
+	ResumeStageID  string   `json:"resume_stage_id,omitempty"` // continue AFTER this stage
+	ResumeIndex    int      `json:"resume_index,omitempty"`    // index in enabled walk order
+	Iteration      int      `json:"iteration,omitempty"`       // cycle iteration to keep
 	PlanText       string   `json:"plan_text,omitempty"`
 	ActorText      string   `json:"actor_text,omitempty"`
 	CriticText     string   `json:"critic_text,omitempty"`
@@ -75,4 +75,54 @@ func denylistHit(deny []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// checkGovernance returns (stop, reason). Soft hits set SoftHit without stopping.
+// CheckGovernance evaluates soft/hard budgets on st.Spend.
+// Soft hits set SoftHit without stopping; hard hits return stop=true.
+func CheckGovernance(st *LoopState, cycleTokens int, cycleLatencyMS int64) (bool, string) {
+	if st == nil {
+		return false, ""
+	}
+	g := st.Spec.Governance
+	if g.HardLatencyMS > 0 && cycleLatencyMS > int64(g.HardLatencyMS) {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_latency"
+	}
+	if g.SoftLatencyMS > 0 && cycleLatencyMS > int64(g.SoftLatencyMS) {
+		st.Spend.SoftHit = true
+	}
+	if g.HardTokens > 0 && st.Spend.Tokens >= g.HardTokens {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_tokens"
+	}
+	if g.HardCostUSD > 0 && st.Spend.CostUSD >= g.HardCostUSD {
+		st.Spend.HardHit = true
+		return true, "budget_exceeded:hard_cost"
+	}
+	if g.SoftTokens > 0 && st.Spend.Tokens >= g.SoftTokens {
+		st.Spend.SoftHit = true
+	}
+	if g.SoftCostUSD > 0 && st.Spend.CostUSD >= g.SoftCostUSD {
+		st.Spend.SoftHit = true
+	}
+	if g.MaxRPM > 0 {
+		now := time.Now().UnixMilli()
+		n := 0
+		for _, t := range st.Spend.CycleStarts {
+			if now-t <= 60_000 {
+				n++
+			}
+		}
+		if n > g.MaxRPM {
+			st.Spend.HardHit = true
+			return true, "budget_exceeded:rate_limit"
+		}
+	}
+	_ = cycleTokens
+	return false, ""
+}
+
+func (m *Manager) checkGovernance(st *LoopState, cycleTokens int, cycleLatencyMS int64) (bool, string) {
+	return CheckGovernance(st, cycleTokens, cycleLatencyMS)
 }

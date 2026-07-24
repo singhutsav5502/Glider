@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +134,9 @@ func TestInterceptorRunSSELocalFulfill(t *testing.T) {
 }
 
 func TestInterceptorRunSSEToolLoopSkips(t *testing.T) {
+	cursorrpc.SetRunSSEToolCodecEnabled(false)
+	defer cursorrpc.SetRunSSEToolCodecEnabled(false)
+
 	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
 		Rules: []config.RuleConfig{{
 			Name: "Always Local", Priority: 0,
@@ -175,6 +179,76 @@ func TestInterceptorRunSSEToolLoopSkips(t *testing.T) {
 	if counts["action:runsse_skip_tool_loop"] < 1 {
 		t.Fatalf("counts=%v want runsse_skip_tool_loop", counts)
 	}
+}
+
+func TestInterceptorRunSSEToolLoopFulfillsWhenCodecOn(t *testing.T) {
+	cursorrpc.SetRunSSEToolCodecEnabled(true)
+	defer cursorrpc.SetRunSSEToolCodecEnabled(false)
+
+	engine, err := router.NewEngineFromConfig(config.RoutingConfig{
+		Rules: []config.RuleConfig{{
+			Name: "Always Local", Priority: 0,
+			Trigger: config.TriggerConfig{Type: "always"},
+			Action:  config.ActionConfig{Target: "local", Model: "codellama:7b"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := mitm.NewAgentFulfillHub()
+	c := metrics.NewCollector(nil)
+	exec := &countingExecutor{}
+	inter := &mitm.Interceptor{
+		Harness:           &orchestrator.PipelineCompleter{Router: engine, Executor: exec},
+		Metrics:           c,
+		AgentRPCFulfill:   true,
+		AgentRPCToolCodec: true,
+		CannedOnError:     true,
+		CannedText:        "tool-codec-pong",
+		FulfillHub:        hub,
+		ToolFollowup: config.ToolFollowupConfig{
+			Enabled:            true,
+			LocalToolAllowlist: []string{"read_file"},
+		},
+	}
+	hub.OpenTurnFamily("parent-root", mitm.StickyLocal, "decide_local")
+	reqID := "22222222-2222-4222-8222-222222222222"
+	hub.ArmLocal(reqID, &mitm.AgentFulfillOffer{
+		Local: true,
+		Request: &backend.CompletionRequest{
+			Model: "x",
+			Messages: []backend.Message{{Role: "user", Content: "read"}},
+			Tools: mustToolsJSON(t),
+		},
+	})
+	runBody := buildRunSSERequest(reqID)
+	rr := httptest.NewRecorder()
+	runReq := httptest.NewRequest(http.MethodPost,
+		"https://api2.cursor.sh/agent.v1.AgentService/RunSSE",
+		bytes.NewReader(runBody))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runReq.Header.Set("X-Request-Id", reqID)
+	runReq.Header.Set("X-Parent-Agent-Tool-Call-Id", "call-abc")
+	runReq.Header.Set("X-Agent-Tool-Name", "read_file")
+	handled, err := inter.TryHandle(rr, runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("tool codec on + prefer_local must fulfill")
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/connect+proto" {
+		t.Fatalf("ct=%s", ct)
+	}
+	counts := c.GetRouteCounts()
+	if counts["action:tool_followup_local"] < 1 && counts["action:runsse_canned"] < 1 {
+		t.Fatalf("counts=%v want tool_followup_local or canned", counts)
+	}
+}
+
+func mustToolsJSON(t *testing.T) json.RawMessage {
+	t.Helper()
+	return json.RawMessage(`[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]`)
 }
 
 func TestInterceptorToolFollowupWouldLocal(t *testing.T) {

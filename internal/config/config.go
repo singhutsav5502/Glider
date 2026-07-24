@@ -3,18 +3,18 @@ package config
 import "strings"
 
 type Config struct {
-	Server         ServerConfig         `yaml:"server" json:"server"`
-	Thresholds     ThresholdConfig      `yaml:"thresholds" json:"thresholds"`
-	VRAM           VRAMConfig           `yaml:"vram" json:"vram"`
-	Models         []ModelConfig        `yaml:"models" json:"models"`
-	ModelAliases   map[string]string    `yaml:"model_aliases" json:"model_aliases"`
-	Routing        RoutingConfig        `yaml:"routing" json:"routing"`
-	Orchestration  OrchestrationConfig  `yaml:"orchestration,omitempty" json:"orchestration,omitempty"`
-	Cloud          CloudConfig          `yaml:"cloud" json:"cloud"`
-	Backends       []BackendConfig      `yaml:"backends" json:"backends"`
-	Dashboard      DashboardConfig      `yaml:"dashboard" json:"dashboard"`
-	Transform      TransformConfig      `yaml:"transform" json:"transform"`
-	MITM           MITMConfig           `yaml:"mitm" json:"mitm"`
+	Server        ServerConfig        `yaml:"server" json:"server"`
+	Thresholds    ThresholdConfig     `yaml:"thresholds" json:"thresholds"`
+	VRAM          VRAMConfig          `yaml:"vram" json:"vram"`
+	Models        []ModelConfig       `yaml:"models" json:"models"`
+	ModelAliases  map[string]string   `yaml:"model_aliases" json:"model_aliases"`
+	Routing       RoutingConfig       `yaml:"routing" json:"routing"`
+	Orchestration OrchestrationConfig `yaml:"orchestration,omitempty" json:"orchestration,omitempty"`
+	Cloud         CloudConfig         `yaml:"cloud" json:"cloud"`
+	Backends      []BackendConfig     `yaml:"backends" json:"backends"`
+	Dashboard     DashboardConfig     `yaml:"dashboard" json:"dashboard"`
+	Transform     TransformConfig     `yaml:"transform" json:"transform"`
+	MITM          MITMConfig          `yaml:"mitm" json:"mitm"`
 	// Context tunes the hybrid contextgraph warm store (optional).
 	Context ContextConfig `yaml:"context,omitempty" json:"context,omitempty"`
 }
@@ -31,9 +31,9 @@ type ContextConfig struct {
 
 // OrchestrationConfig holds swarm/fan-out feature flags (foundation; default off).
 type OrchestrationConfig struct {
-	FanOut      FanOutConfig      `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	FanOut FanOutConfig `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
 	// Swarm gates POST /api/swarm/run and dashboard swarm runner (default off).
-	Swarm SwarmConfig `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	Swarm       SwarmConfig       `yaml:"swarm,omitempty" json:"swarm,omitempty"`
 	Concurrency ConcurrencyConfig `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
 	// HoopsDir is where swarm templates + hoop YAML live (default ~/.glider/hoops).
 	HoopsDir string `yaml:"hoops_dir,omitempty" json:"hoops_dir,omitempty"`
@@ -44,10 +44,35 @@ type OrchestrationConfig struct {
 	Tools ToolsConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
-// ToolsConfig gates dangerous builtins (shell_exec default off).
+// ToolsConfig gates dangerous builtins (shell_exec default off) and sandbox root.
 type ToolsConfig struct {
+	// Workspace is the sandbox root for fs_*, git_*, shell_exec (absolute or relative to process cwd).
+	// Empty → ~/.glider/workspace (created on start). Use "." only if you intentionally want the Glider repo.
+	Workspace      string   `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	AllowShell     bool     `yaml:"allow_shell,omitempty" json:"allow_shell,omitempty"`
 	ShellAllowlist []string `yaml:"shell_allowlist,omitempty" json:"shell_allowlist,omitempty"`
+	// AllowHosts limits http_fetch / web_fetch (empty = allow any host).
+	AllowHosts []string `yaml:"allow_hosts,omitempty" json:"allow_hosts,omitempty"`
+	// WebSearch configures web_search provider + caps (agent-loop only; not blind-safe).
+	WebSearch WebSearchConfig `yaml:"web_search,omitempty" json:"web_search,omitempty"`
+}
+
+// WebSearchConfig selects the web_search backend for local/Path A tool loops.
+type WebSearchConfig struct {
+	// Provider: auto|duckduckgo|brave|tavily|serpapi|searxng (default auto).
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	// MaxResults caps ranked hits (default 5).
+	MaxResults int `yaml:"max_results,omitempty" json:"max_results,omitempty"`
+	// BraveAPIKeyEnv defaults to BRAVE_SEARCH_API_KEY (also accepts BRAVE_API_KEY).
+	BraveAPIKeyEnv string `yaml:"brave_api_key_env,omitempty" json:"brave_api_key_env,omitempty"`
+	// TavilyAPIKeyEnv defaults to TAVILY_API_KEY.
+	TavilyAPIKeyEnv string `yaml:"tavily_api_key_env,omitempty" json:"tavily_api_key_env,omitempty"`
+	// SerpAPIKeyEnv defaults to SERPAPI_KEY.
+	SerpAPIKeyEnv string `yaml:"serpapi_key_env,omitempty" json:"serpapi_key_env,omitempty"`
+	// SearXNGURL is a self-hosted SearXNG base URL (or set SEARXNG_URL).
+	SearXNGURL string `yaml:"searxng_url,omitempty" json:"searxng_url,omitempty"`
+	// FetchMaxBytes caps web_fetch body size (default 65536).
+	FetchMaxBytes int `yaml:"fetch_max_bytes,omitempty" json:"fetch_max_bytes,omitempty"`
 }
 
 // SwarmConfig enables the swarm FanOut API runner.
@@ -62,6 +87,11 @@ type LoopConfig struct {
 	DefaultRoute string `yaml:"default_route,omitempty" json:"default_route,omitempty"`
 	// Dir overrides ~/.glider/loops state persistence.
 	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
+	// SkillsDir is an optional root for SKILL.md / skill-id resolution (also searches tools workspace + cwd).
+	SkillsDir string `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"`
+	// Worktrees isolates parallel>1 fan-out workers under runs/<id>/work/wN
+	// (git worktree add when the workspace is a git repo; else plain subdirs). Default off.
+	Worktrees bool `yaml:"worktrees,omitempty" json:"worktrees,omitempty"`
 	// HoopLearning stores iteration outcomes and optionally biases next auto route.
 	HoopLearning HoopLearningConfig `yaml:"hoop_learning,omitempty" json:"hoop_learning,omitempty"`
 }
@@ -113,6 +143,10 @@ type MITMConfig struct {
 	// AgentRPCCannedText is the synthetic reply used when canned-on-error fires.
 	// Empty → default "pong from glider (canned Path B)".
 	AgentRPCCannedText string `yaml:"agent_rpc_canned_text,omitempty" json:"agent_rpc_canned_text,omitempty"`
+	// AgentRPCToolCodec enables Path B child/tool-loop RunSSE fulfill (tool_call
+	// frames). Default false — keep Mode A for Agent+tools demos. Also:
+	// GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1. Requires AgentRPCFulfill.
+	AgentRPCToolCodec bool `yaml:"agent_rpc_tool_codec" json:"agent_rpc_tool_codec"`
 	// OriginOnLocalError: when CompleteLocal fails after a local arm and canned is
 	// off, fail-soft to Cursor origin (hybrid default). Set false for pure-local
 	// so Cursor sees a clear Glider/Ollama error via RunSSE instead of subscription.
@@ -138,9 +172,15 @@ type ServerConfig struct {
 }
 
 type ThresholdConfig struct {
-	MaxLocalContextTokens int    `yaml:"max_local_context_tokens" json:"max_local_context_tokens"`
+	MaxLocalContextTokens int `yaml:"max_local_context_tokens" json:"max_local_context_tokens"`
 	IdleUnloadTimeout     string `yaml:"idle_unload_timeout" json:"idle_unload_timeout"`
-	RequestTimeout        string `yaml:"request_timeout" json:"request_timeout"`
+	// RequestTimeout is the HTTP client timeout for local backends (Ollama/vLLM Complete).
+	// Raise for large local models + tool loops (e.g. 14b with 20–28 steps); default 10m.
+	// Key: thresholds.request_timeout (Go duration string: 10m, 600s, …).
+	RequestTimeout string `yaml:"request_timeout" json:"request_timeout"`
+	// DefaultMaxTokens is max_tokens sent on hoop/swarm Completes (Ollama maps to num_predict).
+	// 0 → loop.DefaultCompletionMaxTokens (8192). Raise for long audit reports / artifact_write.
+	DefaultMaxTokens int `yaml:"default_max_tokens,omitempty" json:"default_max_tokens,omitempty"`
 }
 
 type VRAMConfig struct {
@@ -206,7 +246,7 @@ type ComplexityConfig struct {
 	// CloudAbove routes to cloud when score >= this (0–100). Default 70.
 	CloudAbove int `yaml:"cloud_above,omitempty" json:"cloud_above,omitempty"`
 	// Priority of the injected rule. Default 75 (below must-cloud 80, above small-local 70).
-	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Priority     int    `yaml:"priority,omitempty" json:"priority,omitempty"`
 	CloudBackend string `yaml:"cloud_backend,omitempty" json:"cloud_backend,omitempty"`
 	CloudModel   string `yaml:"cloud_model,omitempty" json:"cloud_model,omitempty"`
 }
@@ -291,7 +331,7 @@ func (c *RoutingConfig) ApplyDefaultTarget() {
 	}
 	model := strings.TrimSpace(c.DefaultLocalModel)
 	if model == "" {
-		model = "codellama:7b"
+		model = "qwen2.5-coder:14b"
 	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
@@ -430,7 +470,7 @@ func DefaultConfig() *Config {
 		Thresholds: ThresholdConfig{
 			MaxLocalContextTokens: 8000,
 			IdleUnloadTimeout:     "5m",
-			RequestTimeout:        "120s",
+			RequestTimeout:        "10m",
 		},
 		VRAM: VRAMConfig{
 			Strategy:        "dynamic",
@@ -440,10 +480,10 @@ func DefaultConfig() *Config {
 		},
 		Models: []ModelConfig{
 			{
-				Name:           "codellama:7b",
+				Name:           "qwen2.5-coder:14b",
 				Backend:        "ollama",
-				VRAMEstimateMB: 4200,
-				MaxContext:     16384,
+				VRAMEstimateMB: 9000,
+				MaxContext:     32768,
 				Capabilities:   []string{"code"},
 				KeepWarm:       true,
 			},
@@ -478,14 +518,14 @@ func DefaultConfig() *Config {
 		Routing: RoutingConfig{
 			TaskClassifier: TaskClassifierConfig{
 				Enabled:    true,
-				LocalModel: "codellama:7b",
+				LocalModel: "qwen2.5-coder:14b",
 			},
 			Rules: []RuleConfig{
 				{
 					Name:     "Explicit Local",
 					Priority: 100,
 					Trigger:  TriggerConfig{Type: "explicit", Commands: []string{"/local", "/fast"}},
-					Action:   ActionConfig{Target: "local", Model: "codellama:7b"},
+					Action:   ActionConfig{Target: "local", Model: "qwen2.5-coder:14b"},
 				},
 				{
 					Name:     "Explicit Cloud",

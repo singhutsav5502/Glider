@@ -111,6 +111,61 @@ func TestMidCycleHITLResumeContinuesAfterGate(t *testing.T) {
 	mgr.Shutdown()
 }
 
+func TestHumanGateNotCompletedByOnSuccessN(t *testing.T) {
+	dir := t.TempDir()
+	mc := &mockCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
+		return streamText("draft for review"), nil
+	}}
+	mgr := NewManager(NewStore(filepath.Join(dir, "loops")), mc, nil, RunnerConfig{DefaultRoute: RouteLocal})
+	mgr.Logs = agentlog.NewStore(32)
+
+	st, err := mgr.Create(LoopSpec{
+		ID:            "hitl-onsuccess",
+		Goal:          "pause before done",
+		Prompt:        "pause before done",
+		Route:         RouteLocal,
+		MaxIterations: 3,
+		Stop:          StopConditions{OnSuccessN: 1},
+		Stages: []StageSpec{
+			{ID: "act", Kind: StageActor, Prompt: "produce draft"},
+			{ID: "gate", Kind: StageHumanGate},
+			{ID: "crit", Kind: StageCritic, Prompt: "SCORE: 1.0\nREASON: ok", EvalMin: 0.5},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Start(context.Background(), st.Spec.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		cur, _ := mgr.Get(st.Spec.ID)
+		if cur != nil && cur.Status == StatusWaitingHuman {
+			break
+		}
+		if cur != nil && (cur.Status == StatusCompleted || cur.Status == StatusFailed) {
+			t.Fatalf("HITL overwritten by stop: status=%s wake=%s consecutive_ok=%d", cur.Status, cur.Checkpoint.WakeReason, cur.ConsecutiveOK)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cur, err := mgr.Get(st.Spec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.Status != StatusWaitingHuman {
+		t.Fatalf("want waiting_human, got %s wake=%s", cur.Status, cur.Checkpoint.WakeReason)
+	}
+	if cur.ConsecutiveOK != 0 {
+		t.Fatalf("HITL pause must not count as success: consecutive_ok=%d", cur.ConsecutiveOK)
+	}
+	if len(cur.Outcomes) == 0 || cur.Outcomes[len(cur.Outcomes)-1].Success {
+		t.Fatalf("paused outcome must not be Success=true: %+v", cur.Outcomes)
+	}
+	_ = mgr.Stop(st.Spec.ID)
+	mgr.Shutdown()
+}
+
 func TestGovernanceHardTokensStops(t *testing.T) {
 	dir := t.TempDir()
 	mc := &mockCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {

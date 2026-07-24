@@ -14,9 +14,29 @@ const (
 	StageActor     StageKind = "actor"      // implement / produce artifact
 	StageCritic    StageKind = "critic"     // maker/checker — emit eval score
 	StageMemory    StageKind = "memory"     // load/persist durable state (no LLM by default)
+	StageContext   StageKind = "context"    // upsert shared contextgraph for later actors/swarm
 	StageRouter    StageKind = "router"     // which model/tools for following stages
 	StageHumanGate StageKind = "human_gate" // HITL pause node (first-class)
 )
+
+// Parallel mode for stages with Parallel > 1.
+const (
+	ParallelModeFanout = "fanout" // default: swarm.FanOut + CritiqueMerge in-process
+	ParallelModeSwarm  = "swarm"  // nested swarm.Runner.Run / RunWaves
+)
+
+// StageSwarmSpec configures nested swarm.Runner when parallel_mode is swarm.
+type StageSwarmSpec struct {
+	TemplateID string `json:"template_id,omitempty" yaml:"template_id,omitempty"`
+	// Waves > 1 uses Runner.RunWaves; Waves <= 1 uses Runner.Run.
+	Waves int `json:"waves,omitempty" yaml:"waves,omitempty"`
+	// WeavePolicy for RunWaves (concatenate|role_weighted|critic|conflict_callouts|llm_critic).
+	WeavePolicy string `json:"weave_policy,omitempty" yaml:"weave_policy,omitempty"`
+	// PreferLocal biases nested swarm workers toward local inference.
+	PreferLocal bool `json:"prefer_local,omitempty" yaml:"prefer_local,omitempty"`
+	// Models optional per-worker model ids passed to swarm.RunRequest.
+	Models []string `json:"models,omitempty" yaml:"models,omitempty"`
+}
 
 // AutonomyLevel matches cobusgreyling L1–L3 rollout.
 type AutonomyLevel string
@@ -30,13 +50,13 @@ const (
 // StageSpec is a hot-swappable stage module (prompt/skill/route).
 // Alias: ModuleSpec in docs — same type.
 type StageSpec struct {
-	ID      string    `json:"id,omitempty" yaml:"id,omitempty"`
-	Kind    StageKind `json:"kind" yaml:"kind"`
-	Name    string    `json:"name,omitempty" yaml:"name,omitempty"`
-	Prompt  string    `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	Skill   string    `json:"skill,omitempty" yaml:"skill,omitempty"`
-	Route   RoutePref `json:"route,omitempty" yaml:"route,omitempty"`
-	Model   string    `json:"model,omitempty" yaml:"model,omitempty"`
+	ID     string    `json:"id,omitempty" yaml:"id,omitempty"`
+	Kind   StageKind `json:"kind" yaml:"kind"`
+	Name   string    `json:"name,omitempty" yaml:"name,omitempty"`
+	Prompt string    `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Skill  string    `json:"skill,omitempty" yaml:"skill,omitempty"`
+	Route  RoutePref `json:"route,omitempty" yaml:"route,omitempty"`
+	Model  string    `json:"model,omitempty" yaml:"model,omitempty"`
 	// Disabled skips this stage (hot-swap off). Default enabled.
 	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 	// Enabled is accepted from the dashboard compose UI (false → Disabled).
@@ -45,10 +65,19 @@ type StageSpec struct {
 	EvalMin float64 `json:"eval_min,omitempty" yaml:"eval_min,omitempty"`
 	// Parallel > 1 fans out this stage (typically actor) via swarm.FanOut (max 4).
 	Parallel int `json:"parallel,omitempty" yaml:"parallel,omitempty"`
+	// ParallelMode selects fanout (default) or nested swarm.Runner. Empty → fanout.
+	ParallelMode string `json:"parallel_mode,omitempty" yaml:"parallel_mode,omitempty"`
+	// Swarm optional nested-runner knobs when ParallelMode=swarm
+	// (template_id, waves, weave_policy, prefer_local, models).
+	Swarm *StageSwarmSpec `json:"swarm,omitempty" yaml:"swarm,omitempty"`
 	// Roles tags parallel workers (plan|exec|research|worker). Empty → worker-0..N.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
 	// Tools declares builtin / MCP / plugin capabilities on this node (internal/tools).
 	Tools []ToolRef `json:"tools,omitempty" yaml:"tools,omitempty"`
+	// Autonomy optional per-stage L1|L2|L3 override (empty → inherit hoop).
+	Autonomy AutonomyLevel `json:"autonomy,omitempty" yaml:"autonomy,omitempty"`
+	// HumanGate pauses before this stage (synthetic HITL without kind: human_gate).
+	HumanGate bool `json:"human_gate,omitempty" yaml:"human_gate,omitempty"`
 }
 
 // ToolRef is a node-declared MCP server or local plugin capability.
@@ -64,7 +93,8 @@ type GraphEdge struct {
 	ID     string `json:"id,omitempty" yaml:"id,omitempty"`
 	Source string `json:"source" yaml:"source"`
 	Target string `json:"target" yaml:"target"`
-	// Kind: flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge.
+	// Kind: flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge|feeds.
+	// feeds = data seed (producer summary → consumer prompt); not control-flow.
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Guard optionally overrides the default guard for this edge kind.
 	Guard     string  `json:"guard,omitempty" yaml:"guard,omitempty"` // always|score_below|relevancy|...
@@ -97,9 +127,9 @@ func (m *StageSpec) Normalize() error {
 	}
 	m.Kind = StageKind(strings.ToLower(string(m.Kind)))
 	switch m.Kind {
-	case StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate:
+	case StagePlanner, StageActor, StageCritic, StageMemory, StageContext, StageRouter, StageHumanGate:
 	default:
-		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|router|human_gate)", m.Kind)
+		return fmt.Errorf("unknown stage kind %q (planner|actor|critic|memory|context|router|human_gate)", m.Kind)
 	}
 	for i := range m.Tools {
 		m.Tools[i].Name = strings.TrimSpace(m.Tools[i].Name)
@@ -125,6 +155,12 @@ func (m *StageSpec) Normalize() error {
 	m.Skill = strings.TrimSpace(m.Skill)
 	m.Model = strings.TrimSpace(m.Model)
 	m.Route = RoutePref(strings.ToLower(string(m.Route)))
+	m.Autonomy = AutonomyLevel(strings.ToUpper(strings.TrimSpace(string(m.Autonomy))))
+	switch m.Autonomy {
+	case "", AutonomyL1, AutonomyL2, AutonomyL3:
+	default:
+		return fmt.Errorf("module %s: autonomy must be L1|L2|L3", m.ID)
+	}
 	switch m.Route {
 	case "", RouteLocal, RouteCloud, RouteAuto:
 	default:
@@ -142,6 +178,27 @@ func (m *StageSpec) Normalize() error {
 	if m.Parallel > 4 {
 		m.Parallel = 4
 	}
+	m.ParallelMode = strings.ToLower(strings.TrimSpace(m.ParallelMode))
+	switch m.ParallelMode {
+	case "", ParallelModeFanout:
+		m.ParallelMode = ParallelModeFanout
+	case ParallelModeSwarm:
+	default:
+		return fmt.Errorf("module %s: parallel_mode must be fanout|swarm", m.ID)
+	}
+	if m.Swarm != nil {
+		m.Swarm.TemplateID = strings.TrimSpace(m.Swarm.TemplateID)
+		m.Swarm.WeavePolicy = strings.ToLower(strings.TrimSpace(m.Swarm.WeavePolicy))
+		if m.Swarm.Waves < 0 {
+			return fmt.Errorf("module %s: swarm.waves must be >= 0", m.ID)
+		}
+		if m.Swarm.Waves > 4 {
+			m.Swarm.Waves = 4
+		}
+		for i := range m.Swarm.Models {
+			m.Swarm.Models[i] = strings.TrimSpace(m.Swarm.Models[i])
+		}
+	}
 	for i := range m.Roles {
 		m.Roles[i] = strings.TrimSpace(strings.ToLower(m.Roles[i]))
 	}
@@ -158,10 +215,15 @@ func (m *StageSpec) Normalize() error {
 	return nil
 }
 
-const defaultCriticPrompt = `You are the checker (not the maker). Score whether the GOAL is satisfied by the ACTOR output.
-Reply with exactly two lines:
+const defaultCriticPrompt = `You are the checker (not the maker). Judge ACTOR_OUTPUT against the GOAL only.
+Do NOT ask the operator questions. Do NOT request files, clarifications, or more context.
+Do NOT use tools. Reply with either plain lines OR a JSON object (not both, not markdown-wrapped):
 SCORE: <number 0.0 to 1.0>
-REASON: <one short sentence>`
+REASON: <one short sentence>
+— or —
+{"score": <0.0-1.0>, "reason": "<one short sentence>"}
+Prefer plain SCORE:/REASON: lines. Do not wrap SCORE in **bold** or *italics*.
+If ACTOR_OUTPUT is empty, chatty, or incomplete, still emit SCORE (use a low value) and REASON.`
 
 // DefaultStages / DefaultModules — minimal maker/checker pipeline.
 func DefaultStages() []StageSpec {
@@ -235,42 +297,20 @@ func EnabledStages(in []StageSpec) []StageSpec {
 
 // ModuleCatalog is exposed on GET /api/loops/modules for the compose UI.
 type ModuleCatalog struct {
-	Kinds    []StageKind  `json:"kinds"`
-	Defaults []StageSpec  `json:"defaults"`
-	Notes    string       `json:"notes"`
+	Kinds    []StageKind `json:"kinds"`
+	Defaults []StageSpec `json:"defaults"`
+	Notes    string      `json:"notes"`
 }
 
 // Catalog returns compose-UI metadata (pure data; no I/O).
 func Catalog() ModuleCatalog {
 	return ModuleCatalog{
-		Kinds:    []StageKind{StagePlanner, StageActor, StageCritic, StageMemory, StageRouter, StageHumanGate},
+		Kinds:    []StageKind{StagePlanner, StageActor, StageCritic, StageMemory, StageContext, StageRouter, StageHumanGate},
 		Defaults: DefaultModules("your recursive goal"),
-		Notes: "Loop Engineering hoop: compose Planner/Actor/Critic (+ Memory/Router/HumanGate). " +
+		Notes: "Loop Engineering hoop: compose Planner/Actor/Critic (+ Memory/Context/Router/HumanGate). " +
+			"parallel_mode: swarm nests swarm.Runner; kind: context seeds shared contextgraph. " +
 			"Interval/cron is optional Automations heartbeat — not the definition of the loop. " +
 			"Runtime is an AI-first state machine (graph|tree|loop|swarm). " +
 			"See planning/loop_engineering.md and internal/statemachine.",
 	}
-}
-
-// StagePrompt builds a stage user message for tests and tooling.
-func StagePrompt(goal string, stage StageSpec, prior string, eval EvalSpec) string {
-	var b strings.Builder
-	b.WriteString("[stage:")
-	b.WriteString(string(stage.Kind))
-	b.WriteString("]\n")
-	if stage.Prompt != "" {
-		b.WriteString(stage.Prompt)
-		b.WriteString("\n")
-	}
-	b.WriteString("GOAL:\n")
-	b.WriteString(goal)
-	if eval.Goal != "" {
-		b.WriteString("\nEval: ")
-		b.WriteString(eval.Goal)
-	}
-	if prior != "" {
-		b.WriteString("\nPRIOR:\n")
-		b.WriteString(prior)
-	}
-	return b.String()
 }

@@ -44,17 +44,29 @@ stages:
       to SOC2 change-management control themes (authorization, testing, monitoring, rollback,
       data handling). Mark each item AVAILABLE / PARTIAL / MISSING based only on given facts.
       List questions for the human gate. Do not invent ticket IDs beyond CHG-4421 / PR #1847.
+  - id: context_seed
+    kind: context
+    name: Seed shared evidence context
   - id: pack_writer
     kind: actor
     name: Draft evidence pack
     parallel: 2
+    # parallel_mode: swarm
     roles: [exec, research]
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       Follow the PLAN. Write the evidence pack with fixed headings:
       1) Change summary 2) Risk assessment 3) Approvals trail 4) Test evidence
       5) Monitoring & alerts 6) Rollback 7) Data classification 8) Evidence gaps / follow-ups
       Role bias: exec focuses on operational rollback/monitoring; research focuses on control
       mapping and gaps. Under 500 words total. No fake screenshots or forged signatures.
+      Prefer context_query / [context_digest] for shared goal/plan.
+      Persist the pack with artifact_write kind=out (e.g. out evidence-pack.md) under
+      runs/compliance-evidence-pack/out/ (bare paths ScopeRel to work/).
   - id: auditor_critic
     kind: critic
     name: External-auditor critic
@@ -79,6 +91,10 @@ graph_edges:
     kind: flow
   - id: e3
     source: evidence_plan
+    target: context_seed
+    kind: flow
+  - id: e3b
+    source: context_seed
     target: pack_writer
     kind: flow
   - id: e4

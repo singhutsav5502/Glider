@@ -1,4 +1,4 @@
-﻿# Glider intro profile -- dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
+# Glider intro profile -- dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
 #
 # Routing priority (highest first):
 #   1. Explicit /local /fast /cloud /heavy on current user turn
@@ -28,18 +28,21 @@ server:
 thresholds:
     max_local_context_tokens: 8000
     idle_unload_timeout: 5m
-    request_timeout: 120s
+    # HTTP client timeout for Ollama/vLLM Complete (headers + body). Raise for 14b + tool loops.
+    request_timeout: 10m
+    # Hoop Completes: max_tokens → Ollama num_predict (raise if reports/tool JSON cut mid-sentence).
+    default_max_tokens: 8192
 vram:
     strategy: hybrid
     headroom_mb: 512
     max_loaded_models: 3
     gpu_assignments:
-        codellama:7b: 0
+        qwen2.5-coder:14b: 0
 models:
-    - name: codellama:7b
+    - name: qwen2.5-coder:14b
       backend: ollama
-      vram_estimate_mb: 4200
-      max_context: 16384
+      vram_estimate_mb: 9000
+      max_context: 32768
       capabilities:
         - code
         - refactor
@@ -55,8 +58,8 @@ models:
         - explain
       keep_warm: false
 model_aliases:
-    claude-3.5-sonnet: codellama:7b
-    gpt-4o: codellama:7b
+    claude-3.5-sonnet: qwen2.5-coder:14b
+    gpt-4o: qwen2.5-coder:14b
     gpt-4o-mini: llama3:8b-instruct
 routing:
     # How long DecideLocal / explicit turn family sticks for reply-summary / title
@@ -106,7 +109,7 @@ routing:
     task_classifier:
         enabled: true
         tools_force_cloud: true
-        local_model: codellama:7b
+        local_model: qwen2.5-coder:14b
         cloud_backend: openai
         cloud_model: gpt-4o
         # Optional overrides (empty = built-in MVP patterns):
@@ -126,7 +129,7 @@ routing:
                 - /fast
           action:
             target: local
-            model: codellama:7b
+            model: qwen2.5-coder:14b
         - name: Explicit Cloud
           priority: 99
           enabled: true
@@ -159,7 +162,7 @@ routing:
             file: scripts/examples/detect_refactor.star
           action:
             target: local
-            model: codellama:7b
+            model: qwen2.5-coder:14b
         # Opt-in multi-worker fan-out: include /swarm or [fanout] in the prompt.
         # Needs orchestration.fan_out.enabled (see bottom of this file).
         - name: Sample FanOut Dual View
@@ -171,7 +174,7 @@ routing:
           action:
             target: local
             strategy: fan_out
-            model: codellama:7b
+            model: qwen2.5-coder:14b
         # Token ceiling -- safety net after task_classifier (not primary simplicity signal).
         - name: Context Overflow
           priority: 10
@@ -193,7 +196,7 @@ routing:
             value: 8000
           action:
             target: local
-            model: codellama:7b
+            model: qwen2.5-coder:14b
         - name: Default Origin
           priority: 0
           enabled: true
@@ -267,6 +270,11 @@ mitm:
     # Production local: keep false (never ship canned as "the model").
     agent_rpc_canned_on_error: false
     agent_rpc_canned_text: "pong from glider (canned Path B)"
+    # Opt-in Path B child/tool-loop RunSSE fulfill — PARTIAL (remaining_gaps §1.9):
+    # TruncatedToolCall + common OpenAI→Cursor ToolCall map ship; full Cursor builtin
+    # catalog still open. Default off — prefer Path A for Agent+tools demos.
+    # Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1
+    agent_rpc_tool_codec: false
     # Hybrid default: omit / true (origin fail-soft). Pure-local: false (clear error).
     # origin_on_local_error: true
     # require_local_healthy: false
@@ -310,6 +318,19 @@ context:
 #       window: 20
 
 orchestration:
+  tools:
+    # Sandbox for fs_*, git_*, shell_exec. Clones land here under runs/<id>/work/ (ScopeRel).
+    # Empty / omitted → ~/.glider/workspace. Do NOT set to "." unless you want tools to see the Glider source tree.
+    # workspace: ~/.glider/workspace
+    allow_shell: false
+    # Optional host allowlist for http_fetch / web_fetch (empty = any host).
+    # allow_hosts: ["github.com", "raw.githubusercontent.com"]
+    web_search:
+      # auto → Brave → Tavily → SerpAPI → SearXNG → DuckDuckGo (no key); failures fall through.
+      provider: auto
+      max_results: 5
+      # searxng_url: http://127.0.0.1:8080
+      # fetch_max_bytes: 65536
   fan_out:
     enabled: true
     max_workers: 2
@@ -322,6 +343,11 @@ orchestration:
   loops:
     enabled: true
     default_route: local
+    # Optional root for SKILL.md / skill-id resolution (also tools workspace + cwd).
+    # skills_dir: ~/.glider/skills
+    # Isolate parallel>1 fan-out workers under runs/<id>/work/wN (git worktree when
+    # the tools workspace is a git repo; else plain subdirs). Default off.
+    worktrees: false
     hoop_learning:
       enabled: true
       local_bias_step: 0.05

@@ -56,6 +56,11 @@ func ApplyMITMDebugEnv(cfg *Config) {
 	case "1", "true", "yes", "on":
 		cfg.MITM.AgentRPCCannedOnError = true
 	}
+	toolCodec := strings.TrimSpace(strings.ToLower(os.Getenv("GLIDER_MITM_AGENT_RPC_TOOL_CODEC")))
+	switch toolCodec {
+	case "1", "true", "yes", "on":
+		cfg.MITM.AgentRPCToolCodec = true
+	}
 }
 
 func applyDefaults(cfg *Config) {

@@ -37,6 +37,7 @@ const (
 	RelSeeds         = "seeds"
 	RelDefines       = "defines"
 	RelCalls         = "calls"
+	RelFeeds         = "feeds" // hoop stage A feeds summary/artifacts into stage B
 )
 
 // Entity is a durable node or edge in the structural context layer.
@@ -54,44 +55,17 @@ type Entity struct {
 }
 
 func (s *Store) ensureEntitiesLocked() {
-	if s.entities == nil {
-		s.entities = make(map[string]*Entity)
-	}
+	s.EntityIndex.ensure()
 }
 
 // upsertEntityLocked indexes an entity and schedules disk persist.
 func (s *Store) upsertEntityLocked(e Entity) {
-	s.ensureEntitiesLocked()
-	if e.At.IsZero() {
-		e.At = time.Now().UTC()
-	}
-	if e.Provenance == "" {
-		e.Provenance = ProvenanceInferred
-	}
-	if e.Attrs != nil {
-		cp := make(map[string]string, len(e.Attrs))
-		for k, v := range e.Attrs {
-			cp[k] = v
-		}
-		e.Attrs = cp
-	}
-	cp := e
-	s.entities[e.ID] = &cp
-	s.persistEntityLocked(cp)
+	cp := s.EntityIndex.upsert(e)
+	persistEntityJSONL(s.Dir, cp)
 }
 
 func (s *Store) persistEntityLocked(e Entity) {
-	if strings.TrimSpace(s.Dir) == "" {
-		return
-	}
-	_ = os.MkdirAll(s.Dir, 0o755)
-	path := filepath.Join(s.Dir, "entities.jsonl")
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_ = json.NewEncoder(f).Encode(e)
+	persistEntityJSONL(s.Dir, e)
 }
 
 // LoadEntities replays entities.jsonl from Dir into the in-memory index.
@@ -144,24 +118,9 @@ func (s *Store) Entities(turnID string, limit int) []Entity {
 	if s == nil {
 		return nil
 	}
-	if limit <= 0 {
-		limit = 200
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ensureEntitiesLocked()
-	out := make([]Entity, 0, len(s.entities))
-	turnID = strings.TrimSpace(turnID)
-	for _, e := range s.entities {
-		if turnID != "" && e.TurnID != turnID {
-			continue
-		}
-		out = append(out, *e)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out
+	return s.EntityIndex.list(turnID, limit)
 }
 
 // GetEntity looks up one entity by id.
@@ -171,12 +130,7 @@ func (s *Store) GetEntity(id string) (Entity, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ensureEntitiesLocked()
-	e, ok := s.entities[strings.TrimSpace(id)]
-	if !ok || e == nil {
-		return Entity{}, false
-	}
-	return *e, true
+	return s.EntityIndex.get(id)
 }
 
 // RecordEdge upserts a directed relation between two entity ids.

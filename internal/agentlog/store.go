@@ -18,20 +18,23 @@ const (
 
 // Entry is one log line for a single agent instance.
 type Entry struct {
-	At         time.Time `json:"at"`
-	Scope      Scope     `json:"scope"`
-	InstanceID string    `json:"instance_id"`
-	Level      string    `json:"level,omitempty"` // info|warn|error
-	Kind       string    `json:"kind,omitempty"`  // stage_start|stage_end|route|eval|worker|error|lifecycle
-	Message    string    `json:"message"`
+	// Seq is a store-wide monotonic id assigned on Append (stable upsert key for UIs).
+	Seq        uint64            `json:"seq"`
+	At         time.Time         `json:"at"`
+	Scope      Scope             `json:"scope"`
+	InstanceID string            `json:"instance_id"`
+	Level      string            `json:"level,omitempty"` // info|warn|error
+	Kind       string            `json:"kind,omitempty"`  // stage_start|stage_end|route|eval|worker|error|lifecycle
+	Message    string            `json:"message"`
 	Attrs      map[string]string `json:"attrs,omitempty"`
 }
 
 // Store holds independent ring buffers keyed by scope+instance id.
 type Store struct {
-	mu      sync.RWMutex
-	rings   map[string]*ring
-	cap     int
+	mu       sync.RWMutex
+	rings    map[string]*ring
+	cap      int
+	seq      uint64
 	onAppend func(Entry) // optional fan-out (e.g. metrics.Bus)
 }
 
@@ -98,6 +101,8 @@ func (s *Store) Append(e Entry) {
 		e.Scope = ScopeHoop
 	}
 	s.mu.Lock()
+	s.seq++
+	e.Seq = s.seq
 	k := key(e.Scope, e.InstanceID)
 	r := s.rings[k]
 	if r == nil {
@@ -141,6 +146,39 @@ func (s *Store) Recent(scope Scope, id string, limit int) []Entry {
 	return out
 }
 
+// After returns up to limit entries with Seq > afterSeq for one instance (oldest→newest).
+// Used by poll cursors so clients can fetch only new lines since the last seen seq.
+func (s *Store) After(scope Scope, id string, afterSeq uint64, limit int) []Entry {
+	if s == nil || id == "" {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r := s.rings[key(scope, id)]
+	if r == nil || r.n == 0 {
+		return nil
+	}
+	out := make([]Entry, 0, min(limit, r.n))
+	start := (r.head - r.n + len(r.buf)) % len(r.buf)
+	for i := 0; i < r.n; i++ {
+		e := r.buf[(start+i)%len(r.buf)]
+		if e.Seq <= afterSeq {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ListInstances returns known instance ids for a scope.
 func (s *Store) ListInstances(scope Scope) []string {
 	if s == nil {
@@ -156,6 +194,41 @@ func (s *Store) ListInstances(scope Scope) []string {
 		}
 	}
 	return out
+}
+
+// Clear removes the ring for one instance (no lifecycle seed line).
+func (s *Store) Clear(scope Scope, id string) {
+	if s == nil || id == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.rings, key(scope, id))
+	s.mu.Unlock()
+}
+
+// ClearScope removes all rings for a scope.
+func (s *Store) ClearScope(scope Scope) {
+	if s == nil {
+		return
+	}
+	prefix := string(scope) + ":"
+	s.mu.Lock()
+	for k := range s.rings {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(s.rings, k)
+		}
+	}
+	s.mu.Unlock()
+}
+
+// ClearAll removes every ring (all scopes).
+func (s *Store) ClearAll() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.rings = make(map[string]*ring)
+	s.mu.Unlock()
 }
 
 // Info is a convenience Append with level info.

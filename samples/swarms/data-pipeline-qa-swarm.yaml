@@ -16,6 +16,9 @@ prompt: |
   forbids raw email in Gold (hash only). Last run: Silver job took 3.1h (budget 2h); 0.4%
   nulls on new column; one partner feed late 40 minutes.
 
+  Persist role findings with artifact_write kind=out under runs/<turn-id>/out/
+  (bare paths ScopeRel to work/). Prefer context_query / [context_digest] for shared goal.
+
   Roles (<=130 words each, labeled ROLE:):
   - schema: contract checks, null thresholds, type drift
   - freshness: SLA risk, late-feed handling, watermark advice
@@ -23,5 +26,14 @@ prompt: |
   - rollback: how to revert backfill / dual-run; kill switch for agent feature
 
   Close with PASS / PASS-WITH-WATCH / FAIL and the single highest-risk issue.
+tools:
+  - name: artifact_write
+    kind: builtin
+  - name: fs_list
+    kind: builtin
+  - name: context_query
+    kind: builtin
+  - name: datetime
+    kind: builtin
 description: |
   Data-pipeline QA swarm for schema/freshness/PII/rollback - enterprise analytics + agent feature store.

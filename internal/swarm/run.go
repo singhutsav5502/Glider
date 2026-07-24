@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,11 +23,6 @@ type WorkerFn func(ctx context.Context, role Role, model, prompt string) (contex
 // CriticFn is an optional LLM completer used by weave policy llm_critic.
 type CriticFn func(ctx context.Context, prompt, model string) (string, error)
 
-// GraphSink records fan-out events (implemented by *contextgraph.Store).
-type GraphSink interface {
-	AppendTurn(turnID, workerID, role, model string, ok bool, summary string)
-}
-
 // RunRequest is the POST /api/swarm/run body.
 type RunRequest struct {
 	Prompt      string   `json:"prompt"`
@@ -36,7 +32,10 @@ type RunRequest struct {
 	TurnID      string   `json:"turn_id,omitempty"`
 	TemplateID  string   `json:"template_id,omitempty"`
 	PreferLocal bool     `json:"prefer_local,omitempty"`
-	SessionID   string   `json:"session_id,omitempty"`
+	// Route selects inference backend: local (Ollama/vLLM), cloud (BYOK), or auto (gateway rules).
+	// When empty, PreferLocal true → local; otherwise auto.
+	Route     string `json:"route,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 	// Soft/hard budgets for this run (0 = inherit Runner.Governance).
 	SoftTokens int `json:"soft_tokens,omitempty"`
 	HardTokens int `json:"hard_tokens,omitempty"`
@@ -50,14 +49,14 @@ type RunRequest struct {
 
 // DecisionRouteView is Cytoscape-friendly live route paint (parity with hoop).
 type DecisionRouteView struct {
-	Current       string   `json:"current,omitempty"`
-	PathTaken     []string `json:"path_taken,omitempty"`
-	EdgesTaken    []string `json:"edges_taken,omitempty"`
-	NextEdges     []string `json:"next_edges,omitempty"`
-	Topology      string   `json:"topology,omitempty"`
-	RouteStatus   string   `json:"route_status,omitempty"`
-	MergeFailed   bool     `json:"merge_failed,omitempty"`
-	MergeNarrative string  `json:"merge_narrative,omitempty"`
+	Current        string   `json:"current,omitempty"`
+	PathTaken      []string `json:"path_taken,omitempty"`
+	EdgesTaken     []string `json:"edges_taken,omitempty"`
+	NextEdges      []string `json:"next_edges,omitempty"`
+	Topology       string   `json:"topology,omitempty"`
+	RouteStatus    string   `json:"route_status,omitempty"`
+	MergeFailed    bool     `json:"merge_failed,omitempty"`
+	MergeNarrative string   `json:"merge_narrative,omitempty"`
 }
 
 // RunResponse is the orchestrator-facing merge result.
@@ -115,6 +114,11 @@ type Runner struct {
 	CriticFn CriticFn
 	// CriticModel optional model id for CriticFn (empty → DefaultModel).
 	CriticModel string
+	// runRoute is the inference route for the in-flight Run / RunWaves (local|cloud|auto).
+	runRoute atomic.Value // string
+	// liveRuns holds mid-run fan-out snapshots for GET /api/swarm/runs/{id}/progress.
+	liveMu   sync.Mutex
+	liveRuns *liveStore
 }
 
 // ApplyOpts hot-swaps concurrency bounds.
@@ -137,6 +141,54 @@ func (r *Runner) IsEnabled() bool {
 	return r != nil && r.Enabled.Load()
 }
 
+func (r *Runner) setRunRoute(route string) {
+	if r == nil {
+		return
+	}
+	r.runRoute.Store(ResolveInferenceRoute(route, false))
+}
+
+func (r *Runner) currentRunRoute() string {
+	if r == nil {
+		return "auto"
+	}
+	if v, ok := r.runRoute.Load().(string); ok && v != "" {
+		return v
+	}
+	return "auto"
+}
+
+// ResolveInferenceRoute maps route / prefer_local to local|cloud|auto.
+func ResolveInferenceRoute(route string, preferLocal bool) string {
+	switch strings.ToLower(strings.TrimSpace(route)) {
+	case "local", "cloud", "auto":
+		return strings.ToLower(strings.TrimSpace(route))
+	}
+	if preferLocal {
+		return "local"
+	}
+	return "auto"
+}
+
+// ApplyInferenceRoute prefixes /local or /cloud so the gateway router picks BYOK vs Ollama/vLLM.
+func ApplyInferenceRoute(msg, route string) string {
+	msg = strings.TrimSpace(msg)
+	switch ResolveInferenceRoute(route, false) {
+	case "local":
+		if strings.HasPrefix(msg, "/local") || strings.HasPrefix(msg, "/cloud") {
+			return msg
+		}
+		return "/local " + msg
+	case "cloud":
+		if strings.HasPrefix(msg, "/local") || strings.HasPrefix(msg, "/cloud") {
+			return msg
+		}
+		return "/cloud " + msg
+	default:
+		return msg
+	}
+}
+
 // Run executes a fan-out wave through TopologySwarm and returns a merged summary.
 func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) {
 	if r == nil {
@@ -153,6 +205,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 	models := req.Models
 	maxW := req.MaxWorkers
 	preferLocal := req.PreferLocal
+	route := strings.TrimSpace(req.Route)
 
 	if req.TemplateID != "" && r.Templates != nil {
 		tpl, err := r.Templates.Get(req.TemplateID)
@@ -175,7 +228,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			maxW = tpl.MaxWorkers
 		}
 		preferLocal = preferLocal || tpl.PreferLocal
+		if route == "" && tpl.PreferLocal {
+			route = "local"
+		}
+		if len(req.Tools) == 0 && len(tpl.Tools) > 0 {
+			req.Tools = append([]tools.Ref(nil), tpl.Tools...)
+		}
 	}
+	route = ResolveInferenceRoute(route, preferLocal)
+	r.setRunRoute(route)
 	if prompt == "" {
 		return nil, fmt.Errorf("prompt required")
 	}
@@ -240,17 +301,62 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 			"workers":  fmt.Sprintf("%d", n),
 			"prompt":   truncate(prompt, 80),
 			"topology": string(def.Topology),
+			"route":    route,
 		})
 	}
 
-	_ = preferLocal
+	liveWorkers := make([]LiveWorkerView, n)
+	for i := 0; i < n; i++ {
+		role := Role(roles[i])
+		if role == "" {
+			role = RoleWorker
+		}
+		liveWorkers[i] = LiveWorkerView{
+			WorkerID: fmt.Sprintf("%s-%d", role, i),
+			Role:     string(role),
+			Status:   "pending",
+		}
+	}
+	r.beginLive(turnID, turnID, liveWorkers, 1)
+	r.setLiveProgress(turnID, progress, "fanout")
 
-	// Optional shared tool context (denylist filtered).
+	var runLay tools.RunLayout
+	if r.Tools != nil {
+		var layErr error
+		runLay, layErr = r.Tools.EnsureRunLayout(turnID)
+		if layErr != nil && r.Logs != nil {
+			r.Logs.Error(agentlog.ScopeSwarm, turnID, "artifacts", "ensure run layout: "+layErr.Error(), nil)
+		} else {
+			prompt = prompt + "\n\n" + runLay.PromptHint()
+		}
+	}
+
+	// Optional shared tool context (denylist filtered) + default artifact I/O when tools are declared.
 	toolBlock := ""
 	refs := filterSwarmTools(req.Tools, r.Governance.Denylist)
+	if len(refs) > 0 {
+		refs = filterSwarmTools(withDefaultArtifactTools(refs), r.Governance.Denylist)
+	}
 	if r.Tools != nil && len(refs) > 0 {
-		results := r.Tools.InvokeAllParallel(ctx, refs, prompt)
-		toolBlock = tools.FormatToolResults(results)
+		refs = r.Tools.ExpandRefs(ctx, refs)
+		blindRefs := tools.FilterBlindSafe(refs)
+		if len(blindRefs) > 0 {
+			results := r.Tools.InvokeAllParallel(ctx, blindRefs, tools.BlindPrepassInput())
+			toolBlock = tools.FormatToolResults(results)
+		}
+		// Hint remaining tools so workers know what the agentic path would use.
+		if len(blindRefs) < len(refs) {
+			var names []string
+			for _, ref := range refs {
+				if !tools.BlindSafe(ref) {
+					names = append(names, ref.Name)
+				}
+			}
+			if len(names) > 0 {
+				toolBlock += "\n\n[tools_available_for_agent_loop]\n" + strings.Join(names, ", ") +
+					"\n(Use structured tool_calls; not pre-invoked with the free-form prompt.)\n"
+			}
+		}
 	}
 	if r.Tools != nil {
 		if cq, err := r.Tools.Invoke(ctx, tools.Ref{Name: "context_query", Kind: tools.KindBuiltin}, turnID+" "); err == nil && cq.OK && cq.Output != "" {
@@ -301,7 +407,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 						"role": string(role), "model": model,
 					})
 				}
-				ep, err := r.WorkerFn(wctx, role, model, rolePrompt)
+				ep, err := r.WorkerFn(wctx, role, model, ApplyInferenceRoute(rolePrompt, route))
 				if r.Logs != nil {
 					if err != nil {
 						r.Logs.Error(agentlog.ScopeSwarm, turnID, "worker", "worker fail: "+string(role)+" -- "+truncate(err.Error(), 100), map[string]string{
@@ -318,9 +424,24 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		}
 	}
 
-	if r.Graph != nil {
-		opts.OnResult = func(res Result) {
+	prevOnResult := opts.OnResult
+	opts.OnStart = func(res Result) {
+		r.setLiveWorker(turnID, res.WorkerID, string(res.Role), "running", "", "")
+		r.setLiveProgress(turnID, progress, "fanout")
+	}
+	opts.OnResult = func(res Result) {
+		st := "ok"
+		errMsg := ""
+		if res.Err != nil {
+			st = "fail"
+			errMsg = res.Err.Error()
+		}
+		r.setLiveWorker(turnID, res.WorkerID, string(res.Role), st, res.Episode.Summary, errMsg)
+		if r.Graph != nil {
 			r.Graph.AppendTurn(turnID, res.WorkerID, string(res.Role), res.Model, res.Err == nil, res.Episode.Summary)
+		}
+		if prevOnResult != nil {
+			prevOnResult(res)
 		}
 	}
 
@@ -402,6 +523,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (*RunResponse, error) 
 		Tokens:    spent,
 		BudgetHit: budgetHit,
 	}
+	r.setLiveProgress(turnID, progress, "merge")
+	okLive := err == nil && !mergeFailed && budgetHit != "hard_tokens"
+	r.finishLive(turnID, okLive, progress)
 	if budgetHit == "hard_tokens" {
 		return out, fmt.Errorf("budget_exceeded:hard_tokens")
 	}
@@ -468,16 +592,28 @@ func filterSwarmTools(refs []tools.Ref, deny []string) []tools.Ref {
 	return out
 }
 
-// CompleterWorkerFn adapts an HTTP Completer-style callback for Runner.WorkerFn.
-// forcePrefix is prepended when preferLocal (e.g. "/local ").
-func CompleterWorkerFn(complete func(ctx context.Context, r *http.Request, prompt, model string) (string, error), preferLocal bool) WorkerFn {
-	return func(ctx context.Context, role Role, model, prompt string) (contextkit.Episode, error) {
-		msg := prompt
-		if preferLocal && !strings.HasPrefix(strings.TrimSpace(msg), "/local") {
-			msg = "/local " + msg
+func withDefaultArtifactTools(refs []tools.Ref) []tools.Ref {
+	seen := map[string]bool{}
+	out := make([]tools.Ref, 0, len(refs)+4)
+	for _, r := range refs {
+		seen[r.Name] = true
+		out = append(out, r)
+	}
+	for _, name := range []string{"fs_read", "fs_write", "fs_list", "artifact_write"} {
+		if seen[name] {
+			continue
 		}
+		out = append(out, tools.Ref{Name: name, Kind: tools.KindBuiltin})
+	}
+	return out
+}
+
+// CompleterWorkerFn adapts an HTTP Completer-style callback for Runner.WorkerFn.
+// Route prefixes (/local|/cloud) are applied by Runner.Run via ApplyInferenceRoute.
+func CompleterWorkerFn(complete func(ctx context.Context, r *http.Request, prompt, model string) (string, error), _ bool) WorkerFn {
+	return func(ctx context.Context, role Role, model, prompt string) (contextkit.Episode, error) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://glider.local/swarm", nil)
-		text, err := complete(ctx, req, msg, model)
+		text, err := complete(ctx, req, prompt, model)
 		ep := contextkit.Episode{
 			Summary: text,
 			Model:   model,
@@ -490,13 +626,10 @@ func CompleterWorkerFn(complete func(ctx context.Context, r *http.Request, promp
 }
 
 // CompleterCriticFn adapts the same Completer callback for Runner.CriticFn.
-func CompleterCriticFn(complete func(ctx context.Context, r *http.Request, prompt, model string) (string, error), preferLocal bool) CriticFn {
+// Callers should pass prompts already routed, or wrap with ApplyInferenceRoute.
+func CompleterCriticFn(complete func(ctx context.Context, r *http.Request, prompt, model string) (string, error), _ bool) CriticFn {
 	return func(ctx context.Context, prompt, model string) (string, error) {
-		msg := prompt
-		if preferLocal && !strings.HasPrefix(strings.TrimSpace(msg), "/local") {
-			msg = "/local " + msg
-		}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://glider.local/swarm-critic", nil)
-		return complete(ctx, req, msg, model)
+		return complete(ctx, req, prompt, model)
 	}
 }

@@ -26,7 +26,11 @@ server:
 thresholds:
   max_local_context_tokens: 8000
   idle_unload_timeout: 5m
-  request_timeout: 120s
+  # Local Complete timeout (Ollama/vLLM). Parallel 14b tool loops need minutes, not 120s.
+  request_timeout: 10m
+  # Hoop/swarm Completes: max_tokens → Ollama num_predict. Raise if reports/tool JSON cut mid-sentence.
+  # Also set Ollama num_ctx high enough for the model (qwen2.5-coder:14b max_context: 32768 below).
+  default_max_tokens: 8192
 
 vram:
   strategy: hybrid
@@ -34,10 +38,10 @@ vram:
   max_loaded_models: 3
 
 models:
-  - name: codellama:7b
+  - name: qwen2.5-coder:14b
     backend: ollama
-    vram_estimate_mb: 4200
-    max_context: 16384
+    vram_estimate_mb: 9000
+    max_context: 32768
     capabilities: [code, refactor, debug]
     keep_warm: true
   - name: llama3:8b-instruct
@@ -48,8 +52,8 @@ models:
     keep_warm: false
 
 model_aliases:
-  claude-3.5-sonnet: codellama:7b
-  gpt-4o: codellama:7b
+  claude-3.5-sonnet: qwen2.5-coder:14b
+  gpt-4o: qwen2.5-coder:14b
   gpt-4o-mini: llama3:8b-instruct
 
 context:
@@ -59,7 +63,7 @@ context:
 
 routing:
   default: local
-  default_local_model: codellama:7b
+  default_local_model: qwen2.5-coder:14b
   allow_cloud_fallback: false
   turn_family_ttl: 90s
   tool_followup:
@@ -91,7 +95,7 @@ routing:
   task_classifier:
     enabled: true
     tools_force_cloud: false
-    local_model: codellama:7b
+    local_model: qwen2.5-coder:14b
   rules:
     - name: Explicit Local
       priority: 100
@@ -101,7 +105,7 @@ routing:
         commands: [/local, /fast]
       action:
         target: local
-        model: codellama:7b
+        model: qwen2.5-coder:14b
     - name: Explicit Cloud
       priority: 99
       enabled: true
@@ -120,7 +124,7 @@ routing:
       action:
         target: local
         backend: ollama
-        model: codellama:7b
+        model: qwen2.5-coder:14b
 
 # Cloud block kept for optional /cloud; not registered when allow_cloud_fallback is false
 # and routing.default is local (no API keys required to start).
@@ -166,11 +170,23 @@ mitm:
   agent_rpc_fulfill: true
   # Production local: never canned; surface real Ollama failures to Cursor.
   agent_rpc_canned_on_error: false
+  # PARTIAL Path B tool codec (TruncatedToolCall + common map). Prefer Path A for Agent+tools.
+  # See planning/remaining_gaps.md §1.9. Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1
+  agent_rpc_tool_codec: false
   # Pure-local: do not silently fall back to Cursor subscription on Ollama errors.
   origin_on_local_error: false
   require_local_healthy: true
 
 orchestration:
+  tools:
+    allow_shell: false
+    # Provider chain: auto → Brave → Tavily → SerpAPI → SearXNG → DuckDuckGo (see .env.example).
+    web_search:
+      provider: auto
+      max_results: 5
   loops:
     enabled: true
     default_route: local
+    # skills_dir: ~/.glider/skills
+    # Parallel worker isolation (runs/<id>/work/wN). See docs/site/loop-engineering.html
+    worktrees: false

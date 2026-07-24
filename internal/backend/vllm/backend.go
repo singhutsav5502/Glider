@@ -27,9 +27,17 @@ type Backend struct {
 }
 
 func New(baseURL string) *Backend {
+	return NewWithTimeout(baseURL, 10*time.Minute)
+}
+
+// NewWithTimeout builds a vLLM backend with an explicit HTTP client timeout.
+func NewWithTimeout(baseURL string, timeout time.Duration) *Backend {
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
 	b := &Backend{
 		baseURL:  strings.TrimRight(baseURL, "/"),
-		client:   &http.Client{Timeout: 120 * time.Second},
+		client:   &http.Client{Timeout: timeout},
 		name:     "vllm",
 		adapters: make(map[string]string),
 	}

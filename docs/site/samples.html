@@ -54,7 +54,15 @@
         </tr>
         <tr>
           <td><code>clone-repo-security-audit.yaml</code></td>
-          <td>git_clone + tools; parallel quality/security; human_gate; on_fail; shared context_query</td>
+          <td>git_clone + ScopeRel work path; context_seed; parallel quality/security; human_gate; on_fail_n</td>
+        </tr>
+        <tr>
+          <td><code>parallel-swarm-mode.yaml</code></td>
+          <td><code>kind: context</code> seed + <code>parallel_mode: swarm</code> (nested Runner); local</td>
+        </tr>
+        <tr>
+          <td><code>feeds-edge-mvp.yaml</code></td>
+          <td><code>graph_edges kind=feeds</code> producer → consumer <code>FEEDS:</code> block (data-only edge)</td>
         </tr>
         <tr>
           <td><code>escalation-policy.yaml</code></td>
@@ -101,7 +109,7 @@
         <li><strong>Stage graph</strong> — build the hoop pipeline (palette, Link mode, Fit). Create / Update on Hoops tab.</li>
         <li><strong>Start hoop</strong> — click the card to bind Agent log (<em>Following hoop &lt;id&gt;</em>), then Start. Cycle uses stages from the graph.</li>
         <li><strong>Swarm wave</strong> — link orchestrator to worker roles on Swarm graph; Run swarm calls <code>swarm.FanOut</code> + merge; log follows <code>turn_id</code>.</li>
-        <li><strong>In-hoop parallel</strong> — YAML <code>parallel: 2+</code> on an actor also uses <code>FanOut</code> mid-cycle (see <code>incident-triage.yaml</code>).</li>
+        <li><strong>In-hoop parallel</strong> — YAML <code>parallel: 2+</code> on an actor uses <code>parallel_mode: fanout</code> (default) or <code>swarm</code> (see <code>parallel-swarm-mode.yaml</code>).</li>
       </ol>
       <p>Full walkthrough: <a href="loop-engineering.html#user-guide">Loop Engineering · User guide</a>.</p>
 
@@ -116,8 +124,9 @@
         <code>planning/graph_feature_gaps.md</code>.</p>
 
       <h2>Per-instance agent logs</h2>
-      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream (structured rows: time | level | stage/role | message). API:</p>
+      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream (structured rows: time | level | stage/role | message). Entries carry a monotonic <code>seq</code>; the dashboard polls with <code>after_seq</code> for incremental merge. API:</p>
       <pre>GET /api/agent-logs?scope=hoop&amp;id=incident-triage
+GET /api/agent-logs?scope=hoop&amp;id=incident-triage&amp;after_seq=42&amp;limit=50
 GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
       <p>WebSocket <code>/ws</code> events with <code>type: agent_log</code> include <code>scope</code> and <code>instance_id</code>.</p>
 
@@ -134,7 +143,7 @@ powershell -File scripts\seed-samples.ps1 -Start   # also start each hoop
 # Or hoops only / one-shot start
 go run ./scripts/loadhoop -dir samples/hoops
 powershell -File scripts\run-sample-hoop.ps1 -Name incident-triage</pre>
-      <p>MCP / GitHub tools: <a href="mcp.html">Tools &amp; MCP</a>. Seed covers all top-level YAML in both sample dirs (including <code>parallel-actor</code>, <code>swarm-dual-review</code> / <code>dual-review</code>, and <code>repo-audit-swarm</code>).</p>
+      <p>MCP / GitHub tools: <a href="mcp.html">Tools &amp; MCP</a>. Seed covers all top-level YAML in both sample dirs (including <code>parallel-swarm-mode</code>, <code>parallel-actor</code>, <code>swarm-dual-review</code>, and <code>repo-audit-swarm</code>).</p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

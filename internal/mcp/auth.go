@@ -35,6 +35,11 @@ func ResolveAuth(a AuthConfig) (AuthConfig, error) {
 					}
 				}
 			}
+			if v == "" && isGitHubTokenEnv(env) {
+				if t, err := LoadGitHubTokenFile(); err == nil {
+					v = strings.TrimSpace(t)
+				}
+			}
 			if v == "" {
 				return out, fmt.Errorf("auth: env %s empty", env)
 			}

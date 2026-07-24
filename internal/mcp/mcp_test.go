@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -183,6 +184,120 @@ func TestConfigureStores(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	_ = GitHubInstallNotes
+}
+
+func TestHTTPSessionHeadersAndRetry(t *testing.T) {
+	var mu sync.Mutex
+	var seenToolsets []string
+	var seenSessions []string
+	var seenProto []string
+	var listFails int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seenToolsets = append(seenToolsets, r.Header.Get("X-MCP-Toolsets"))
+		seenSessions = append(seenSessions, r.Header.Get("Mcp-Session-Id"))
+		seenProto = append(seenProto, r.Header.Get("MCP-Protocol-Version"))
+		mu.Unlock()
+
+		var req jsonRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		switch req.Method {
+		case "initialize":
+			w.Header().Set("Content-Type", "application/json")
+			// Hosted quirks: some edges emit lowercase session header.
+			w.Header().Set("mcp-session-id", "sess-hosted-1")
+			_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Result: mustJSON(map[string]any{
+					"protocolVersion": protocolVersion,
+					"capabilities":    map[string]any{},
+					"serverInfo":      map[string]any{"name": "mock"},
+				}),
+			})
+		case "tools/list":
+			mu.Lock()
+			fail := listFails == 0
+			if fail {
+				listFails++
+			}
+			mu.Unlock()
+			if fail {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid session"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Mcp-Session-Id", "sess-hosted-1")
+			_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Result: mustJSON(map[string]any{
+					"tools": []Tool{{Name: "get_me"}},
+				}),
+			})
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mustJSON(map[string]any{})})
+		}
+	}))
+	defer srv.Close()
+
+	m := NewManager()
+	ctx := context.Background()
+	_, err := m.Connect(ctx, ServerConfig{
+		ID: "github-mock", Transport: TransportHTTP, URL: srv.URL,
+		Auth:     AuthConfig{Kind: AuthNone},
+		Toolsets: []string{"repos", "issues"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, err := m.ListTools(ctx, "github-mock")
+	if err != nil || len(tools) != 1 || tools[0].Name != "get_me" {
+		t.Fatalf("tools=%v err=%v", tools, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	foundToolsets := false
+	foundSessionOnFollowUp := false
+	foundProto := false
+	for i, ts := range seenToolsets {
+		if ts == "repos,issues" {
+			foundToolsets = true
+		}
+		if seenProto[i] == protocolVersion {
+			foundProto = true
+		}
+		if i > 0 && seenSessions[i] == "sess-hosted-1" {
+			foundSessionOnFollowUp = true
+		}
+	}
+	if !foundToolsets {
+		t.Fatalf("expected X-MCP-Toolsets=repos,issues; got %v", seenToolsets)
+	}
+	if !foundProto {
+		t.Fatalf("expected MCP-Protocol-Version; got %v", seenProto)
+	}
+	if !foundSessionOnFollowUp {
+		t.Fatalf("expected Mcp-Session-Id on follow-up; sessions=%v", seenSessions)
+	}
+	if listFails != 1 {
+		t.Fatalf("expected one session-fail then retry; listFails=%d", listFails)
+	}
+}
+
+func TestIsSessionOrAuthRetryable(t *testing.T) {
+	if !isSessionOrAuthRetryable(401, "") {
+		t.Fatal("401")
+	}
+	if !isSessionOrAuthRetryable(400, "Missing Mcp-Session-Id") {
+		t.Fatal("400 session")
+	}
+	if isSessionOrAuthRetryable(500, "boom") {
+		t.Fatal("500 should not retry")
+	}
 }
 
 func TestStatusAndListToolsOrCatalog(t *testing.T) {

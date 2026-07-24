@@ -19,8 +19,17 @@ prompt: |
   2) role=exec run a free-spawn FanOut and weave with conflict callouts
   3) @security verify thread resume after restart (list + resume APIs)
 
-  Later waves free-spawn invented roles from the plan. Call out GO vs NO-GO
+  Prefer context_query key=goal|plan (and [context_digest]) across waves; write wave notes
+  with artifact_write kind=work or kind=out under runs/<turn-id>/work|out/ (ScopeRel bare
+  paths → work/). Later waves free-spawn invented roles from the plan. Call out GO vs NO-GO
   clearly so conflict_callouts can surface polarity disagreements.
+tools:
+  - name: artifact_write
+    kind: builtin
+  - name: fs_list
+    kind: builtin
+  - name: context_query
+    kind: builtin
 description: |
   Sample multi-wave weave with planner decomposition, free_spawn roles, and conflict_callouts.
   POST /api/swarm/run {"template_id":"multi-wave-weave","waves":3,"decompose":true,"free_spawn":true}

@@ -54,6 +54,8 @@ type Options struct {
 	ResultChanSize  int // merge / stream buffer; 0 → 32
 	// TurnID is the shared contextgraph turn family for this fan-out wave.
 	TurnID string
+	// OnStart is called when a worker begins execution (optional; live graph paint).
+	OnStart func(Result)
 	// OnResult is called as each worker finishes (optional; for streaming / graph sinks).
 	OnResult func(Result)
 }
@@ -61,6 +63,40 @@ type Options struct {
 // Swarm runs a set of workers and returns merged-capable results.
 type Swarm interface {
 	Run(ctx context.Context, workers []Worker) ([]Result, error)
+}
+
+// GraphSink records fan-out events (implemented by *contextgraph.Store).
+// Placed here alongside Swarm/Worker so all core swarm contracts are co-located.
+type GraphSink interface {
+	AppendTurn(turnID, workerID, role, model string, ok bool, summary string)
+}
+
+// GraphContext is the dual-layer context surface used by multi-wave runs.
+// Implemented by *contextgraph.Store via dashboard adapters.
+type GraphContext interface {
+	Query(turnID, q string, limit int) string
+	PathSummary(turnID, from, to string) string
+	WaveOutputs(turnID string, waveIndex int, limit int) []string
+	RecordThreadWave(turnID, threadID string, waveIndex int, mergedID, mergedSummary string, workers []WaveWorkerOut)
+	RecordEpisodeFact(turnID, episodeID, label, summary string)
+	RecordSubtasks(turnID, threadID string, tasks []SubtaskOut)
+}
+
+// WaveWorkerOut is a graph-write DTO (avoids contextgraph importing swarm).
+type WaveWorkerOut struct {
+	WorkerID string
+	Role     string
+	Model    string
+	Summary  string
+	OK       bool
+}
+
+// SubtaskOut is a planner-decomposed subtask fact for the entity layer.
+type SubtaskOut struct {
+	Index  int
+	Prompt string
+	Target string
+	Model  string
 }
 
 // DefaultSwarm is the FanOut-backed Swarm used by the orchestrator.

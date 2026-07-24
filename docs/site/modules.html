@@ -195,7 +195,8 @@
         Wire-format layer for Cursor Agent RPC: BidiAppend body scan/extract, TipTap text,
         RunSSE frame encode/decode, helpers like <code>IsRootAgentRunSSE</code>. Keeps protobuf
         / Connect details out of the orchestrator. Path B text-only local fulfill depends on
-        the text codec; tool codec availability gates any future local tool-loop fulfill.
+        the text codec; opt-in <code>agent_rpc_tool_codec</code> ships a common ToolCall wire map
+        (full catalog <strong>DEFERRED</strong>).
       </p>
 
       <h2 id="context">contextgraph &amp; contextkit</h2>

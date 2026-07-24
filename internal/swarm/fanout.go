@@ -59,6 +59,9 @@ func FanOut(ctx context.Context, workers []Worker, opts Options) ([]Result, erro
 				id = fmt.Sprintf("worker-%d", i)
 			}
 			res := Result{WorkerID: id, Role: w.Role, Model: w.Model}
+			if opts.OnStart != nil {
+				opts.OnStart(res)
+			}
 			if w.Run == nil {
 				res.Err = fmt.Errorf("swarm: nil Run on worker %s", id)
 				pushResult(ctx, outCh, indexedResult{i: i, r: res})

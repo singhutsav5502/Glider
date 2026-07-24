@@ -1,10 +1,14 @@
-﻿/glider.exe
+/glider.exe
 /glider
 /coverage.out
 *.exe
 .env
+.env.local
 *.test
 .glider-debug/
+
+# Accidental test cwd run layouts (real runs live under ~/.glider/workspace/runs/)
+internal/loop/runs/
 
 # Nested research clone metadata (vendored as plain trees)
 **/.git.bak/

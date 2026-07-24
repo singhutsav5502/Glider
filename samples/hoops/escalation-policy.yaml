@@ -36,14 +36,26 @@ stages:
       Outline sections for an escalation policy: severity definitions, detection sources,
       paging ladder (L1->L2->IC->exec), vendor escalate, legal trigger, quiet hours, and review cadence.
       Call out ambiguities in the constraints as questions.
+  - id: context_seed
+    kind: context
+    name: Seed shared policy context
   - id: policy_author
     kind: actor
     name: Draft policy
     parallel: 2
+    # parallel_mode: swarm
     roles: [exec, plan]
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       Write the policy from the PLAN. Use headings. Include one example escalation timeline for
       a SEV-1 checkout outage. Keep under 450 words. Be concrete (minutes, roles), not slogans.
+      Prefer context_query / [context_digest] for shared goal/plan.
+      Persist with artifact_write kind=out under runs/escalation-policy/out/
+      (bare paths ScopeRel to work/).
   - id: policy_critic
     kind: critic
     name: On-call critic
@@ -58,7 +70,8 @@ stages:
 graph_edges:
   - { id: e1, source: memory_load, target: router, kind: flow }
   - { id: e2, source: router, target: policy_planner, kind: flow }
-  - { id: e3, source: policy_planner, target: policy_author, kind: flow }
+  - { id: e3, source: policy_planner, target: context_seed, kind: flow }
+  - { id: e3b, source: context_seed, target: policy_author, kind: flow }
   - { id: e4, source: policy_author, target: policy_critic, kind: flow }
   - { id: e5, source: policy_critic, target: memory_persist, kind: flow }
   - { id: fb1, source: policy_critic, target: policy_planner, kind: feedback }

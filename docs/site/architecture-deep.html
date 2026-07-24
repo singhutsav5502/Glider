@@ -194,8 +194,9 @@
         <strong>Root vs child.</strong> Only root Agent RunSSE is a candidate for text-only local
         fulfill. Child / tool-loop RunSSE (<code>!cursorrpc.IsRootAgentRunSSE</code>) evaluates
         <code>router.DecideToolFollowup</code> and may emit metric
-        <code>tool_followup_would_local</code>, but <strong>Path B tool loops still stay on
-        origin</strong> today unless a full tool codec is available. For Agent+tools, use Path A.
+        <code>tool_followup_would_local</code>, but <strong>Path B tool loops stay on origin by
+        default</strong> (opt-in <code>agent_rpc_tool_codec</code> ships a common ToolCall map;
+        full Cursor catalog remains <strong>DEFERRED</strong>). For Agent+tools, use Path A.
       </p>
       <p>
         OpenAI-compat bodies intercepted on Path B also call <code>CompleteLocal</code>: local

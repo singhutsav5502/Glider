@@ -28,21 +28,21 @@ const (
 type FailPolicy string
 
 const (
-	FailStop      FailPolicy = "stop"      // halt the loop (default for local)
-	FailContinue  FailPolicy = "continue"  // record failure, keep ticking
-	FailEscalate  FailPolicy = "escalate"  // on local fail, one cloud retry then continue/stop
+	FailStop     FailPolicy = "stop"     // halt the loop (default for local)
+	FailContinue FailPolicy = "continue" // record failure, keep ticking
+	FailEscalate FailPolicy = "escalate" // on local fail, one cloud retry then continue/stop
 )
 
 // Status is the persisted loop lifecycle state.
 type Status string
 
 const (
-	StatusIdle          Status = "idle"
-	StatusRunning       Status = "running"
-	StatusStopped       Status = "stopped"
-	StatusCompleted     Status = "completed"
-	StatusFailed        Status = "failed"
-	StatusWaitingHuman  Status = "waiting_human" // HITL pause at human_gate
+	StatusIdle         Status = "idle"
+	StatusRunning      Status = "running"
+	StatusStopped      Status = "stopped"
+	StatusCompleted    Status = "completed"
+	StatusFailed       Status = "failed"
+	StatusWaitingHuman Status = "waiting_human" // HITL pause at human_gate
 )
 
 // StopConditions end the loop early when matched after an iteration.
@@ -59,8 +59,8 @@ type StopConditions struct {
 
 // LoopSpec is the durable definition of a Loop Engineering hoop.
 type LoopSpec struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
 	// Goal is the recursive purpose (preferred). Prompt is kept as alias/fallback.
 	Goal          string         `json:"goal,omitempty" yaml:"goal,omitempty"`
 	Interval      string         `json:"interval,omitempty"` // optional Automations heartbeat
@@ -96,14 +96,16 @@ type LoopSpec struct {
 
 // GateRequest is a durable HITL pause payload (approve/reject/comment).
 type GateRequest struct {
-	Active    bool      `json:"active"`
-	StageID   string    `json:"stage_id,omitempty"`
-	StageKind string    `json:"stage_kind,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
+	Active    bool   `json:"active"`
+	StageID   string `json:"stage_id,omitempty"`
+	StageKind string `json:"stage_kind,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	// Ask is what the operator should review (actor/plan/critic excerpts).
+	Ask       string    `json:"ask,omitempty"`
 	Iteration int       `json:"iteration,omitempty"`
 	OpenedAt  time.Time `json:"opened_at,omitempty"`
-	Comment   string    `json:"comment,omitempty"`   // operator comment on decide
-	Decision  string    `json:"decision,omitempty"`  // approve|reject|""
+	Comment   string    `json:"comment,omitempty"`  // operator comment on decide
+	Decision  string    `json:"decision,omitempty"` // approve|reject|""
 	DecidedAt time.Time `json:"decided_at,omitempty"`
 	Actor     string    `json:"actor,omitempty"`
 }
@@ -118,13 +120,13 @@ type CycleProgress struct {
 	Note       string    `json:"note,omitempty"`
 	UpdatedAt  time.Time `json:"updated_at,omitempty"`
 	// Live decision route (state machine path) for Cytoscape paint.
-	Current       string   `json:"current,omitempty"`
-	PathTaken     []string `json:"path_taken,omitempty"`
-	EdgesTaken    []string `json:"edges_taken,omitempty"`
-	NextEdges     []string `json:"next_edges,omitempty"`
+	Current       string             `json:"current,omitempty"`
+	PathTaken     []string           `json:"path_taken,omitempty"`
+	EdgesTaken    []string           `json:"edges_taken,omitempty"`
+	NextEdges     []string           `json:"next_edges,omitempty"`
 	BranchChoices []BranchChoiceJSON `json:"branch_choices,omitempty"`
-	Topology      string   `json:"topology,omitempty"`
-	RouteStatus   string   `json:"route_status,omitempty"`
+	Topology      string             `json:"topology,omitempty"`
+	RouteStatus   string             `json:"route_status,omitempty"`
 }
 
 // BranchChoiceJSON is a JSON-friendly branch candidate for the dashboard.
@@ -139,15 +141,15 @@ type BranchChoiceJSON struct {
 
 // IterationOutcome is one engineering-cycle result (hoop-learning + eval feedback).
 type IterationOutcome struct {
-	Iteration     int       `json:"iteration"`
-	Success       bool      `json:"success"`
-	LatencyMS     int64     `json:"latency_ms"`
-	Route         string    `json:"route"` // local | cloud | auto
-	TokenEstimate int       `json:"token_estimate,omitempty"`
-	EpisodeID     string    `json:"episode_id,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	Err           string    `json:"err,omitempty"`
-	EvalScore     float64   `json:"eval_score,omitempty"`
+	Iteration     int     `json:"iteration"`
+	Success       bool    `json:"success"`
+	LatencyMS     int64   `json:"latency_ms"`
+	Route         string  `json:"route"` // local | cloud | auto
+	TokenEstimate int     `json:"token_estimate,omitempty"`
+	EpisodeID     string  `json:"episode_id,omitempty"`
+	Summary       string  `json:"summary,omitempty"`
+	Err           string  `json:"err,omitempty"`
+	EvalScore     float64 `json:"eval_score,omitempty"`
 	// Stages records per-stage summaries for dashboard eval feedback.
 	Stages []StageOutcome `json:"stages,omitempty"`
 	At     time.Time      `json:"at"`
@@ -155,35 +157,40 @@ type IterationOutcome struct {
 
 // StageOutcome is one stage result inside an iteration.
 type StageOutcome struct {
-	Kind    string `json:"kind"`
-	Success bool   `json:"success"`
-	Summary string `json:"summary,omitempty"`
-	Err     string `json:"err,omitempty"`
-	Model   string `json:"model,omitempty"`
+	Kind     string `json:"kind"`
+	ModuleID string `json:"module_id,omitempty"`
+	Success  bool   `json:"success"`
+	Summary  string `json:"summary,omitempty"`
+	Err      string `json:"err,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // LoopState is persisted under ~/.glider/loops/<id>.json.
 type LoopState struct {
-	Spec          LoopSpec                  `json:"spec"`
-	Status        Status                    `json:"status"`
-	Iteration     int                       `json:"iteration"`
-	Checkpoint    contextkit.LoopCheckpoint `json:"checkpoint"`
-	Outcomes      []IterationOutcome        `json:"outcomes,omitempty"`
-	Hoop          HoopState                 `json:"hoop,omitempty"`
-	ConsecutiveOK int                       `json:"consecutive_ok,omitempty"`
-	ConsecutiveFail int                     `json:"consecutive_fail,omitempty"`
-	LastError     string                    `json:"last_error,omitempty"`
-	LastEvalScore float64                   `json:"last_eval_score,omitempty"`
-	Progress      CycleProgress             `json:"progress,omitempty"`
+	Spec            LoopSpec                  `json:"spec"`
+	Status          Status                    `json:"status"`
+	Iteration       int                       `json:"iteration"`
+	Checkpoint      contextkit.LoopCheckpoint `json:"checkpoint"`
+	Outcomes        []IterationOutcome        `json:"outcomes,omitempty"`
+	Hoop            HoopState                 `json:"hoop,omitempty"`
+	ConsecutiveOK   int                       `json:"consecutive_ok,omitempty"`
+	ConsecutiveFail int                       `json:"consecutive_fail,omitempty"`
+	LastError       string                    `json:"last_error,omitempty"`
+	LastEvalScore   float64                   `json:"last_eval_score,omitempty"`
+	Progress        CycleProgress             `json:"progress,omitempty"`
+	// LiveStages is mid-cycle completed stage output for dashboard graph/run rail (cleared at next cycle start).
+	LiveStages []StageOutcome `json:"live_stages,omitempty"`
+	// Artifacts are workspace-relative paths written this hoop life (fs_write / artifact_write).
+	Artifacts []string `json:"artifacts,omitempty"`
 	// Gate is set when StatusWaitingHuman (durable HITL).
-	Gate          GateRequest               `json:"gate,omitempty"`
+	Gate GateRequest `json:"gate,omitempty"`
 	// Cursor is mid-cycle resume state after human_gate (not a brand-new cycle).
-	Cursor        MachineCursor             `json:"cursor,omitempty"`
+	Cursor MachineCursor `json:"cursor,omitempty"`
 	// Spend tracks governance budget consumption for this hoop.
-	Spend         BudgetSpend               `json:"spend,omitempty"`
-	StartedAt     *time.Time                `json:"started_at,omitempty"`
-	StoppedAt     *time.Time                `json:"stopped_at,omitempty"`
-	UpdatedAt     time.Time                 `json:"updated_at"`
+	Spend     BudgetSpend `json:"spend,omitempty"`
+	StartedAt *time.Time  `json:"started_at,omitempty"`
+	StoppedAt *time.Time  `json:"stopped_at,omitempty"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 // Normalize fills defaults on a create/update payload.
@@ -299,9 +306,9 @@ func (s *LoopSpec) Normalize() error {
 			e.Kind = "flow"
 		}
 		switch e.Kind {
-		case "flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge":
+		case "flow", "feedback", "on_fail", "escalate", "conditional", "budget_exceeded", "parallel", "merge", "feeds":
 		default:
-			return fmt.Errorf("graph_edges[%d]: kind must be flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge", i)
+			return fmt.Errorf("graph_edges[%d]: kind must be flow|feedback|on_fail|escalate|conditional|budget_exceeded|parallel|merge|feeds", i)
 		}
 		if e.Source == "" || e.Target == "" {
 			return fmt.Errorf("graph_edges[%d]: source and target required", i)
@@ -329,13 +336,14 @@ func (s *LoopSpec) Normalize() error {
 }
 
 // EffectivePrompt builds the user message for one iteration (skill + goal + episode hint).
+// Skill is treated as a plain string here; Manager.resolveSkill loads SKILL.md when wired.
 func (s LoopSpec) EffectivePrompt(cp contextkit.LoopCheckpoint) string {
+	return s.formatEffectivePrompt(cp, s.Skill, false)
+}
+
+func (s LoopSpec) formatEffectivePrompt(cp contextkit.LoopCheckpoint, skillBody string, fromFile bool) string {
 	var b strings.Builder
-	if s.Skill != "" {
-		b.WriteString("[skill: ")
-		b.WriteString(s.Skill)
-		b.WriteString("]\n")
-	}
+	b.WriteString(FormatSkillPrefix(skillBody, fromFile))
 	prompt := s.Prompt
 	if prompt == "" {
 		prompt = "Run skill " + s.Skill

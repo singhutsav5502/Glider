@@ -61,3 +61,69 @@ func TestRingCap(t *testing.T) {
 		t.Fatalf("len=%d want 4", len(got))
 	}
 }
+
+func TestSeqAssignedAndUnique(t *testing.T) {
+	s := NewStore(16)
+	s.Info(ScopeHoop, "h1", "a", "one", nil)
+	s.Info(ScopeHoop, "h1", "b", "two", nil)
+	s.Info(ScopeSwarm, "r1", "c", "three", nil)
+	a := s.Recent(ScopeHoop, "h1", 50)
+	b := s.Recent(ScopeSwarm, "r1", 50)
+	if len(a) < 2 || a[0].Seq == 0 || a[1].Seq == 0 {
+		t.Fatalf("missing seq on hoop entries: %+v", a)
+	}
+	if a[0].Seq == a[1].Seq {
+		t.Fatalf("duplicate seq %d", a[0].Seq)
+	}
+	if len(b) == 0 || b[0].Seq == 0 {
+		t.Fatalf("missing seq on swarm: %+v", b)
+	}
+	seen := map[uint64]bool{}
+	for _, e := range append(a, b...) {
+		if seen[e.Seq] {
+			t.Fatalf("seq %d not unique across scopes", e.Seq)
+		}
+		seen[e.Seq] = true
+	}
+}
+
+func TestAfterCursor(t *testing.T) {
+	s := NewStore(32)
+	s.Info(ScopeHoop, "h1", "a", "one", nil)
+	s.Info(ScopeHoop, "h1", "b", "two", nil)
+	s.Info(ScopeHoop, "h1", "c", "three", nil)
+	all := s.Recent(ScopeHoop, "h1", 50)
+	if len(all) != 3 {
+		t.Fatalf("want 3 entries, got %d", len(all))
+	}
+	mid := all[0].Seq
+	got := s.After(ScopeHoop, "h1", mid, 50)
+	if len(got) != 2 {
+		t.Fatalf("After(%d) len=%d want 2: %+v", mid, len(got), got)
+	}
+	if got[0].Seq <= mid || got[1].Seq <= mid {
+		t.Fatalf("After returned seq <= afterSeq: %+v", got)
+	}
+	if got[0].Message != "two" || got[1].Message != "three" {
+		t.Fatalf("order/content wrong: %+v", got)
+	}
+	if empty := s.After(ScopeHoop, "h1", all[2].Seq, 50); empty != nil {
+		t.Fatalf("After at tip want nil, got %+v", empty)
+	}
+	if empty := s.After(ScopeHoop, "missing", 0, 50); empty != nil {
+		t.Fatalf("missing id want nil, got %+v", empty)
+	}
+	// Limit caps oldest-first catch-up.
+	limited := s.After(ScopeHoop, "h1", 0, 2)
+	if len(limited) != 2 || limited[0].Message != "one" || limited[1].Message != "two" {
+		t.Fatalf("limit=2 oldest-first: %+v", limited)
+	}
+	// Isolation: other instance not included.
+	s.Info(ScopeHoop, "h2", "x", "other", nil)
+	only := s.After(ScopeHoop, "h1", mid, 50)
+	for _, e := range only {
+		if e.InstanceID != "h1" {
+			t.Fatalf("leaked: %+v", e)
+		}
+	}
+}

@@ -10,10 +10,10 @@ import (
 // Eval scores from the Critic stage feed LocalBias when route is auto.
 // Named "hoop" so it is not confused with Cursor IDE /loop scheduling.
 type HoopLearningConfig struct {
-	Enabled      bool    `json:"enabled" yaml:"enabled"`
+	Enabled       bool    `json:"enabled" yaml:"enabled"`
 	LocalBiasStep float64 `json:"local_bias_step,omitempty" yaml:"local_bias_step,omitempty"` // default 0.05
-	MaxBias      float64 `json:"max_bias,omitempty" yaml:"max_bias,omitempty"`               // default 0.5
-	Window       int     `json:"window,omitempty" yaml:"window,omitempty"`                   // last N outcomes, default 20
+	MaxBias       float64 `json:"max_bias,omitempty" yaml:"max_bias,omitempty"`               // default 0.5
+	Window        int     `json:"window,omitempty" yaml:"window,omitempty"`                   // last N outcomes, default 20
 }
 
 // Defaults fills zero values.

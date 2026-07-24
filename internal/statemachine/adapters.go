@@ -79,6 +79,10 @@ func FromLoopStages(id, version string, stages []LoopStageInput, edges []LoopEdg
 			if !ValidEdgeKind(kind) {
 				kind = EdgeFlow
 			}
+			// feeds edges are data seeds for prompts, not control transitions.
+			if kind == EdgeFeeds {
+				continue
+			}
 			tr := Transition{
 				ID:   e.ID,
 				From: StateID(strings.TrimSpace(e.Source)),

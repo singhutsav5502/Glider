@@ -1,6 +1,6 @@
 # Planning docs — index (source of truth)
 
-> **As of 2026-07-18 (late).** Code + tests are authority; these docs summarize **Done / Partial / Next**.  
+> **As of 2026-07-24.** Code + tests are authority; these docs summarize **Done / Partial / Next**.  
 > Ignore `planning/Depreceated/`. Do not treat `.cursor/plans/` as product status.
 
 ## Quick map
@@ -20,9 +20,10 @@
 | [graph_feature_gaps.md](graph_feature_gaps.md) | **Graph gaps vs prior art** (LangGraph, Temporal, Slate, Anthropic, …) |
 | [enterprise_orchestrator_mvp.md](enterprise_orchestrator_mvp.md) | **Enterprise orchestrator MVP** — usage areas, strategy, MVP vs later |
 | [orchestrator_overnight_plan.md](orchestrator_overnight_plan.md) | Overnight SM / HITL / tools / MCP checklist |
-| [tools_catalog.md](tools_catalog.md) | Builtin + MCP + plugin tool catalog |
+| [tools_catalog.md](tools_catalog.md) | Thin builtin/MCP index → see **tools_mcp.md** |
+| [tools_mcp.md](tools_mcp.md) | **Canonical** tools, ScopeRel, web search, blind vs agent loop, MCP UI |
 | [graphify_context_notes.md](graphify_context_notes.md) | Graphify research vs contextgraph |
-| [remaining_gaps.md](remaining_gaps.md) | **Honest leftover gaps** after overnight run |
+| [remaining_gaps.md](remaining_gaps.md) | **Living** leftover gaps + session status |
 | [swarm_orchestration.md](swarm_orchestration.md) | Swarm/FanOut honesty + hot-swap (+ canvas companion) |
 | [cursor_prior_art.md](cursor_prior_art.md) | **Archival** external prior art (Glider Path B text is novel) |
 | [cursor_agent_rpc_debug_findings.md](cursor_agent_rpc_debug_findings.md) | **Archival** live capture / wire notes (shrunk) |
@@ -52,42 +53,43 @@
 | Orchestrator 1:1 (queue, fallback, breaker, rate/budget, VRAM) | `internal/orchestrator`, `internal/vram` |
 | Swarm FanOut + critique merge + sample `/swarm` rule | `internal/swarm`, `FanOutExecutor`, `fanout_dual_view.star` |
 | E2E + benches; `go test ./...` green | `e2e/`, `bench/` |
+| Path B common ToolCall map (opt-in `agent_rpc_tool_codec`) | `internal/cursorrpc/toolcall_map.go` + Truncated fallback |
+| `CycleExecutor` body migration + `prompt.go` + `CheckGovernance` | `internal/loop/cycle_executor.go`, `prompt.go`, `governance.go` |
 
 ## Partial
 
+> **Authoritative matrix:** [remaining_gaps.md](remaining_gaps.md) (16 areas). Do not invent enterprise features as shipped.
+
 | Area | Reality |
 |------|---------|
-| Path B tool loops / child RunSSE | Origin only; `tool_followup_would_local` logged — **no codec** |
-| Episode / SessionState (`contextkit`) | Wired on fulfill / fan-out / loop; export + prune APIs |
-| FanOut productization | Enabled in default config + sample Starlark `/swarm` rule; critique merge |
-| Hot-swap | Router/aliases/threshold/log/GPU hot; backends/MITM/ports need restart |
-| Loop engineering | Hoop cycles + parallel actors + live progress + graph_edges — [loop_engineering.md](loop_engineering.md), [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) |
-| Dashboard polish | Functional, not pixel-perfect vs mock |
+| Path B full ToolCall catalog / live UI verify | **DEFERRED** — common Read/Grep/Edit/Shell/Glob/Ls/Web map **SHIPPED** (opt-in); prefer Path A for Agent+tools demos |
+| Dashboard Server DIP | **PARTIAL** — file split done; concrete `*Manager`/`*Runner` fields remain |
+| Hosted Copilot MCP live PAT | **PARTIAL** — session harden shipped; production PAT verify ops-only |
+| Hot-swap | Router/aliases/threshold/log/GPU hot; backends/MITM/ports need restart (**DEFERRED** live backend reload) |
+| Dashboard polish | Functional, not pixel-perfect vs mock; agentlog empty-state polish minor |
 | Live GPU / Ollama | Depends on local services; nvidia-smi path yes, `nvml.dll` no |
 
 ## Next (prioritized backlog)
+
+See [remaining_gaps.md §2](remaining_gaps.md) — P0 none; P1 optional Manager SRP follow-ups; P2 DIP/globals; enterprise items **DEFERRED**.
 
 ### P0 — reliability / correctness
 
 1. **Manual Cursor checklist** on a real install (Path B text + `/cloud` wrap-up + summary chrome) — [docs/CURSOR_CHECKLIST.md](../docs/CURSOR_CHECKLIST.md)
 2. Keep Path B fail-soft + sticky regressions green (`agent_rpc_fulfill_test.go`) as Cursor builds change
-3. Prefer Path A + `cus-` for any Agent+tools demos until Path B tool codec exists
+3. Prefer Path A + `cus-` for Agent+tools demos (Path B common map ships opt-in; full catalog **DEFERRED**)
 
-### P1 — high leverage product
+### P1 — high leverage
 
-1. **Overview episode chip** — API ready (`/api/context/episodes`); wire dashboard UI
-2. ~~Default or sample FanOut rule~~ — **done** (`fanout_dual_view.star` + `orchestration.fan_out.enabled`)
-3. Classifier block editable in Rules UI (or documented YAML-only)
-4. Harden Path B empty `conversation_checkpoint` / codec from origin RESP peeks when UI flakes
-5. Loop/swarm polish remaining — see [loop_swarm_gap_plan.md](loop_swarm_gap_plan.md) P2
+1. Classifier block editable in Rules UI (or documented YAML-only)
+2. Harden Path B empty `conversation_checkpoint` / codec from origin RESP peeks when UI flakes
+3. Optional: migrate `runCycle` call sites to `m.Exec().Complete*` directly — [solid_refactor.md](solid_refactor.md)
 
 ### P2 — later
 
-1. Path B child RunSSE / tool-frame fulfill (feature-flagged) — only after Path A tools proven in user’s workflow
-2. SessionState + turn budgets on dashboard
-3. SKILL.md load, worktrees, L3 denylist/budget — [loop_engineering.md](loop_engineering.md)
-4. Backend live hot-reload without restart; optional `nvml.dll`; `go test -race` where CGO available
-5. Slate-like planner / thread-weaving (aspirational)
+1. Dashboard Server DIP; `contextgraph.Default()` removal; swarm governance extract
+2. Hosted Copilot MCP live PAT verify (ops)
+3. Backend live hot-reload without restart; optional `nvml.dll`; `go test -race` where CGO available
 
 ---
 

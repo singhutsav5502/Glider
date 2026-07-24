@@ -54,14 +54,22 @@
         <tr><td>OpenAI <code>/v1/*</code></td><td>Parse → harness</td></tr>
         <tr><td>AiService StreamChat*</td><td>cursor-rpc decode → local or origin</td></tr>
         <tr><td>BidiAppend + RunSSE</td><td>Extract prompt → DecideLocal → local text fulfill or origin</td></tr>
-        <tr><td>Tool child RunSSE</td><td>Still origin (would_* metrics); use Path A for tools</td></tr>
+        <tr><td>Tool child RunSSE</td><td>Default <strong>origin</strong>. Opt-in <code>agent_rpc_tool_codec</code> (<strong>SHIPPED</strong> common map): Read/Grep/Edit/Shell/Glob/Ls/Web* → Cursor oneofs + TruncatedToolCall fallback; full catalog <strong>DEFERRED</strong> — prefer Path A for Agent+tools</td></tr>
       </table>
 
       <h2>Flags</h2>
       <pre>mitm:
-  debug_agent_rpc: true      # dumps under ~/.glider/mitm-debug
-  agent_rpc_fulfill: true    # Path B local fulfill experimental
-  agent_rpc_canned_on_error: false</pre>
+  debug_agent_rpc: true       # dumps under ~/.glider/mitm-debug
+  agent_rpc_fulfill: true     # Path B local text fulfill (BidiAppend → RunSSE) — SHIPPED
+  agent_rpc_canned_on_error: false
+  agent_rpc_tool_codec: false # SHIPPED opt-in common ToolCall map (default off)
+  # Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1</pre>
+      <p>
+        <strong>SHIPPED</strong> (see <code>planning/remaining_gaps.md</code> §1.9): under the flag, common
+        Read/Grep/Edit/Shell/Glob/Ls/Web* names map to Cursor oneofs with TruncatedToolCall fallback
+        (<code>toolcall_map.go</code>). Full Cursor builtin catalog + live UI acceptance remain
+        <strong>DEFERRED</strong>. Path A + <code>cus-</code> is still the proven Agent+tools path.
+      </p>
 
       <h2>Deep reference</h2>
       <ul>

@@ -35,6 +35,34 @@ func TestHasToolsAndAttachTools(t *testing.T) {
 	}
 }
 
+func TestAttachFormat(t *testing.T) {
+	body := map[string]any{"model": "m"}
+	backend.AttachFormat(body, &backend.CompletionRequest{Format: backend.CriticEvalFormatJSON()})
+	if body["format"] != "json" {
+		t.Fatalf("format=%v", body["format"])
+	}
+	rf, _ := body["response_format"].(map[string]any)
+	if rf["type"] != "json_object" {
+		t.Fatalf("response_format=%v", body["response_format"])
+	}
+
+	body2 := map[string]any{"model": "m"}
+	backend.AttachFormat(body2, &backend.CompletionRequest{Format: backend.CriticEvalFormat()})
+	if _, ok := body2["format"].(map[string]any); !ok {
+		t.Fatalf("schema format=%#v", body2["format"])
+	}
+	rf2, _ := body2["response_format"].(map[string]any)
+	if rf2["type"] != "json_schema" {
+		t.Fatalf("response_format=%v", body2["response_format"])
+	}
+	if !backend.FormatIsJSONMode(backend.CriticEvalFormatJSON()) {
+		t.Fatal("expected json mode")
+	}
+	if backend.FormatIsJSONMode(backend.CriticEvalFormat()) {
+		t.Fatal("schema is not json mode")
+	}
+}
+
 func TestIsToolsUnsupported(t *testing.T) {
 	if !backend.IsToolsUnsupported(&backend.ToolsUnsupportedError{Backend: "ollama", Message: "nope"}) {
 		t.Fatal("typed error")
@@ -50,4 +78,3 @@ func TestIsToolsUnsupported(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
-

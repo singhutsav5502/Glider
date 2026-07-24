@@ -24,7 +24,18 @@ prompt: |
   - sre: rollback = previous glider.exe + configs; feature flags for fan_out / agent_rpc_fulfill
 
   Each role writes ROLE: <name> (<=140 words): readiness, blockers, go/no-go vote, and one
-  must-fix before train. Final merged output should tally votes and propose ship / slip /
-  ship-with-exceptions with named exceptions. Do not invent passing tests.
+  must-fix before train. Persist with artifact_write kind=out under runs/<turn-id>/out/
+  (ScopeRel: bare paths → work/). Prefer context_query / [context_digest] for shared goal.
+  Final merged output should tally votes and propose ship / slip / ship-with-exceptions with
+  named exceptions. Do not invent passing tests.
+tools:
+  - name: artifact_write
+    kind: builtin
+  - name: fs_list
+    kind: builtin
+  - name: context_query
+    kind: builtin
+  - name: datetime
+    kind: builtin
 description: |
   Cross-team release-train fan-out (platform/app/qa/sre) for go/no-go narrative merge.

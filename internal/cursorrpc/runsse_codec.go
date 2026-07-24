@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/glider-ai/glider/internal/backend"
 )
@@ -19,6 +20,9 @@ import (
 // }
 // InteractionUpdate oneof:
 //   TextDeltaUpdate text_delta = 1;   // { string text = 1 }
+//   ToolCallStartedUpdate tool_call_started = 2;
+//   ToolCallCompletedUpdate tool_call_completed = 3;
+//   PartialToolCallUpdate partial_tool_call = 7;
 //   TokenDeltaUpdate token_delta = 8; // { int32 tokens = 1 }
 //   HeartbeatUpdate heartbeat = 13;  // {}
 //   TurnEndedUpdate turn_ended = 14; // {}
@@ -26,19 +30,27 @@ import (
 // Observed live heartbeat payload: 0a026a00
 
 const (
-	runSSEKindHeartbeat          = "heartbeat"
-	runSSEKindTextDelta          = "text_delta"
-	runSSEKindTokenDelta         = "token_delta"
-	runSSEKindTurnEnded          = "turn_ended"
-	runSSEKindCheckpoint         = "conversation_checkpoint"
-	runSSEKindThinkingDelta      = "thinking_delta"
-	runSSEKindThinkingCompleted  = "thinking_completed"
-	runSSEKindUserMessageAppend  = "user_message_appended"
-	runSSEKindKvServer           = "kv_server_message"
-	runSSEKindOtherInteraction   = "interaction_other"
-	runSSEKindOtherServerMessage = "server_other"
+	runSSEKindHeartbeat           = "heartbeat"
+	runSSEKindTextDelta           = "text_delta"
+	runSSEKindTokenDelta          = "token_delta"
+	runSSEKindTurnEnded           = "turn_ended"
+	runSSEKindCheckpoint          = "conversation_checkpoint"
+	runSSEKindThinkingDelta       = "thinking_delta"
+	runSSEKindThinkingCompleted   = "thinking_completed"
+	runSSEKindUserMessageAppend   = "user_message_appended"
+	runSSEKindToolCallStarted     = "tool_call_started"
+	runSSEKindToolCallCompleted   = "tool_call_completed"
+	runSSEKindPartialToolCall     = "partial_tool_call"
+	runSSEKindToolCallDelta       = "tool_call_delta"
+	runSSEKindKvServer            = "kv_server_message"
+	runSSEKindOtherInteraction    = "interaction_other"
+	runSSEKindOtherServerMessage  = "server_other"
 	runSSEKindCompressedEncrypted = "compressed_or_opaque"
 )
+
+// runSSEToolCodecEnabled gates Path B child/tool-loop fulfill. Default false so
+// Mode A + text-only Path B stay unchanged until mitm.agent_rpc_tool_codec is on.
+var runSSEToolCodecEnabled atomic.Bool
 
 // EncodeAgentHeartbeat returns AgentServerMessage{interaction_update: heartbeat{}}.
 func EncodeAgentHeartbeat() []byte {
@@ -82,6 +94,48 @@ func EncodeAgentThinkingDelta(text string, style int32) []byte {
 // fixtures / experiments — WriteRunSSETextResponse no longer emits it by default.
 func EncodeAgentEmptyCheckpoint() []byte {
 	return protoBytesField(3, nil) // field 3, empty ConversationStateStructure
+}
+
+// EncodeTruncatedToolCallWire returns ToolCall{truncated_tool_call: {}} (oneof field 34).
+// Fallback when EncodeMappedToolCallWire cannot map an OpenAI/Cursor tool name.
+func EncodeTruncatedToolCallWire() []byte {
+	// ToolCall.truncated_tool_call = 34 → empty TruncatedToolCall {}
+	return protoBytesField(toolCallFieldTruncated, nil)
+}
+
+// EncodeAgentPartialToolCall returns AgentServerMessage{partial_tool_call}.
+// InteractionUpdate.partial_tool_call = 7; PartialToolCallUpdate fields 1/3.
+func EncodeAgentPartialToolCall(callID, argsTextDelta string) []byte {
+	inner := protoBytesField(1, []byte(callID))
+	if argsTextDelta != "" {
+		inner = append(inner, protoBytesField(3, []byte(argsTextDelta))...)
+	}
+	// Attach a minimal ToolCall so clients that require field 2 still parse.
+	inner = append(inner, protoBytesField(2, EncodeTruncatedToolCallWire())...)
+	iu := protoBytesField(7, inner) // InteractionUpdate.partial_tool_call
+	return protoBytesField(1, iu)
+}
+
+// EncodeAgentToolCallStarted returns AgentServerMessage{tool_call_started}.
+func EncodeAgentToolCallStarted(callID string, toolWire []byte) []byte {
+	if toolWire == nil {
+		toolWire = EncodeTruncatedToolCallWire()
+	}
+	inner := protoBytesField(1, []byte(callID))
+	inner = append(inner, protoBytesField(2, toolWire)...)
+	iu := protoBytesField(2, inner) // InteractionUpdate.tool_call_started = 2
+	return protoBytesField(1, iu)
+}
+
+// EncodeAgentToolCallCompleted returns AgentServerMessage{tool_call_completed}.
+func EncodeAgentToolCallCompleted(callID string, toolWire []byte) []byte {
+	if toolWire == nil {
+		toolWire = EncodeTruncatedToolCallWire()
+	}
+	inner := protoBytesField(1, []byte(callID))
+	inner = append(inner, protoBytesField(2, toolWire)...)
+	iu := protoBytesField(3, inner) // InteractionUpdate.tool_call_completed = 3
+	return protoBytesField(1, iu)
 }
 
 func protoBytesField(field int, payload []byte) []byte {
@@ -173,6 +227,148 @@ func WriteRunSSETextResponse(w http.ResponseWriter, chunks <-chan backend.Comple
 	return WriteConnectEndStream(w)
 }
 
+// WriteRunSSEToolResponse encodes a Path B RunSSE stream that may include tool
+// frames (tool_call_started / partial_tool_call / tool_call_completed) in addition
+// to the text-only shape. Used when HasRunSSEToolCodec() is true.
+//
+// OpenAI-compat CompletionChunk.ToolCalls are mapped to Cursor builtin ToolCall
+// variants when the name is known (read→Read, grep→Grep, …); unknown names fall
+// back to TruncatedToolCall. Args JSON is also emitted via partial_tool_call
+// args_text_delta for clients that stream arguments.
+func WriteRunSSEToolResponse(w http.ResponseWriter, chunks <-chan backend.CompletionChunk) error {
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "application/connect+proto")
+	w.WriteHeader(http.StatusOK)
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	if err := writeEnvelope(w, 0, EncodeAgentHeartbeat()); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	if err := writeEnvelope(w, 0, EncodeAgentThinkingDelta(" ", 1)); err != nil {
+		return err
+	}
+	if err := writeEnvelope(w, 0, EncodeAgentTokenDelta(1)); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	started := map[string][]byte{} // callID → ToolCall wire
+	var sentTokens int32
+	for chunk := range chunks {
+		if chunk.Content != "" {
+			if err := writeEnvelope(w, 0, EncodeAgentTextDelta(chunk.Content)); err != nil {
+				return err
+			}
+			approx := int32(len([]rune(chunk.Content))/4 + 1)
+			sentTokens += approx
+			if err := writeEnvelope(w, 0, EncodeAgentTokenDelta(approx)); err != nil {
+				return err
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		for _, tc := range chunk.ToolCalls {
+			callID := strings.TrimSpace(tc.ID)
+			if callID == "" {
+				callID = "call_" + itoaIndex(tc.Index)
+			}
+			args := ""
+			name := ""
+			if tc.Function != nil {
+				args = tc.Function.Arguments
+				name = tc.Function.Name
+			}
+			toolWire := EncodeMappedToolCallWire(name, args, callID)
+			if _, seen := started[callID]; !seen {
+				started[callID] = toolWire
+				if err := writeEnvelope(w, 0, EncodeAgentToolCallStarted(callID, toolWire)); err != nil {
+					return err
+				}
+			} else if args != "" {
+				// Prefer richer mapped wire once full args arrive.
+				started[callID] = toolWire
+			}
+			delta := args
+			if name != "" && args == "" {
+				delta = `{"name":"` + name + `"}`
+			}
+			if delta != "" {
+				if err := writeEnvelope(w, 0, EncodeAgentPartialToolCall(callID, delta)); err != nil {
+					return err
+				}
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if chunk.FinishReason == "tool_calls" {
+			for callID, toolWire := range started {
+				if err := writeEnvelope(w, 0, EncodeAgentToolCallCompleted(callID, toolWire)); err != nil {
+					return err
+				}
+			}
+			started = nil
+			if flusher != nil {
+				flusher.Flush()
+			}
+			break
+		}
+		if chunk.FinishReason != "" && chunk.Content == "" && len(chunk.ToolCalls) == 0 {
+			break
+		}
+	}
+	// Complete any started tools that never got finish_reason=tool_calls.
+	for callID, toolWire := range started {
+		if err := writeEnvelope(w, 0, EncodeAgentToolCallCompleted(callID, toolWire)); err != nil {
+			return err
+		}
+	}
+
+	if err := writeEnvelope(w, 0, EncodeAgentTurnEnded()); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	_ = sentTokens
+	return WriteConnectEndStream(w)
+}
+
+// WriteRunSSEResponse picks text-only vs tool-aware codec. Prefer tool writer when
+// the codec flag is on (handles pure-text chunks too). Path A is unaffected.
+func WriteRunSSEResponse(w http.ResponseWriter, chunks <-chan backend.CompletionChunk) error {
+	if HasRunSSEToolCodec() {
+		return WriteRunSSEToolResponse(w, chunks)
+	}
+	return WriteRunSSETextResponse(w, chunks)
+}
+
+func itoaIndex(i int) string {
+	if i < 0 {
+		i = 0
+	}
+	const digits = "0123456789"
+	if i < 10 {
+		return string(digits[i])
+	}
+	var b [20]byte
+	pos := len(b)
+	for i > 0 {
+		pos--
+		b[pos] = digits[i%10]
+		i /= 10
+	}
+	return string(b[pos:])
+}
+
 // CannedCompletionChunks returns a closed channel with one text chunk (for dry-run fulfill).
 func CannedCompletionChunks(text string) <-chan backend.CompletionChunk {
 	ch := make(chan backend.CompletionChunk, 1)
@@ -256,6 +452,20 @@ func classifyInteractionUpdate(inner []byte, outerWire string) (kind, wire, text
 			}
 		}
 		return runSSEKindTextDelta, wire, textHint
+	case 2: // tool_call_started
+		if wireType == 2 {
+			if s, ok := readLDPayload(rest); ok {
+				textHint = firstStringField(s, 1)
+			}
+		}
+		return runSSEKindToolCallStarted, wire, textHint
+	case 3: // tool_call_completed
+		if wireType == 2 {
+			if s, ok := readLDPayload(rest); ok {
+				textHint = firstStringField(s, 1)
+			}
+		}
+		return runSSEKindToolCallCompleted, wire, textHint
 	case 4: // thinking_delta
 		if wireType == 2 {
 			if s, ok := readLDPayload(rest); ok {
@@ -270,12 +480,29 @@ func classifyInteractionUpdate(inner []byte, outerWire string) (kind, wire, text
 		return runSSEKindThinkingCompleted, wire, ""
 	case 6: // user_message_appended
 		return runSSEKindUserMessageAppend, wire, ""
+	case 7: // partial_tool_call
+		if wireType == 2 {
+			if s, ok := readLDPayload(rest); ok {
+				textHint = firstStringField(s, 1)
+				if textHint == "" {
+					textHint = firstStringField(s, 3) // args_text_delta
+				}
+			}
+		}
+		return runSSEKindPartialToolCall, wire, textHint
 	case 8: // token_delta
 		return runSSEKindTokenDelta, wire, ""
 	case 13: // heartbeat
 		return runSSEKindHeartbeat, wire, ""
 	case 14: // turn_ended
 		return runSSEKindTurnEnded, wire, ""
+	case 15: // tool_call_delta
+		if wireType == 2 {
+			if s, ok := readLDPayload(rest); ok {
+				textHint = firstStringField(s, 1)
+			}
+		}
+		return runSSEKindToolCallDelta, wire, textHint
 	default:
 		return runSSEKindOtherInteraction, wire, ""
 	}
@@ -365,10 +592,16 @@ func InspectRunSSEResponseDeep(peek []byte, statusCode int, contentType string) 
 // HasRunSSETextCodec reports that Glider can author a minimal text-only RunSSE stream.
 func HasRunSSETextCodec() bool { return true }
 
+// SetRunSSEToolCodecEnabled toggles Path B child/tool-loop RunSSE fulfill.
+// Default is false (safe). Wired from mitm.agent_rpc_tool_codec / env at process start.
+func SetRunSSEToolCodecEnabled(enabled bool) {
+	runSSEToolCodecEnabled.Store(enabled)
+}
+
 // HasRunSSEToolCodec reports whether Path B can fulfill child/tool-loop RunSSE
-// (tool_call frames). False until the tool response codec lands — callers still
-// re-decide via routing.tool_followup and emit tool_followup_would_local.
-func HasRunSSEToolCodec() bool { return false }
+// (tool_call frames). When false, callers still re-decide via routing.tool_followup
+// and emit tool_followup_would_local, then origin passthrough.
+func HasRunSSEToolCodec() bool { return runSSEToolCodecEnabled.Load() }
 
 // IsRootAgentRunSSE reports a root Agent turn (no parent/child correlation headers).
 // Cursor Task subagents and tool-loop children often set one of these; treat them

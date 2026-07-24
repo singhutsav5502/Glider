@@ -3,9 +3,11 @@ id: clone-repo-security-audit
 name: Clone + code quality / security audit
 goal: |
   Clone a target repository into the workspace, then produce a structured audit covering
-  code quality and security. Target is configurable: pass repo=<url> in the goal or use
-  the default demo URL in the planner prompt. Output sections: Scope, Clone result,
-  Quality findings, Security findings, Priority fixes, Residual risk.
+  code quality and security. Target:
+  repo=https://github.com/singhutsav5502/Unbrokify.git
+  Output sections: Scope, Clone result, Quality findings, Security findings,
+  Priority fixes, Residual risk. Do not invent CVEs. Do not ask the operator questions —
+  execute with tools and produce the report.
 route: local
 learning: true
 max_iterations: 3
@@ -17,12 +19,25 @@ fail_policy: stop
 eval:
   goal: |
     Audit has Scope, Quality findings, Security findings, Priority fixes;
-    SCORE >= 0.75; no invented CVEs
+    SCORE >= 0.75; no invented CVEs; findings cite paths under audit-target/
   min_score: 0.75
   on_fail_n: 2
 stop_conditions:
   on_success_n: 1
-  max_latency_ms: 300000
+  max_latency_ms: 900000
+# Runtime notes (rebuild Glider after tool-loop fixes):
+# - Blind pre-pass only runs read-only tools with workspace "." (never the goal string).
+# - git_clone / fs_write / code_grep / MCP run via the agent tool loop (including parallel workers).
+# - MCP name "*" expands to list_tools / live catalog — never CallTool("*").
+# - With an active hoop, bare dirs like audit-target land under runs/<hoop-id>/work/audit-target
+#   (git_clone AND fs_list/fs_read/code_grep share ScopeRel). Shared clone path for this hoop:
+#   runs/clone-repo-security-audit/work/audit-target
+# - Parallel workers must NOT re-clone; undeclared tools are rejected by the agent loop.
+# - kind: context (context_seed) upserts goal/plan/clone_path into contextgraph; workers use
+#   context_query key=clone_path|goal|plan|file-tree (always injected on actor/planner/critic).
+# - Tool-loop MaxSteps: sequential ≥20, parallel workers ≥28 (see toolLoopMaxSteps* in cycle.go).
+# - Critic stages default to no tools (completeOnce); declare read-only tools only if needed.
+# - Local Ollama Complete timeout: thresholds.request_timeout (default 10m) for tool-heavy stages.
 stages:
   - id: memory_load
     kind: memory
@@ -34,18 +49,19 @@ stages:
   - id: plan_audit
     kind: planner
     name: Plan clone + audit
-    tools:
-      - name: datetime
-        kind: builtin
-      - name: context_query
-        kind: builtin
+    # No tools — planner text only. Calling undeclared tools poisons CONTEXT with rejections.
     prompt: |
-      You are the audit planner. Produce a SHORT plan:
-      1) Resolve target repo URL or path from GOAL (look for repo= or https://)
-      2) Clone or refresh into workspace dir audit-target (git_clone)
+      You are the audit planner. Target repo is FIXED:
+      https://github.com/singhutsav5502/Unbrokify.git → workspace dir audit-target
+      (resolves to runs/clone-repo-security-audit/work/audit-target with this hoop id).
+      Do NOT call git_clone — the next stage (clone_fetch) owns cloning. Plan only.
+      Do NOT emit the final audit JSON, Clone result templates, findings arrays, or tool-error text.
+      Produce a SHORT numbered plan only (no questions, no chat, no tool-error narratives):
+      1) clone_fetch will git_clone that URL into audit-target (refresh if present)
+      2) Inventory tree + languages after clone
       3) Fan-out quality vs security vs secrets review
-      4) Merge findings; human_gate before critic if high severity suspected
-      Do not invent vulnerabilities. Prefer tools over guesses.
+      4) Merge findings; human_gate reviews before critic
+      Prefer a concise text plan. Never invent CVEs.
   - id: clone_fetch
     kind: actor
     name: Clone / inventory
@@ -58,29 +74,94 @@ stages:
         kind: builtin
       - name: git_log
         kind: builtin
+      - name: "*"
+        kind: mcp
+        server: github
     prompt: |
-      Execute the PLAN clone/inventory steps using available tools.
-      Summarize tree top-level, recent commits, and languages observed.
-      If clone fails, document the error and continue with fs_list on workspace.
+      EXECUTE with tool_calls (do not ask questions). Tools are sandboxed to the Glider
+      tools workspace (default ~/.glider/workspace) — NOT the Glider source tree.
+      REQUIRED first action — call git_clone with JSON args:
+        {"url":"https://github.com/singhutsav5502/Unbrokify.git","dir":"audit-target"}
+      That lands at runs/<hoop-id>/work/audit-target (NOT workspace-root audit-target/).
+      Then fs_list path=audit-target (same ScopeRel — you will see the clone tree).
+      If CONTEXT already has clone_path OR fs_list path=audit-target succeeds, report SUCCESS
+      and inventory the real tree — do NOT claim clone failed / CLONE_FAILED when the dir exists.
+      Summarize top-level tree, languages, recent commits from THAT clone only.
+      If clone truly fails (tool error AND dir missing), say CLONE_FAILED and quote the error.
+      Never invent a tree. Never report findings from paths outside audit-target/.
+  - id: verify_clone
+    kind: actor
+    name: Verify clone landed
+    tools:
+      - name: fs_list
+        kind: builtin
+      - name: fs_search
+        kind: builtin
+    prompt: |
+      VERIFY the Unbrokify clone exists before parallel audit.
+      Call fs_list path=audit-target (run-scoped → runs/<hoop>/work/audit-target).
+      If the directory is missing or empty: reply exactly CLONE_MISSING and stop.
+      If present: reply CLONE_OK plus the top-level entry names (one line each).
+      No audit findings yet. Do not invent a workspace-root audit-target failure when
+      the run-scoped path exists.
+  - id: context_seed
+    kind: context
+    name: Seed shared context
+    # Upserts goal / plan / clone_path (+ file-tree after index) into contextgraph for later
+    # actors + parallel/swarm. Workers: context_query key=clone_path (or goal|plan|file-tree).
+    # Do not re-clone — shared path is runs/<hoop-id>/work/audit-target.
+    # Poisoned planner text (tool "not allowed in this stage") is rewritten when clone_path exists.
   - id: parallel_audit
     kind: actor
     name: Parallel quality + security
-    parallel: 3
-    roles: [research, exec, plan]
+    parallel: 2
+    # Default parallel_mode is fanout (in-process FanOut + CritiqueMerge).
+    # To nest swarm.Runner instead (requires orchestration.swarm.enabled):
+    # parallel_mode: swarm
+    # swarm:
+    #   template_id: repo-audit   # optional
+    #   waves: 1                  # ≤1 → Runner.Run; >1 → RunWaves
+    #   weave_policy: critic
+    #   prefer_local: true
+    #   models: []
+    roles: [research, exec]
     tools:
+      # No git_clone — clone_fetch/verify_clone already ran. Writes come from filterToolRefs defaults.
+      # context_query is always injected for actor/planner/critic stages.
       - name: code_grep
         kind: builtin
       - name: fs_search
         kind: builtin
-      - name: context_query
+      - name: fs_list
         kind: builtin
+      - name: fs_read
+        kind: builtin
+      - name: artifact_write
+        kind: builtin
+      - name: web_search
+        kind: builtin
+      - name: web_fetch
+        kind: builtin
+      - name: "*"
+        kind: mcp
+        server: github
     prompt: |
-      You are one auditor under the PLAN and clone inventory.
-      - research: security (authz, injection, secrets patterns, unsafe shell)
+      You are one auditor. ONLY inspect audit-target/ (Unbrokify clone under the run work dir).
+      Shared clone path: runs/clone-repo-security-audit/work/audit-target (bare audit-target/ is OK —
+      tools ScopeRel into that work dir). Prefer context_query key=clone_path (or goal|plan|file-tree)
+      if unsure where the tree lives — do NOT call git_clone (undeclared; rejection is not a finding).
+      If prior stage said CLONE_MISSING, reply SKIPPED_NO_CLONE and stop — do not invent files.
+      Do NOT write clone_result claiming workspace-root audit-target failed.
+      Do NOT greet or ask for instructions. Produce findings immediately via tool_calls
+      (code_grep / fs_read / fs_list under audit-target/). Paths must start with audit-target/.
+      CRITICAL: findings paths MUST appear in prior fs_list / code_grep / fs_read tool output.
+      Inventing paths (e.g. audit-target/src/app.js, routes/auth.js) = invalid — use only real Unbrokify paths.
+      Persist role notes with artifact_write kind=out (e.g. out findings-<role>.md) under
+      runs/clone-repo-security-audit/out/ — do not invent paths outside the run layout.
+      - research: security (authz, injection, secrets patterns, unsafe shell); optional web_search
+        for vuln class names only; web_fetch only to verify a cited advisory URL (no invented CVEs)
       - exec: code quality (error handling, tests, complexity hotspots)
-      - plan: process risks + suggested fix order
-      Use shared_context and tools. Cite file paths. No invented CVEs.
-      Label ROLE: <name>.
+      Cite file paths actually returned by tools. No invented CVEs. Label ROLE: <name>. End with Findings / Priority fixes.
   - id: human_gate
     kind: human_gate
     name: Operator review gate
@@ -88,11 +169,18 @@ stages:
     kind: critic
     name: Audit completeness critic
     eval_min: 0.75
+    # No tools — score ACTOR_OUTPUT only (avoids chatty tool loops / asking for files).
     prompt: |
       You are the checker. Score whether the merged audit is actionable and honest.
-      Penalize invented CVEs, missing Priority fixes, or empty Scope.
+      Do NOT ask the operator for files, code, clarifications, or more context.
+      Do NOT apologize or chat. Judge ACTOR_OUTPUT and CONTEXT only (tool_path=audit-target if present).
+      You MUST end with exactly two lines and nothing else after them:
       SCORE: <0.0-1.0>
       REASON: <one short sentence>
+      SCORE 0 if clone never succeeded (CLONE_MISSING / CLONE_FAILED), findings invent paths,
+      or the output is prose asking for files instead of an audit.
+      Penalize invented CVEs, missing Priority fixes, empty Scope, or chatty non-audits.
+      Missing SCORE line fails the eval (treated as 0).
   - id: memory_persist
     kind: memory
     name: Persist audit
@@ -109,8 +197,16 @@ graph_edges:
     source: plan_audit
     target: clone_fetch
     kind: flow
-  - id: e4
+  - id: e3b
     source: clone_fetch
+    target: verify_clone
+    kind: flow
+  - id: e4
+    source: verify_clone
+    target: context_seed
+    kind: flow
+  - id: e4b
+    source: context_seed
     target: parallel_audit
     kind: flow
   - id: e5

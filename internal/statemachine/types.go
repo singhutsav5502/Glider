@@ -78,6 +78,7 @@ const (
 	EdgeBudgetExceeded EdgeKind = "budget_exceeded"
 	EdgeParallel       EdgeKind = "parallel"
 	EdgeMerge          EdgeKind = "merge"
+	EdgeFeeds          EdgeKind = "feeds" // data seed only; skipped in WalkOrder
 )
 
 // GuardKind selects how a transition is allowed.
@@ -205,7 +206,7 @@ type Runtime struct {
 func ValidEdgeKind(k EdgeKind) bool {
 	switch k {
 	case EdgeFlow, EdgeFeedback, EdgeOnFail, EdgeEscalate, EdgeConditional,
-		EdgeBudgetExceeded, EdgeParallel, EdgeMerge:
+		EdgeBudgetExceeded, EdgeParallel, EdgeMerge, EdgeFeeds:
 		return true
 	default:
 		return false

@@ -28,6 +28,7 @@ type HoopYAML struct {
 	Interval      string         `yaml:"interval,omitempty"`
 	Cron          string         `yaml:"cron,omitempty"`
 	Prompt        string         `yaml:"prompt,omitempty"`
+	Skill         string         `yaml:"skill,omitempty"`
 	Route         string         `yaml:"route,omitempty"`
 	Learning      bool           `yaml:"learning,omitempty"`
 	Model         string         `yaml:"model,omitempty"`
@@ -53,6 +54,7 @@ func SpecFromHoopYAML(h HoopYAML) (LoopSpec, error) {
 		Interval:      h.Interval,
 		Cron:          h.Cron,
 		Prompt:        h.Prompt,
+		Skill:         h.Skill,
 		Route:         RoutePref(h.Route),
 		Learning:      h.Learning,
 		Model:         h.Model,
@@ -113,6 +115,7 @@ func WriteHoopYAML(dir string, spec LoopSpec) error {
 		Interval:      spec.Interval,
 		Cron:          spec.Cron,
 		Prompt:        spec.Prompt,
+		Skill:         spec.Skill,
 		Route:         string(spec.Route),
 		Learning:      spec.Learning,
 		Model:         spec.Model,

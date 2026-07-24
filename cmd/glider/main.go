@@ -22,6 +22,7 @@ import (
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
+	"github.com/glider-ai/glider/internal/cursorrpc"
 	"github.com/glider-ai/glider/internal/dashboard"
 	"github.com/glider-ai/glider/internal/loop"
 	"github.com/glider-ai/glider/internal/mcp"
@@ -44,6 +45,12 @@ func main() {
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: levelVar}))
+
+	if loaded, err := config.LoadDotEnvFiles(); err != nil {
+		log.Warn("dotenv load", "err", err)
+	} else if len(loaded) > 0 {
+		log.Info("loaded env file(s)", "files", loaded)
+	}
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
@@ -169,7 +176,7 @@ func main() {
 		Episodes:     episodeStore,
 		Templates:    tplStore,
 		SessionID:    sessionID,
-		DefaultModel: "codellama:7b",
+		DefaultModel: "qwen2.5-coder:14b",
 		Graph:        nil, // set after ctxGraph
 	}
 	swarmRunner.SetEnabled(cfg.Orchestration.Swarm.Enabled || cfg.Orchestration.FanOut.Enabled)
@@ -323,8 +330,12 @@ func main() {
 			AgentRPCFulfill:   cfg.MITM.AgentRPCFulfill,
 			CannedOnError:     cfg.MITM.AgentRPCCannedOnError,
 			CannedText:        cfg.MITM.AgentRPCCannedText,
+			AgentRPCToolCodec: cfg.MITM.AgentRPCToolCodec,
 			SurfaceLocalError: !cfg.MITM.OriginOnLocalErrorOrDefault(),
 			FulfillHub:        fulfillHub,
+		}
+		if cfg.MITM.AgentRPCToolCodec {
+			cursorrpc.SetRunSSEToolCodecEnabled(true)
 		}
 		if cfg.MITM.RequireLocalHealthy {
 			interceptor.LocalHealthy = func() bool {
@@ -365,7 +376,8 @@ func main() {
 		if cfg.MITM.AgentRPCFulfill {
 			log.Info("mitm agent rpc fulfill experimental enabled",
 				"canned_on_error", cfg.MITM.AgentRPCCannedOnError,
-				"note", "BidiAppend extractâ†’DecideLocalâ†’RunSSE text codec when correlated; else origin")
+				"tool_codec", cfg.MITM.AgentRPCToolCodec,
+				"note", "BidiAppend extract -> DecideLocal -> RunSSE text codec when correlated; child tool RunSSE local only when tool_codec on")
 		}
 		mitmProxy = &mitm.Proxy{
 			Addr:      fmt.Sprintf(":%d", cfg.MITM.Port),
@@ -420,7 +432,10 @@ func main() {
 				MaxBias:       cfg.Orchestration.Loops.HoopLearning.MaxBias,
 				Window:        cfg.Orchestration.Loops.HoopLearning.Window,
 			},
-			OutcomeRing: 64,
+			OutcomeRing:      64,
+			DefaultMaxTokens: cfg.Thresholds.DefaultMaxTokens,
+			SkillsDir:        cfg.Orchestration.Loops.SkillsDir,
+			Worktrees:        cfg.Orchestration.Loops.Worktrees,
 		})
 		loopMgr.Episodes = episodeStore
 		agentLogs := agentlog.NewStore(256)
@@ -429,24 +444,56 @@ func main() {
 		})
 		loopMgr.Logs = agentLogs
 		mcpMgr := mcp.NewManager()
+		if hydrated, err := mcp.HydrateGitHubTokenFromStore(); err != nil {
+			log.Warn("mcp github credential hydrate", "err", err)
+		} else if hydrated {
+			log.Info("mcp github token loaded from ~/.glider/credentials/github_token")
+		}
 		if err := mcpMgr.Configure(mcp.DefaultGitHubConfig(), mcp.DefaultGitHubStdioConfig()); err != nil {
 			log.Warn("mcp configure", "err", err)
 		}
-		if _, err := mcpMgr.Connect(context.Background(), mcp.DefaultGitHubConfig()); err != nil {
-			log.Warn("mcp github connect (set GITHUB_PERSONAL_ACCESS_TOKEN / GITHUB_TOKEN / GH_TOKEN for live tools)", "err", err)
+		if mcp.GitHubTokenPresent() {
+			if _, err := mcpMgr.Connect(context.Background(), mcp.DefaultGitHubConfig()); err != nil {
+				log.Warn("mcp github connect failed", "err", err)
+			} else {
+				log.Info("mcp github HTTP connected")
+			}
+		} else if mcp.ResolveGitHubOAuthClientID() != "" {
+			log.Info("mcp github: OAuth client id loaded — open Dashboard MCP tab → Sign in with GitHub (no PAT yet)")
+		} else {
+			log.Info("mcp github: no token yet — Paste PAT or set GLIDER_GITHUB_OAUTH_CLIENT_ID in .env.local, then Sign in on MCP tab")
 		}
 		dash.MCP = mcpMgr
 		plugReg := plugin.NewMemRegistry(&plugin.SimpleHost{Root: "."})
+		loopMgr.Plugins = plugReg
 		allowShell := cfg.Orchestration.Tools.AllowShell
+		workspace, err := tools.ResolveWorkspace(cfg.Orchestration.Tools.Workspace)
+		if err != nil {
+			log.Warn("tools workspace", "err", err)
+			workspace = "."
+		} else {
+			log.Info("tools workspace", "path", workspace)
+		}
 		toolReg := tools.NewRegistry(tools.Options{
-			Workspace:  ".",
+			Workspace:  workspace,
 			AllowShell: allowShell,
 			ShellAllow: cfg.Orchestration.Tools.ShellAllowlist,
-			Context:    contextgraph.ContextQuerier{Store: ctxGraph},
-			MCP:        mcpMgr,
-			Plugins:    plugReg,
+			AllowHosts: cfg.Orchestration.Tools.AllowHosts,
+			WebSearch: tools.WebSearchOptions{
+				Provider:        cfg.Orchestration.Tools.WebSearch.Provider,
+				MaxResults:      cfg.Orchestration.Tools.WebSearch.MaxResults,
+				BraveAPIKeyEnv:  cfg.Orchestration.Tools.WebSearch.BraveAPIKeyEnv,
+				TavilyAPIKeyEnv: cfg.Orchestration.Tools.WebSearch.TavilyAPIKeyEnv,
+				SerpAPIKeyEnv:   cfg.Orchestration.Tools.WebSearch.SerpAPIKeyEnv,
+				SearXNGURL:      cfg.Orchestration.Tools.WebSearch.SearXNGURL,
+				FetchMaxBytes:   cfg.Orchestration.Tools.WebSearch.FetchMaxBytes,
+			},
+			Context: contextgraph.ContextQuerier{Store: ctxGraph},
+			MCP:     mcpMgr,
+			Plugins: plugReg,
 		})
 		loopMgr.Tools = toolReg
+		loopMgr.Swarm = swarmRunner
 		loopMgr.BudgetCheck = func(st *loop.LoopState) bool {
 			return st == nil || !st.Spend.HardHit
 		}
@@ -585,15 +632,16 @@ func (l *liveRouter) Route(ctx context.Context, req *backend.CompletionRequest) 
 }
 
 func registerBackends(reg *backend.Registry, cfg *config.Config, log *slog.Logger) {
+	reqTimeout := parseRequestTimeout(cfg)
 	for _, b := range cfg.Backends {
 		switch b.Name {
 		case "ollama":
-			_ = reg.Register(ollama.New(b.URL))
+			_ = reg.Register(ollama.NewWithTimeout(b.URL, reqTimeout))
 		case "vllm":
-			_ = reg.Register(vllm.New(b.URL))
+			_ = reg.Register(vllm.NewWithTimeout(b.URL, reqTimeout))
 		default:
 			if b.Type == "local" {
-				_ = reg.Register(ollama.New(b.URL))
+				_ = reg.Register(ollama.NewWithTimeout(b.URL, reqTimeout))
 			}
 		}
 	}
@@ -614,8 +662,25 @@ func registerBackends(reg *backend.Registry, cfg *config.Config, log *slog.Logge
 	}
 	if len(reg.List()) == 0 {
 		log.Warn("no backends configured; registering default ollama")
-		_ = reg.Register(ollama.New("http://127.0.0.1:11434"))
+		_ = reg.Register(ollama.NewWithTimeout("http://127.0.0.1:11434", reqTimeout))
 	}
+}
+
+// parseRequestTimeout reads thresholds.request_timeout for local HTTP clients (default 10m).
+func parseRequestTimeout(cfg *config.Config) time.Duration {
+	const fallback = 10 * time.Minute
+	if cfg == nil {
+		return fallback
+	}
+	s := strings.TrimSpace(cfg.Thresholds.RequestTimeout)
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 func pingBackends(ctx context.Context, reg *backend.Registry, log *slog.Logger, verbose bool) {

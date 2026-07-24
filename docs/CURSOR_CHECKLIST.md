@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [ ] Ollama running with at least one model from `glider.yaml` (e.g. `codellama:7b`) if testing local routes
+- [ ] Ollama running with at least one model from `glider.yaml` (e.g. `qwen2.5-coder:14b`) if testing local routes
 - [ ] `go build -o glider.exe ./cmd/glider && .\glider.exe --config configs\glider.yaml`
 - [ ] Gateway `http://localhost:8080/healthz` → `ok`
 - [ ] Dashboard `http://localhost:8081` loads (Overview shows Path B text-only Agent banner; LOCAL/CLOUD % includes `origin_passthrough`)
@@ -14,7 +14,7 @@
 
 - [ ] Settings → Models: OpenAI API key set; Override Base URL = `http://localhost:8080/v1`
 - [ ] Ask / Chat with an OpenAI-path model → response returns
-- [ ] Model id uses `cus-` prefix when forcing Agent onto the gateway (e.g. `cus-codellama:7b`)
+- [ ] Model id uses `cus-` prefix when forcing Agent onto the gateway (e.g. `cus-qwen2.5-coder:14b`)
 - [ ] Prompt with `/local` → dashboard shows local route
 - [ ] Prompt with `/cloud` → dashboard shows cloud (needs `OPENAI_API_KEY`)
 - [ ] Responses-shaped body → no `missing messages` error (gateway translates)

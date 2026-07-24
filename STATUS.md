@@ -60,13 +60,13 @@ go build -o glider.exe ./cmd/glider
 
 ## Remaining / incomplete (P0–P2)
 
-See full backlog in [planning/README.md](planning/README.md). Brief:
+**Authoritative:** [planning/remaining_gaps.md](planning/remaining_gaps.md) (16-area matrix). Brief:
 
 | Pri | Item |
 |-----|------|
-| **P0** | Manual Cursor checklist (Path B text + `/cloud` wrap-up); keep sticky regressions green |
-| **P1** | Overview episode chip; sample FanOut rule + e2e; classifier Rules UI; codec harden if UI flakes |
-| **P2** | Path B tool-loop fulfill; episode disk persistence; eval loops; race/nvml; planner (aspirational) |
+| **P0** | None open (matrix). Manual Cursor checklist still useful for Path B text + `/cloud` wrap-up. |
+| **P1** | Classifier Rules UI polish; Path B codec UI harden; optional Manager SRP call-site migration |
+| **P2** | Path B full ToolCall catalog / live PAT verify (**DEFERRED**); Dashboard DIP; `contextgraph.Default()`; enterprise chargeback/SIEM (**DEFERRED**) |
 
 Also: dashboard not pixel-perfect vs mock; `go test -race` not signed off on Windows (CGO).
 

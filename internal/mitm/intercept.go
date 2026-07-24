@@ -55,6 +55,9 @@ type Interceptor struct {
 	FulfillHub *AgentFulfillHub
 	// ToolFollowup is routing.tool_followup (child RunSSE re-decide). Copied from config.
 	ToolFollowup config.ToolFollowupConfig
+	// AgentRPCToolCodec enables Path B child/tool RunSSE fulfill when PreferLocal.
+	// Mirrors mitm.agent_rpc_tool_codec; also sets cursorrpc.SetRunSSEToolCodecEnabled.
+	AgentRPCToolCodec bool
 }
 
 // DefaultCannedRunSSEText is the synthetic assistant reply used without a local backend.
@@ -1041,7 +1044,7 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 		}
 		i.Debug.Observe(r, body, kind)
 	}
-	if err := cursorrpc.WriteRunSSETextResponse(w, chunks); err != nil {
+	if err := cursorrpc.WriteRunSSEResponse(w, chunks); err != nil {
 		log.Error("mitm runsse encode/write failed", "corr_id", reqID, "err", err)
 		if i.Metrics != nil {
 			i.Metrics.IncAction("mitm", "runsse_encode_err")
@@ -1152,7 +1155,8 @@ func (i *Interceptor) evaluateToolFollowupRunSSE(w http.ResponseWriter, r *http.
 	}
 	i.emitContextEvent(contextgraph.EventToolStarted, reqID, famRoot, "mitm", toolAttrs, sess)
 
-	canFulfill := verdict.PreferLocal && cursorrpc.HasRunSSEToolCodec() && cursorrpc.HasRunSSETextCodec()
+	canFulfill := verdict.PreferLocal && i != nil && i.AgentRPCToolCodec &&
+		cursorrpc.HasRunSSEToolCodec() && cursorrpc.HasRunSSETextCodec()
 	log.Info("mitm runsse tool-loop re-decide",
 		"host", host, "path", path,
 		"corr_id", reqID,
@@ -1174,18 +1178,54 @@ func (i *Interceptor) evaluateToolFollowupRunSSE(w http.ResponseWriter, r *http.
 	}
 
 	if canFulfill {
-		// Future Path B tool codec: Wait/ArmLocal + WriteRunSSE tool frames.
-		// HasRunSSEToolCodec is false today — this branch is unreachable until codec lands.
-		if i.Metrics != nil {
-			i.Metrics.IncAction("mitm", "tool_followup_local")
+		// Opt-in Path B tool codec: Wait for a correlated local arm (short), then
+		// CompleteLocal + WriteRunSSEToolResponse. Fail-soft to origin when no offer.
+		offer, ok := hub.Wait(reqID, 80*time.Millisecond)
+		if ok && offer != nil && offer.Local && offer.Request != nil && i.Harness != nil {
+			req := offer.Request
+			req.Model = api.NormalizeGatewayModel(req.Model)
+			if req.Metadata.RequestID == "" {
+				req.Metadata.RequestID = reqID
+			}
+			req.Metadata.Adapter = "cursor_runsse_tool_followup"
+			chunks, err := i.Harness.CompleteLocal(r, req)
+			if err == nil {
+				if i.Metrics != nil {
+					i.Metrics.IncAction("mitm", "tool_followup_local")
+				}
+				i.recordPathB(r, "local", "local", host, path, req.Model, req.Metadata.OriginalModel,
+					"tool_followup:"+verdict.Reason, 0, reqID, start)
+				i.emitContextEvent(contextgraph.EventToolFinished, reqID, famRoot, "local", map[string]string{
+					"reason": verdict.Reason, "outcome": "local",
+				}, sess)
+				if werr := cursorrpc.WriteRunSSEToolResponse(w, chunks); werr != nil {
+					log.Error("mitm runsse tool-loop encode failed", "corr_id", reqID, "err", werr)
+					return true, werr
+				}
+				return true, nil
+			}
+			log.Info("mitm runsse tool-loop CompleteLocal failed → origin",
+				"corr_id", reqID, "err", err)
+		} else if i.CannedOnError {
+			text := strings.TrimSpace(i.CannedText)
+			if text == "" {
+				text = DefaultCannedRunSSEText
+			}
+			if i.Metrics != nil {
+				i.Metrics.IncAction("mitm", "tool_followup_local")
+				i.Metrics.IncAction("mitm", "runsse_canned")
+			}
+			i.recordPathB(r, "canned", "local", host, path, "", "",
+				"tool_followup_canned:"+verdict.Reason, 0, reqID, start)
+			i.emitContextEvent(contextgraph.EventToolFinished, reqID, famRoot, "local", map[string]string{
+				"reason": verdict.Reason, "outcome": "canned",
+			}, sess)
+			if werr := cursorrpc.WriteRunSSEToolResponse(w, cursorrpc.CannedCompletionChunks(text)); werr != nil {
+				return true, werr
+			}
+			return true, nil
 		}
-		i.recordPathB(r, "local", "local", host, path, "", "",
-			"tool_followup:"+verdict.Reason, 0, reqID, start)
-		i.emitContextEvent(contextgraph.EventToolFinished, reqID, famRoot, "local", map[string]string{
-			"reason": verdict.Reason, "outcome": "local",
-		}, sess)
-		_ = w
-		return false, nil
+		// Codec on but no local arm / CompleteLocal failed — fall through to origin.
 	}
 
 	if i != nil && i.Metrics != nil {

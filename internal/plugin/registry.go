@@ -135,6 +135,52 @@ func (r *MemRegistry) ToolProviders() []ToolProvider {
 	return out
 }
 
+func (r *MemRegistry) HookProviders() []HookProvider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []HookProvider
+	for _, p := range r.plugins {
+		if !hasCap(p.Capabilities(), CapHooks) {
+			continue
+		}
+		if hp := p.Hooks(); hp != nil {
+			out = append(out, hp)
+		}
+	}
+	return out
+}
+
+func hasCap(caps []Capability, want Capability) bool {
+	for _, c := range caps {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}
+
+// DispatchStageEnter calls OnStageEnter on all hook providers (no-op if none).
+func DispatchStageEnter(ctx context.Context, reg Registry, h StageHook) {
+	if reg == nil {
+		return
+	}
+	h.Phase = "enter"
+	for _, hp := range reg.HookProviders() {
+		_ = hp.OnStageEnter(ctx, h)
+	}
+}
+
+// DispatchStageExit calls OnStageExit on all hook providers (no-op if none).
+func DispatchStageExit(ctx context.Context, reg Registry, h StageHook) {
+	if reg == nil {
+		return
+	}
+	h.Phase = "exit"
+	for _, hp := range reg.HookProviders() {
+		_ = hp.OnStageExit(ctx, h)
+	}
+}
+
 // Base embeds no-op lifecycle helpers for simple plugins.
 type Base struct {
 	M    Meta
@@ -143,8 +189,8 @@ type Base struct {
 	St   State
 }
 
-func (b *Base) Meta() Meta                     { return b.M }
-func (b *Base) Capabilities() []Capability     { return b.Caps }
+func (b *Base) Meta() Meta                 { return b.M }
+func (b *Base) Capabilities() []Capability { return b.Caps }
 func (b *Base) Register(_ context.Context, h Host) error {
 	b.Host = h
 	b.St = StateRegistered
@@ -166,3 +212,4 @@ func (b *Base) Health(context.Context) Health {
 	return Health{OK: b.St != StateFailed, State: b.St}
 }
 func (b *Base) Tools() ToolProvider { return nil }
+func (b *Base) Hooks() HookProvider { return nil }

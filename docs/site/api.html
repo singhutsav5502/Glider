@@ -46,28 +46,62 @@
 
       <h2>Context</h2>
       <table>
-        <tr><th>Method</th><th>Path</th></tr>
-        <tr><td>GET</td><td><code>/api/context/recent</code></td></tr>
-        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/api/context/turns/{id}</code></td></tr>
-        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/api/context/export</code></td></tr>
-        <tr><td>POST</td><td><code>/api/context/prune</code></td></tr>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/context/recent</code></td><td>Recent events</td></tr>
+        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/api/context/turns/{id}</code></td><td>Turn families</td></tr>
+        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/api/context/export</code></td><td>Episode pack</td></tr>
+        <tr><td>POST</td><td><code>/api/context/prune</code></td><td>Retention prune</td></tr>
+        <tr><td>POST</td><td><code>/api/context/index-tree</code></td><td><code>{"root":".","turn_id":"…"}</code></td></tr>
+        <tr><td>POST</td><td><code>/api/context/index-symbols</code></td><td>Symbol ingest</td></tr>
+        <tr><td>GET</td><td><code>/api/context/communities</code></td><td><code>?turn_id=</code></td></tr>
+        <tr><td>GET</td><td><code>/api/context/explain</code></td><td><code>?turn_id=&amp;id=</code></td></tr>
       </table>
 
       <h2>Loops / hoops</h2>
       <table>
-        <tr><th>Method</th><th>Path</th></tr>
-        <tr><td>GET/POST</td><td><code>/api/loops</code></td></tr>
-        <tr><td>GET</td><td><code>/api/loops/modules</code></td></tr>
-        <tr><td>GET/PUT/DELETE</td><td><code>/api/loops/{id}</code></td></tr>
-        <tr><td>POST</td><td><code>/api/loops/{id}/start</code> · <code>.../stop</code></td></tr>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET/POST</td><td><code>/api/loops</code></td><td>List / create hoop</td></tr>
+        <tr><td>GET</td><td><code>/api/loops/modules</code></td><td>Hot-swap modules</td></tr>
+        <tr><td>GET/PUT/DELETE</td><td><code>/api/loops/{id}</code></td><td>CRUD</td></tr>
+        <tr><td>POST</td><td><code>/api/loops/{id}/start</code> · <code>.../stop</code></td><td>Lifecycle</td></tr>
+        <tr><td>POST</td><td><code>/api/loops/{id}/approve</code> · <code>.../reject</code></td><td>HITL human gate decision</td></tr>
+        <tr><td>POST</td><td><code>/api/loops/{id}/resume</code></td><td>Continue after pause / mid-cycle gate</td></tr>
       </table>
+      <pre>POST /api/loops/clone-repo-security-audit/approve
+{}
+POST /api/loops/clone-repo-security-audit/resume</pre>
+
+      <h2 id="workspace">Workspace</h2>
+      <p>Browse the tools sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>. Guide: <a href="mcp.html#workspace">Tools &amp; MCP</a>.</p>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Root listing + workspace path</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that hoop/turn</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>List a relative directory</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?file=runs/&lt;id&gt;/out/report.md</code></td><td>Capped text preview (<code>limit=</code>)</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Unified diff of two paths</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;path=runs/&lt;id&gt;/work/x</code></td><td>Git diff if <code>.git</code> present</td></tr>
+      </table>
+      <pre>GET /api/workspace?run=clone-repo-security-audit
+GET /api/workspace?file=runs/clone-repo-security-audit/out/findings.md&amp;limit=8000</pre>
+
+      <h2>Agent logs</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Ring buffer; entries include monotonic <code>seq</code>. Optional <code>after_seq</code>/<code>afterSeq</code> returns only <code>Seq &gt; n</code> (oldest-first catch-up; empty when nothing new)</td></tr>
+        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm</code></td><td>List instance ids</td></tr>
+        <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Clear one ring</td></tr>
+      </table>
+      <pre>GET /api/agent-logs?scope=hoop&amp;id=clone-repo-security-audit&amp;after_seq=120&amp;limit=50</pre>
 
       <h2>Swarm &amp; hot-swap</h2>
       <table>
-        <tr><th>Method</th><th>Path</th></tr>
-        <tr><td>POST</td><td><code>/api/swarm/run</code></td></tr>
-        <tr><td>GET/POST</td><td><code>/api/swarm/templates</code></td></tr>
-        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td></tr>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>POST</td><td><code>/api/swarm/run</code></td><td>One-shot FanOut (+ optional waves)</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/swarm/templates</code></td><td>Templates</td></tr>
+        <tr><td>GET</td><td><code>/api/swarm/threads</code></td><td>Durable threads</td></tr>
+        <tr><td>POST</td><td><code>/api/swarm/threads/{id}/resume</code></td><td>Continue waves</td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td><td>Hot-swap registry</td></tr>
       </table>
 
       <h2 id="mcp">MCP</h2>
@@ -76,12 +110,16 @@
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
         <tr><td>GET</td><td><code>/api/mcp/servers</code></td><td>Configured servers + status + GitHub summary</td></tr>
         <tr><td>GET</td><td><code>/api/mcp/servers/{id}</code></td><td>One server status</td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/servers/{id}/tools</code></td><td>Live tools, or GitHub catalog fallback</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers/{id}/tools</code></td><td>Live tools, or GitHub catalog + <code>message</code>/<code>health_error</code></td></tr>
         <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code></td><td>Connect configured server</td></tr>
         <tr><td>POST</td><td><code>/api/mcp/servers/{id}/disconnect</code></td><td>Disconnect session</td></tr>
         <tr><td>POST</td><td><code>/api/mcp/servers/{id}/reconnect</code></td><td>Disconnect + connect</td></tr>
         <tr><td>POST</td><td><code>/api/mcp/servers/{id}/refresh</code></td><td>Reconnect if up, else connect</td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token configured? HTTP/stdio connected?</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token / HTTP / stdio / device-flow readiness + hint</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/token</code></td><td>Paste PAT → save + connect</td></tr>
+        <tr><td>DELETE</td><td><code>/api/mcp/github/token</code></td><td>Forget token + disconnect</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code></td><td>Start OAuth device flow</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/device/poll</code></td><td>Poll device flow; on auth connect HTTP</td></tr>
       </table>
 
       <h2>Gateway OpenAI surface</h2>

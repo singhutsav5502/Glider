@@ -3,6 +3,7 @@ package dashboard_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
@@ -21,6 +23,7 @@ import (
 	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
+	"github.com/glider-ai/glider/internal/tools"
 	"github.com/gorilla/websocket"
 )
 
@@ -999,5 +1002,174 @@ func TestMCPAPI(t *testing.T) {
 	defer resp5.Body.Close()
 	if resp5.StatusCode != http.StatusNotFound {
 		t.Fatalf("reconnect missing want 404 got %d", resp5.StatusCode)
+	}
+}
+
+func TestWorkspaceAPI(t *testing.T) {
+	dir := t.TempDir()
+	lay := tools.LayoutForRun(dir, "api-run")
+	if err := lay.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lay.OutAbs, "report.md"), []byte("# ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lay.WorkAbs, "a.txt"), []byte("aaa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lay.WorkAbs, "b.txt"), []byte("bbb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := metrics.NewBus()
+	cfgPath := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(cfgPath, []byte("server:\n  proxy_port: 8080\n"), 0o644)
+	store := &dashboard.FileConfigStore{Provider: config.NewProvider(config.DefaultConfig(), cfgPath), Path: cfgPath}
+	models := &dashboard.RegistryModelController{Registry: backend.NewRegistry()}
+	srv := dashboard.New(":0", bus, store, models)
+	mgr := loop.NewManager(loop.NewStore(filepath.Join(dir, "loops")), nil, nil, loop.RunnerConfig{})
+	mgr.Tools = tools.NewRegistry(tools.Options{Workspace: dir})
+	srv.Loops = mgr
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/api/workspace?run=api-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	var listing map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
+		t.Fatal(err)
+	}
+	if listing["run"] != "api-run" {
+		t.Fatalf("%+v", listing)
+	}
+
+	filePath := filepath.ToSlash(filepath.Join("runs", "api-run", "out", "report.md"))
+	resp2, err := http.Get(ts.URL + "/api/workspace?file=" + filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("file status=%d", resp2.StatusCode)
+	}
+	var file map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fmt.Sprint(file["content"]), "# ok") {
+		t.Fatalf("%+v", file)
+	}
+
+	a := filepath.ToSlash(filepath.Join("runs", "api-run", "work", "a.txt"))
+	b := filepath.ToSlash(filepath.Join("runs", "api-run", "work", "b.txt"))
+	resp3, err := http.Get(ts.URL + "/api/workspace?diff=1&a=" + a + "&b=" + b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("diff status=%d body=%s", resp3.StatusCode, body)
+	}
+}
+
+func TestAgentLogsAfterSeq(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "glider.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  proxy_port: 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := config.NewProvider(loaded, path)
+	bus := metrics.NewBus()
+	store := &dashboard.FileConfigStore{Provider: p, Path: path}
+	models := &dashboard.RegistryModelController{Registry: backend.NewRegistry()}
+	srv := dashboard.New(":0", bus, store, models)
+	logs := agentlog.NewStore(32)
+	srv.AgentLogs = logs
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	logs.Info(agentlog.ScopeHoop, "h1", "a", "one", nil)
+	logs.Info(agentlog.ScopeHoop, "h1", "b", "two", nil)
+	logs.Info(agentlog.ScopeHoop, "h1", "c", "three", nil)
+	all := logs.Recent(agentlog.ScopeHoop, "h1", 50)
+	if len(all) != 3 {
+		t.Fatalf("seed len=%d", len(all))
+	}
+
+	resp, err := http.Get(ts.URL + "/api/agent-logs?scope=hoop&id=h1&limit=50")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var full struct {
+		Entries []agentlog.Entry `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&full); err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Entries) != 3 {
+		t.Fatalf("full entries=%d", len(full.Entries))
+	}
+
+	after := all[0].Seq
+	for _, q := range []string{
+		fmt.Sprintf("/api/agent-logs?scope=hoop&id=h1&after_seq=%d&limit=50", after),
+		fmt.Sprintf("/api/agent-logs?scope=hoop&id=h1&afterSeq=%d&limit=50", after),
+	} {
+		r, err := http.Get(ts.URL + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Entries []agentlog.Entry `json:"entries"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			r.Body.Close()
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if len(body.Entries) != 2 {
+			t.Fatalf("%s: want 2 got %d", q, len(body.Entries))
+		}
+		if body.Entries[0].Seq <= after || body.Entries[1].Message != "three" {
+			t.Fatalf("%s: %+v", q, body.Entries)
+		}
+	}
+
+	tip := all[2].Seq
+	rEmpty, err := http.Get(fmt.Sprintf("%s/api/agent-logs?scope=hoop&id=h1&after_seq=%d", ts.URL, tip))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rEmpty.Body.Close()
+	var empty struct {
+		Entries []agentlog.Entry `json:"entries"`
+	}
+	if err := json.NewDecoder(rEmpty.Body).Decode(&empty); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Entries) != 0 {
+		t.Fatalf("tip cursor want empty, got %+v", empty.Entries)
+	}
+
+	bad, err := http.Get(ts.URL + "/api/agent-logs?scope=hoop&id=h1&after_seq=nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad after_seq status=%d", bad.StatusCode)
 	}
 }

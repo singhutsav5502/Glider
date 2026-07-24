@@ -38,23 +38,31 @@
 
       <h2>Start</h2>
       <pre>ollama serve
-ollama pull codellama:7b   # or edit models in yaml
+ollama pull qwen2.5-coder:14b
 .\glider.exe --config configs\glider.local.yaml</pre>
+      <p>Default local model across configs is <strong><code>qwen2.5-coder:14b</code></strong> (aliases map <code>gpt-4o</code> / <code>claude-3.5-sonnet</code> onto it).</p>
 
       <h2>Knobs in glider.local.yaml</h2>
       <ul>
         <li><code>routing.default: local</code></li>
         <li><code>routing.allow_cloud_fallback: false</code></li>
+        <li><code>routing.default_local_model: qwen2.5-coder:14b</code></li>
         <li><code>mitm.agent_rpc_canned_on_error: false</code></li>
         <li><code>mitm.origin_on_local_error: false</code> — clear Ollama errors vs silent Cursor origin</li>
         <li><code>mitm.require_local_healthy: true</code></li>
       </ul>
+      <pre># excerpt — model_aliases
+model_aliases:
+  gpt-4o: qwen2.5-coder:14b
+  claude-3.5-sonnet: qwen2.5-coder:14b</pre>
 
       <h2>Gateway-only (no MITM)</h2>
       <p>Set <code>mitm.enabled: false</code>. Cursor Override Base URL → <code>http://127.0.0.1:8080/v1</code>. Hoops use <code>/api/loops</code> with <code>route: local</code>.</p>
 
       <h2>Sample local hoop</h2>
-      <pre>go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start</pre>
+      <pre>go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start
+# Nested swarm demo (local):
+go run ./scripts/loadhoop -file samples/hoops/parallel-swarm-mode.yaml -start</pre>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

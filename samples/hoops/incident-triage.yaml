@@ -34,15 +34,27 @@ stages:
       You are the incident commander planner. Produce a short triage plan:
       1) severity hypothesis 2) blast radius questions 3) ordered checks 4) rollback vs mitigate.
       Do not invent metrics that were not provided.
+  - id: context_seed
+    kind: context
+    name: Seed shared triage context
   - id: actor
     kind: actor
     name: Runbook draft
     parallel: 2
+    # parallel_mode: swarm
     roles: [exec, research]
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       You are the on-call implementer. Follow the PLAN. Draft a runbook reply with sections:
       Severity, Impact, Immediate actions, Checks, Comms template, Rollback decision.
       Keep it under 400 words. Prefer concrete commands over theory.
+      Prefer context_query / [context_digest] for shared goal/plan.
+      Persist with artifact_write kind=out under runs/incident-triage/out/
+      (bare paths ScopeRel to work/).
   - id: critic
     kind: critic
     name: Safety critic
@@ -66,6 +78,10 @@ graph_edges:
     kind: flow
   - id: e3
     source: planner
+    target: context_seed
+    kind: flow
+  - id: e3b
+    source: context_seed
     target: actor
     kind: flow
   - id: e4

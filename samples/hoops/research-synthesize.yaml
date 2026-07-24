@@ -27,15 +27,34 @@ stages:
   - id: researcher
     kind: planner
     name: Research outline
+    tools:
+      - name: web_search
+        kind: builtin
+      - name: web_fetch
+        kind: builtin
+      - name: datetime
+        kind: builtin
     prompt: |
       You are a research planner. Outline 5 bullets an engineer must understand about
       Glider dual-mode routing (gateway vs MITM). Flag unknowns as questions.
+      Optional: web_search / web_fetch for Glider docs phrasing only — do not invent product claims.
+  - id: context_seed
+    kind: context
+    name: Seed shared research context
   - id: synthesizer
     kind: actor
     name: Synthesize brief
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: web_fetch
+        kind: builtin
     prompt: |
       You are the writer. Using the PLAN, write a one-page explanation with headings:
       Overview, Mode A Gateway, Mode B MITM, Choosing a mode, Common pitfalls.
+      Prefer context_query / [context_digest] for shared goal/plan.
+      Persist the brief with artifact_write kind=out under runs/research-synthesize/out/
+      (bare paths ScopeRel to work/).
   - id: critic
     kind: critic
     name: Accuracy critic
@@ -46,7 +65,9 @@ stages:
 graph_edges:
   - { id: e1, source: memory_load, target: router, kind: flow }
   - { id: e2, source: router, target: researcher, kind: flow }
-  - { id: e3, source: researcher, target: synthesizer, kind: flow }
+  - { id: e3, source: researcher, target: context_seed, kind: flow }
+  - { id: e3b, source: context_seed, target: synthesizer, kind: flow }
+  - { id: feed1, source: researcher, target: synthesizer, kind: feeds }
   - { id: e4, source: synthesizer, target: critic, kind: flow }
   - { id: e5, source: critic, target: memory_persist, kind: flow }
   - { id: fb1, source: critic, target: researcher, kind: feedback }

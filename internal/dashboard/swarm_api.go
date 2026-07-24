@@ -14,9 +14,9 @@ import (
 
 func (s *Server) handleHotSwapList(w http.ResponseWriter, r *http.Request) {
 	type payload struct {
-		Modules []swarm.ModuleInfo   `json:"modules"`
-		Docs    map[string]string    `json:"docs"`
-		Catalog []swarm.ModuleInfo   `json:"catalog"`
+		Modules []swarm.ModuleInfo `json:"modules"`
+		Docs    map[string]string  `json:"docs"`
+		Catalog []swarm.ModuleInfo `json:"catalog"`
 	}
 	out := payload{
 		Modules: []swarm.ModuleInfo{},
@@ -92,6 +92,30 @@ func (s *Server) handleSwarmRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// GET /api/swarm/runs/{turn_id}/progress — mid-run fan-out snapshot for live graph paint.
+func (s *Server) handleSwarmRunProgress(w http.ResponseWriter, r *http.Request) {
+	if s.Swarm == nil {
+		http.Error(w, "swarm not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/swarm/runs/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[1] != "progress" || parts[0] == "" {
+		http.Error(w, "use /api/swarm/runs/{turn_id}/progress", http.StatusNotFound)
+		return
+	}
+	view := s.Swarm.LiveProgress(parts[0])
+	if view == nil {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, view)
+}
+
 func (s *Server) handleSwarmThreads(w http.ResponseWriter, r *http.Request) {
 	if s.Swarm == nil || s.Swarm.Threads == nil {
 		writeJSON(w, []any{})
@@ -131,7 +155,7 @@ func (s *Server) handleSwarmThread(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case action == "resume" && r.Method == http.MethodPost:
 		var body struct {
-			Waves       int              `json:"waves"`
+			Waves       int               `json:"waves"`
 			WeavePolicy swarm.WeavePolicy `json:"weave_policy"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)

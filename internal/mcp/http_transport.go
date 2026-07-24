@@ -20,13 +20,15 @@ type httpSession struct {
 	serverID string
 	url      string
 	auth     AuthConfig
+	toolsets []string
+	extra    map[string]string
 	client   *http.Client
 	session  string // MCP-Session-Id
 
-	mu      sync.Mutex
-	nextID  atomic.Int64
-	notify  func(Notification)
-	closed  atomic.Bool
+	mu     sync.Mutex
+	nextID atomic.Int64
+	notify func(Notification)
+	closed atomic.Bool
 }
 
 func startHTTPSession(ctx context.Context, cfg ServerConfig, notify func(Notification)) (*httpSession, error) {
@@ -43,6 +45,8 @@ func startHTTPSession(ctx context.Context, cfg ServerConfig, notify func(Notific
 		serverID: cfg.ID,
 		url:      url,
 		auth:     auth,
+		toolsets: append([]string(nil), cfg.Toolsets...),
+		extra:    copyStringMap(cfg.Auth.Extra),
 		client:   &http.Client{Timeout: 120 * time.Second},
 		notify:   notify,
 	}
@@ -50,6 +54,17 @@ func startHTTPSession(ctx context.Context, cfg ServerConfig, notify func(Notific
 		return nil, err
 	}
 	return s, nil
+}
+
+func copyStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *httpSession) ID() string       { return s.id }
@@ -61,7 +76,7 @@ func (s *httpSession) Close(context.Context) error {
 }
 
 func (s *httpSession) handshake(ctx context.Context) error {
-	_, err := s.call(ctx, "initialize", defaultInitializeParams())
+	_, err := s.callOnce(ctx, "initialize", defaultInitializeParams(), false)
 	if err != nil {
 		return fmt.Errorf("mcp http initialize: %w", err)
 	}
@@ -72,21 +87,127 @@ func (s *httpSession) handshake(ctx context.Context) error {
 
 func (s *httpSession) setAuthHeaders(req *http.Request) {
 	h := AuthorizationHeader(s.auth)
-	if h == "" {
+	if h != "" {
+		name := s.auth.HeaderName
+		if name == "" {
+			name = "Authorization"
+		}
+		if s.auth.Kind == AuthHeader {
+			req.Header.Set(name, s.auth.Token)
+		} else {
+			req.Header.Set(name, h)
+		}
+	}
+	for k, v := range s.extra {
+		k = strings.TrimSpace(k)
+		if k == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		// Do not let Extra clobber Authorization we just set unless explicitly named.
+		if strings.EqualFold(k, "Authorization") && req.Header.Get("Authorization") != "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+}
+
+func (s *httpSession) setSessionAndProtocolHeaders(req *http.Request) {
+	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	if len(s.toolsets) > 0 {
+		req.Header.Set("X-MCP-Toolsets", strings.Join(s.toolsets, ","))
+	}
+	s.mu.Lock()
+	sid := s.session
+	s.mu.Unlock()
+	if sid != "" {
+		// Spec uses Mcp-Session-Id; some gateways normalize case — set canonical.
+		req.Header.Set("Mcp-Session-Id", sid)
+	}
+}
+
+func captureSessionID(h http.Header) string {
+	if h == nil {
+		return ""
+	}
+	for _, k := range []string{"Mcp-Session-Id", "mcp-session-id", "MCP-Session-Id"} {
+		if v := strings.TrimSpace(h.Get(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (s *httpSession) storeSessionID(sid string) {
+	if sid == "" {
 		return
 	}
-	name := s.auth.HeaderName
-	if name == "" {
-		name = "Authorization"
-	}
-	if s.auth.Kind == AuthHeader {
-		req.Header.Set(name, s.auth.Token)
+	s.mu.Lock()
+	s.session = sid
+	s.mu.Unlock()
+}
+
+func (s *httpSession) clearSession() {
+	s.mu.Lock()
+	s.session = ""
+	s.mu.Unlock()
+}
+
+// refreshAuth re-resolves token from env/credential file (PAT paste / device flow
+// may land after Connect). Hydrates ~/.glider/credentials/github_token into env
+// first so UI-pasted PATs are visible without restart. Best-effort; keeps prior
+// auth on failure.
+func (s *httpSession) refreshAuth() {
+	_, _ = HydrateGitHubTokenFromStore()
+	if s.auth.TokenEnv == "" && s.auth.Kind != AuthEnv {
+		// Still try GitHub env aliases when this is the hosted github session.
+		if s.serverID == "github" || strings.Contains(strings.ToLower(s.url), "githubcopilot.com") {
+			env := ResolveGitHubTokenEnv()
+			if env == "" {
+				return
+			}
+			resolved, err := ResolveAuth(AuthConfig{Kind: AuthEnv, TokenEnv: env})
+			if err != nil || resolved.Token == "" {
+				return
+			}
+			s.auth = resolved
+		}
 		return
 	}
-	req.Header.Set(name, h)
+	cfg := s.auth
+	if cfg.Kind == AuthBearer && cfg.TokenEnv != "" {
+		cfg.Kind = AuthEnv
+		cfg.Token = ""
+	}
+	resolved, err := ResolveAuth(cfg)
+	if err != nil || resolved.Token == "" {
+		return
+	}
+	s.auth = resolved
+}
+
+func isSessionOrAuthRetryable(status int, body string) bool {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return true
+	}
+	if status == http.StatusBadRequest || status == http.StatusNotFound {
+		lower := strings.ToLower(body)
+		for _, needle := range []string{
+			"session", "mcp-session", "initialize", "not initialized",
+			"expired", "invalid token", "unauthorized",
+		} {
+			if strings.Contains(lower, needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *httpSession) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return s.callOnce(ctx, method, params, true)
+}
+
+func (s *httpSession) callOnce(ctx context.Context, method string, params any, allowRetry bool) (json.RawMessage, error) {
 	if s.closed.Load() {
 		return nil, fmt.Errorf("mcp http: session closed")
 	}
@@ -102,9 +223,7 @@ func (s *httpSession) call(ctx context.Context, method string, params any) (json
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	s.setAuthHeaders(req)
-	if s.session != "" {
-		req.Header.Set("Mcp-Session-Id", s.session)
-	}
+	s.setSessionAndProtocolHeaders(req)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -112,10 +231,8 @@ func (s *httpSession) call(ctx context.Context, method string, params any) (json
 	}
 	defer resp.Body.Close()
 
-	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
-		s.mu.Lock()
-		s.session = sid
-		s.mu.Unlock()
+	if sid := captureSessionID(resp.Header); sid != "" {
+		s.storeSessionID(sid)
 	}
 
 	ct := resp.Header.Get("Content-Type")
@@ -124,7 +241,15 @@ func (s *httpSession) call(ctx context.Context, method string, params any) (json
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("mcp http %d: %s", resp.StatusCode, truncateStr(string(body), 500))
+		msg := truncateStr(string(body), 500)
+		if allowRetry && method != "initialize" && isSessionOrAuthRetryable(resp.StatusCode, msg) {
+			s.clearSession()
+			s.refreshAuth()
+			if herr := s.handshake(ctx); herr == nil {
+				return s.callOnce(ctx, method, params, false)
+			}
+		}
+		return nil, fmt.Errorf("mcp http %d: %s", resp.StatusCode, msg)
 	}
 
 	if strings.Contains(ct, "text/event-stream") {
@@ -135,6 +260,14 @@ func (s *httpSession) call(ctx context.Context, method string, params any) (json
 		return nil, fmt.Errorf("mcp http decode: %w", err)
 	}
 	if rpc.Error != nil {
+		// JSON-RPC auth/session errors: retry once with re-handshake.
+		if allowRetry && method != "initialize" && isSessionOrAuthRetryable(0, rpc.Error.Error()) {
+			s.clearSession()
+			s.refreshAuth()
+			if herr := s.handshake(ctx); herr == nil {
+				return s.callOnce(ctx, method, params, false)
+			}
+		}
 		return nil, rpc.Error
 	}
 	return rpc.Result, nil
@@ -152,14 +285,15 @@ func (s *httpSession) postNotification(ctx context.Context, method string, param
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	s.setAuthHeaders(req)
-	if s.session != "" {
-		req.Header.Set("Mcp-Session-Id", s.session)
-	}
+	s.setSessionAndProtocolHeaders(req)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if sid := captureSessionID(resp.Header); sid != "" {
+		s.storeSessionID(sid)
+	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }

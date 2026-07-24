@@ -111,3 +111,15 @@ func TestApplyMITMAgentRPCCannedEnv(t *testing.T) {
 		t.Fatal("env should enable canned_on_error")
 	}
 }
+
+func TestApplyMITMAgentRPCToolCodecEnv(t *testing.T) {
+	t.Setenv("GLIDER_MITM_AGENT_RPC_TOOL_CODEC", "true")
+	cfg := config.DefaultConfig()
+	if cfg.MITM.AgentRPCToolCodec {
+		t.Fatal("default off")
+	}
+	config.ApplyMITMDebugEnv(cfg)
+	if !cfg.MITM.AgentRPCToolCodec {
+		t.Fatal("env should enable agent_rpc_tool_codec")
+	}
+}

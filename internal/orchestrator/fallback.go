@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
@@ -33,16 +34,16 @@ type fallbackStep struct {
 
 // FallbackChain tries backends in order with circuit breaking and health checks.
 type FallbackChain struct {
-	registry           *backend.Registry
-	lifecycle          *ModelLifecycle
-	breakers           map[string]*CircuitBreaker
-	failureThreshold   int
-	cooldown           time.Duration
-	isHealthy          HealthFunc
-	rateLimiter        *CloudRateLimiter
-	budget             *BudgetTracker
-	cloudBackend       string
-	cloudModel         string
+	registry             *backend.Registry
+	lifecycle            *ModelLifecycle
+	breakers             map[string]*CircuitBreaker
+	failureThreshold     int
+	cooldown             time.Duration
+	isHealthy            HealthFunc
+	rateLimiter          *CloudRateLimiter
+	budget               *BudgetTracker
+	cloudBackend         string
+	cloudModel           string
 	disableCloudFallback bool
 }
 
@@ -117,7 +118,11 @@ func (f *FallbackChain) steps(decision *backend.RoutingDecision, req *backend.Co
 	}
 
 	steps := []fallbackStep{primary}
-	if primary.local && !f.disableCloudFallback && f.cloudBackend != "" {
+	// Explicit /local|/fast is a hard force — never silently fall through to BYOK OpenAI.
+	// (Hoop/swarm "local" route prefixes /local; a 401 from openai here was confusing.)
+	explicitLocal := decision != nil && (strings.EqualFold(decision.RuleName, "Explicit Local") ||
+		strings.Contains(strings.ToLower(decision.RuleName), "explicit local"))
+	if primary.local && !f.disableCloudFallback && !explicitLocal && f.cloudBackend != "" {
 		cloudModel := f.cloudModel
 		if cloudModel == "" {
 			cloudModel = req.Model
@@ -155,11 +160,14 @@ func (f *FallbackChain) reprobeLive(ctx context.Context, name string) bool {
 // Execute runs the request through the fallback chain.
 func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDecision, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
 	var lastErr error
+	var attemptErrs []string
 	for _, step := range f.steps(decision, req) {
 		if f.isHealthy != nil && !f.isHealthy(step.backendName) {
 			if !f.reprobeLive(ctx, step.backendName) {
+				msg := fmt.Sprintf("%s unhealthy", step.backendName)
+				attemptErrs = append(attemptErrs, msg)
 				if lastErr == nil {
-					lastErr = fmt.Errorf("backend %s unhealthy", step.backendName)
+					lastErr = fmt.Errorf("%s", msg)
 				}
 				continue
 			}
@@ -167,8 +175,10 @@ func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDe
 
 		cb := f.breaker(step.backendName)
 		if !cb.Allow() {
+			msg := fmt.Sprintf("%s circuit open", step.backendName)
+			attemptErrs = append(attemptErrs, msg)
 			if lastErr == nil {
-				lastErr = fmt.Errorf("backend %s circuit open", step.backendName)
+				lastErr = fmt.Errorf("%s", msg)
 			}
 			continue
 		}
@@ -193,6 +203,7 @@ func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDe
 		if step.local && f.lifecycle != nil {
 			if err := f.lifecycle.EnsureWarm(ctx, step.model); err != nil {
 				cb.RecordFailure()
+				attemptErrs = append(attemptErrs, fmt.Sprintf("%s warm: %v", step.backendName, err))
 				lastErr = err
 				continue
 			}
@@ -202,6 +213,7 @@ func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDe
 		b, err := f.registry.Get(step.backendName)
 		if err != nil {
 			cb.RecordFailure()
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: %v", step.backendName, err))
 			lastErr = err
 			continue
 		}
@@ -209,6 +221,7 @@ func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDe
 		ch, err := b.Complete(ctx, &attemptReq)
 		if err != nil {
 			cb.RecordFailure()
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: %v", step.backendName, err))
 			lastErr = err
 			continue
 		}
@@ -221,9 +234,13 @@ func (f *FallbackChain) Execute(ctx context.Context, decision *backend.RoutingDe
 	}
 
 	if lastErr != nil {
+		detail := lastErr.Error()
+		if len(attemptErrs) > 0 {
+			detail = strings.Join(attemptErrs, " | ")
+		}
 		return nil, &GatewayError{
 			StatusCode: 502,
-			Message:    fmt.Sprintf("all backends failed: %v", lastErr),
+			Message:    fmt.Sprintf("all backends failed: %s", detail),
 			Type:       "server_error",
 		}
 	}

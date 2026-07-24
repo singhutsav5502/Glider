@@ -48,9 +48,9 @@ Code: `internal/loop` (hoops), `internal/swarm` (parallel workers / hot-swap reg
 | **Memory / state** | `contextgraph` events + hoop `LoopState` under `~/.glider/loops/`; episodes via `contextkit` | **MVP** |
 | **Router / which model·tools** | Explicit + classifier + Starlark + ceiling; per-stage `Route` on hoop modules | **MVP** |
 | **Sub-agents (maker/checker)** | Hoop stages: **Planner → Actor → Critic**; Critic produces **eval score** | **MVP** |
-| **Skills** | `skill` field / YAML hoop mirror; future SKILL.md load | **Partial** |
+| **Skills** | `skill` field loads `SKILL.md` when path/id; plain string fallback | **MVP** |
 | **Swarm / parallel workers** | `internal/swarm` FanOut + dashboard swarm run | **Foundation** |
-| **Worktrees** | Not Glider-owned yet (agent/tool side); document as future | **Todo** |
+| **Worktrees** | Optional `orchestration.loops.worktrees` — parallel workers get `runs/<id>/work/wN` (git worktree when repo is git) | **MVP** |
 | **Hot-swap stages** | Compose Planner/Actor/Critic/Memory/Router modules; `swarm.Registry` ModuleLoop | **MVP** |
 | **Automations (schedule)** | Optional `interval` / `cron` **around** cycles — secondary | **MVP** |
 | **Self-learning (hoop learning)** | Eval scores + outcomes → local bias / stage route preference (config-gated) | **MVP** |

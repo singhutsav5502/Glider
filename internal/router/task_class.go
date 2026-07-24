@@ -62,7 +62,7 @@ func NewTaskClassifierRules(tc config.TaskClassifierConfig, toolFollowup config.
 	}
 	localModel := strings.TrimSpace(tc.LocalModel)
 	if localModel == "" {
-		localModel = "codellama:7b"
+		localModel = "qwen2.5-coder:14b"
 	}
 	cloudBackend := strings.TrimSpace(tc.CloudBackend)
 	if cloudBackend == "" {

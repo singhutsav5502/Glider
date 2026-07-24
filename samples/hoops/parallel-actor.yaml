@@ -20,12 +20,23 @@ stages:
     id: planner
     name: planner
     prompt: "List two candidate rename angles for a vague helper name. Do not pick yet."
+  - id: context_seed
+    kind: context
+    name: Seed shared context
   - kind: actor
     id: actor
     name: actor
     parallel: 2
+    # Default parallel_mode is fanout. To nest swarm.Runner instead:
+    # parallel_mode: swarm
     roles: [exec, research]
-    prompt: "You are one of several workers. Propose one concrete rename with a one-line rationale."
+    tools:
+      - name: artifact_write
+        kind: builtin
+    prompt: |
+      You are one of several workers. Propose one concrete rename with a one-line rationale.
+      Prefer context_query / [context_digest] for shared goal/plan. Optional: artifact_write
+      kind=out under runs/parallel-actor/out/ (bare paths ScopeRel to work/).
   - kind: critic
     id: critic
     name: critic
@@ -35,6 +46,9 @@ graph_edges:
     target: planner
     kind: flow
   - source: planner
+    target: context_seed
+    kind: flow
+  - source: context_seed
     target: actor
     kind: flow
   - source: actor

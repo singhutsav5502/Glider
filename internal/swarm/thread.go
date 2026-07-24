@@ -219,7 +219,7 @@ func (ts *ThreadStore) List() ([]ThreadSummary, error) {
 			Status:        status,
 			WeavePolicy:   string(st.WeavePolicy),
 			WaveCount:     len(st.Waves),
-			MergedSummary: truncate(st.MergedSummary, 160),
+			MergedSummary: truncate(st.MergedSummary, 2000),
 			UpdatedAt:     st.UpdatedAt,
 		})
 	}

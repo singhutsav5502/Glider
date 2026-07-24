@@ -16,6 +16,10 @@ prompt: |
   composer tabs. Enterprise context: SOC2 in progress; customer data may appear in Agent
   prompts; MITM terminates TLS with local CA.
 
+  Run layout: scratch under runs/<turn-id>/work/, finals under runs/<turn-id>/out/
+  (bare paths ScopeRel into work/). Prefer context_query / [context_digest] for shared
+  goal/plan. Persist each role section with artifact_write kind=out (e.g. out role-<name>.md).
+
   Each role must return a labeled section (ROLE: <name>, <=150 words) covering:
   - threat: STRIDE-style abuse cases + attacker who controls a compromised workspace
   - authz: who can enable/disable sticky persistence; multi-user laptop risk
@@ -24,6 +28,17 @@ prompt: |
 
   End with a shared GO / NO-GO / GO-WITH-CONTROLS recommendation (one line). Do not invent
   CVEs. Prefer concrete mitigations Glider can implement (flags, TTL, encryption at rest).
+tools:
+  - name: artifact_write
+    kind: builtin
+  - name: fs_list
+    kind: builtin
+  - name: fs_read
+    kind: builtin
+  - name: context_query
+    kind: builtin
+  - name: datetime
+    kind: builtin
 description: |
   Multi-role security fan-out (threat/authz/secrets/blast) with CritiqueMerge on fan-in.
   Enterprise-flavored Path B / sticky persistence review.

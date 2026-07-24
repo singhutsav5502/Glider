@@ -83,7 +83,7 @@ func EvaluateGuard(g GuardSpec, edge EdgeKind, ctx DecisionContext) (pass bool, 
 		}
 		score = rel
 		if pass {
-			return true, score, "policy:"+expr
+			return true, score, "policy:" + expr
 		}
 		return false, score, "policy reject"
 	case GuardHumanApproved:
@@ -329,8 +329,9 @@ func WalkOrder(def MachineDef) []StateID {
 		outs := RankOutgoing(def, id, DecisionContext{BudgetOK: true, Relevancy: 0.5, EvalPass: true})
 		for _, c := range outs {
 			if c.Transition.Kind == EdgeFeedback || c.Transition.Kind == EdgeOnFail ||
-				c.Transition.Kind == EdgeEscalate || c.Transition.Kind == EdgeBudgetExceeded {
-				continue // cycles / failure paths not in primary walk
+				c.Transition.Kind == EdgeEscalate || c.Transition.Kind == EdgeBudgetExceeded ||
+				c.Transition.Kind == EdgeFeeds {
+				continue // cycles / failure / data-feed paths not in primary walk
 			}
 			dfs(c.Transition.To)
 		}

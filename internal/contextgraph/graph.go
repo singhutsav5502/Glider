@@ -19,7 +19,7 @@ type EventKind string
 
 const (
 	EventRouteDecided      EventKind = "RouteDecided"
-	EventStickyBound        EventKind = "StickyBound"
+	EventStickyBound       EventKind = "StickyBound"
 	EventFulfilledLocal    EventKind = "FulfilledLocal"
 	EventOriginPassthrough EventKind = "OriginPassthrough"
 	EventToolStarted       EventKind = "ToolStarted"
@@ -68,50 +68,41 @@ type TurnStats struct {
 
 // TurnView is a hot in-memory projection of one turn family.
 type TurnView struct {
-	ID             string    `json:"id"`
-	RootRequestID  string    `json:"root_request_id,omitempty"`
-	Route          string    `json:"route,omitempty"` // cloud | local
-	Source         string    `json:"source,omitempty"`
-	OpenedAt       time.Time `json:"opened_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	RequestIDs     []string  `json:"request_ids,omitempty"`
-	ConnectSessions []string `json:"connect_sessions,omitempty"`
-	OpenRuns       int       `json:"open_runs,omitempty"`
-	Events         []Event   `json:"events,omitempty"`
-	Stats          *TurnStats `json:"stats,omitempty"`
+	ID              string     `json:"id"`
+	RootRequestID   string     `json:"root_request_id,omitempty"`
+	Route           string     `json:"route,omitempty"` // cloud | local
+	Source          string     `json:"source,omitempty"`
+	OpenedAt        time.Time  `json:"opened_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	RequestIDs      []string   `json:"request_ids,omitempty"`
+	ConnectSessions []string   `json:"connect_sessions,omitempty"`
+	OpenRuns        int        `json:"open_runs,omitempty"`
+	Events          []Event    `json:"events,omitempty"`
+	Stats           *TurnStats `json:"stats,omitempty"`
 }
 
 // StoreStats is a process-wide summary for /api/context/recent.
 type StoreStats struct {
-	Turns       int            `json:"turns"`
-	Events      int            `json:"events"`
-	Entities    int            `json:"entities"`
-	CloudTurns  int            `json:"cloud_turns"`
-	LocalTurns  int            `json:"local_turns"`
-	OpenRuns    int            `json:"open_runs"`
-	ByKind      map[string]int `json:"by_kind,omitempty"`
-	Sessions    int            `json:"sessions"`
+	Turns      int            `json:"turns"`
+	Events     int            `json:"events"`
+	Entities   int            `json:"entities"`
+	CloudTurns int            `json:"cloud_turns"`
+	LocalTurns int            `json:"local_turns"`
+	OpenRuns   int            `json:"open_runs"`
+	ByKind     map[string]int `json:"by_kind,omitempty"`
+	Sessions   int            `json:"sessions"`
 }
 
-// Store is the dual-layer context: append-only event log + structural entity/edge
-// index. Optional JSONL persistence under Dir (typically ~/.glider/context).
-// See planning/slate_weave_graphify_plan.md.
+// Store is the public facade over EventLog (append-only events + turn index) and
+// EntityIndex (structural entity/edge layer). Callers keep using *Store; internals
+// are split for SRP (see planning/solid_refactor.md). Optional JSONL under Dir.
 type Store struct {
-	mu        sync.Mutex
-	events    []Event
-	turns     map[string]*turnIndex // turnID → index
-	byReq     map[string]string     // requestID → turnID
-	bySession map[string]string     // connect_session → turnID (latest)
-	entities  map[string]*Entity    // structural layer (Graphify-style)
-	Dir       string                // empty → memory only
-	Max       int                   // ring cap for events (0 → 4096)
-	Grace     time.Duration         // cloud sticky grace after last activity
-}
-
-type turnIndex struct {
-	view   TurnView
-	evIdx  []int
-	opens  int // RunSSEOpen − RunSSEClose
+	mu sync.Mutex
+	EventLog
+	EntityIndex
+	Dir   string        // empty → memory only
+	Max   int           // ring cap for events (0 → 4096)
+	Grace time.Duration // cloud sticky grace after last activity
 }
 
 // DefaultDir returns ~/.glider/context (or %USERPROFILE%\.glider\context).
@@ -125,15 +116,14 @@ func DefaultDir() string {
 
 // New constructs an in-memory store. Dir may be empty.
 func New(dir string) *Store {
-	return &Store{
-		turns:     make(map[string]*turnIndex),
-		byReq:     make(map[string]string),
-		bySession: make(map[string]string),
-		entities:  make(map[string]*Entity),
-		Dir:       dir,
-		Max:       4096,
-		Grace:     DefaultCloudGrace,
+	s := &Store{
+		Dir:   dir,
+		Max:   4096,
+		Grace: DefaultCloudGrace,
 	}
+	s.EventLog.ensure()
+	s.EntityIndex.ensure()
+	return s
 }
 
 var defaultStore = New("")
@@ -169,116 +159,8 @@ func (s *Store) Append(ev Event) {
 	if s.Max <= 0 {
 		s.Max = 4096
 	}
-	if len(s.events) >= s.Max {
-		cut := len(s.events) / 2
-		s.events = append([]Event(nil), s.events[cut:]...)
-		s.rebuildLocked()
-	}
-	idx := len(s.events)
-	s.events = append(s.events, ev)
-	s.indexLocked(idx, &s.events[idx])
+	idx := s.EventLog.appendEvent(ev, s.Max)
 	s.persistLocked(s.events[idx])
-}
-
-func (s *Store) rebuildLocked() {
-	s.turns = make(map[string]*turnIndex)
-	s.byReq = make(map[string]string)
-	s.bySession = make(map[string]string)
-	for i := range s.events {
-		s.indexLocked(i, &s.events[i])
-	}
-}
-
-func (s *Store) indexLocked(idx int, ev *Event) {
-	turnID := strings.TrimSpace(ev.TurnID)
-	reqID := strings.TrimSpace(ev.RequestID)
-	sess := strings.TrimSpace(ev.ConnectSession)
-
-	if turnID == "" && reqID != "" {
-		if t, ok := s.byReq[reqID]; ok {
-			turnID = t
-			ev.TurnID = t
-		} else if sess != "" {
-			if t, ok := s.bySession[sess]; ok {
-				turnID = t
-				ev.TurnID = t
-			}
-		}
-		if turnID == "" {
-			turnID = reqID
-			ev.TurnID = reqID
-		}
-	}
-	if turnID == "" && sess != "" {
-		if t, ok := s.bySession[sess]; ok {
-			turnID = t
-			ev.TurnID = t
-		} else {
-			turnID = "sess:" + sess
-			ev.TurnID = turnID
-		}
-	}
-	if turnID == "" {
-		return
-	}
-
-	ti, ok := s.turns[turnID]
-	if !ok {
-		ti = &turnIndex{view: TurnView{ID: turnID, OpenedAt: ev.TS, RootRequestID: turnID}}
-		s.turns[turnID] = ti
-	}
-	ti.evIdx = append(ti.evIdx, idx)
-	ti.view.UpdatedAt = ev.TS
-
-	if reqID != "" {
-		s.byReq[reqID] = turnID
-		if !containsStr(ti.view.RequestIDs, reqID) {
-			ti.view.RequestIDs = append(ti.view.RequestIDs, reqID)
-		}
-	}
-	if sess != "" {
-		s.bySession[sess] = turnID
-		if !containsStr(ti.view.ConnectSessions, sess) {
-			ti.view.ConnectSessions = append(ti.view.ConnectSessions, sess)
-		}
-	}
-
-	switch ev.Kind {
-	case EventTurnOpened, EventStickyBound, EventRouteDecided:
-		if r := attr(ev, "route"); r != "" {
-			ti.view.Route = r
-		}
-		if src := attr(ev, "source"); src != "" {
-			ti.view.Source = src
-		}
-		if root := attr(ev, "root_request_id"); root != "" {
-			ti.view.RootRequestID = root
-		}
-	case EventRunSSEOpen: // also EventParentRunStarted (alias)
-		ti.opens++
-		ti.view.OpenRuns = ti.opens
-	case EventRunSSEClose: // also EventParentRunEnded (alias)
-		if ti.opens > 0 {
-			ti.opens--
-		}
-		ti.view.OpenRuns = ti.opens
-	}
-}
-
-func attr(ev *Event, key string) string {
-	if ev == nil || ev.Attrs == nil {
-		return ""
-	}
-	return ev.Attrs[key]
-}
-
-func containsStr(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Store) persistLocked(ev Event) {
@@ -304,32 +186,6 @@ func (s *Store) graceLocked() time.Duration {
 	return s.Grace
 }
 
-func (s *Store) cloudLiveLocked(ti *turnIndex, now time.Time) bool {
-	if ti == nil || !strings.EqualFold(ti.view.Route, "cloud") {
-		return false
-	}
-	if ti.opens > 0 {
-		return true
-	}
-	return now.Sub(ti.view.UpdatedAt) <= s.graceLocked()
-}
-
-func (s *Store) turnStatsLocked(ti *turnIndex) TurnStats {
-	st := TurnStats{
-		EventCount:   len(ti.evIdx),
-		ByKind:       make(map[string]int),
-		OpenRuns:     ti.opens,
-		RequestCount: len(ti.view.RequestIDs),
-		CloudLive:    s.cloudLiveLocked(ti, time.Now()),
-	}
-	for _, i := range ti.evIdx {
-		if i >= 0 && i < len(s.events) {
-			st.ByKind[string(s.events[i].Kind)]++
-		}
-	}
-	return st
-}
-
 // Turn returns a snapshot for turnID (or requestID / session keyed into a turn).
 func (s *Store) Turn(id string) (TurnView, bool) {
 	if s == nil {
@@ -341,16 +197,7 @@ func (s *Store) Turn(id string) (TurnView, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	turnID := id
-	if t, ok := s.byReq[id]; ok {
-		turnID = t
-	} else if t, ok := s.bySession[id]; ok {
-		turnID = t
-	} else if strings.HasPrefix(id, "cs:") || strings.HasPrefix(id, "xs:") {
-		if t, ok := s.bySession[id]; ok {
-			turnID = t
-		}
-	}
+	turnID := s.EventLog.resolveTurnID(id)
 	ti, ok := s.turns[turnID]
 	if !ok {
 		return TurnView{}, false
@@ -363,7 +210,7 @@ func (s *Store) Turn(id string) (TurnView, bool) {
 			out.Events = append(out.Events, s.events[i])
 		}
 	}
-	st := s.turnStatsLocked(ti)
+	st := s.EventLog.turnStats(ti, time.Now(), s.graceLocked())
 	out.Stats = &st
 	return out, true
 }
@@ -423,7 +270,7 @@ func (s *Store) CloudTurnLive(requestID string) bool {
 	if !ok {
 		return false
 	}
-	return s.cloudLiveLocked(ti, time.Now())
+	return s.EventLog.cloudLive(ti, time.Now(), s.graceLocked())
 }
 
 // LiveCloudFamily returns the newest live cloud turn (open parent run or within grace).
@@ -435,9 +282,10 @@ func (s *Store) LiveCloudFamily() (turnID, source, root string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
+	grace := s.graceLocked()
 	var best *turnIndex
 	for _, ti := range s.turns {
-		if !s.cloudLiveLocked(ti, now) {
+		if !s.EventLog.cloudLive(ti, now, grace) {
 			continue
 		}
 		if best == nil || ti.view.UpdatedAt.After(best.view.UpdatedAt) {
@@ -463,6 +311,7 @@ func (s *Store) ResolveCloudSticky(requestID, sessionKey string) (turnID, source
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
+	grace := s.graceLocked()
 
 	try := func(id string) bool {
 		if id == "" {
@@ -475,7 +324,7 @@ func (s *Store) ResolveCloudSticky(requestID, sessionKey string) (turnID, source
 			tid = t
 		}
 		ti, found := s.turns[tid]
-		if !found || !s.cloudLiveLocked(ti, now) {
+		if !found || !s.EventLog.cloudLive(ti, now, grace) {
 			return false
 		}
 		turnID = ti.view.ID
@@ -497,7 +346,7 @@ func (s *Store) ResolveCloudSticky(requestID, sessionKey string) (turnID, source
 	// Fall back to newest live cloud family (summary/child with new UUID + empty session).
 	var best *turnIndex
 	for _, ti := range s.turns {
-		if !s.cloudLiveLocked(ti, now) {
+		if !s.EventLog.cloudLive(ti, now, grace) {
 			continue
 		}
 		if best == nil || ti.view.UpdatedAt.After(best.view.UpdatedAt) {
@@ -545,22 +394,12 @@ func (s *Store) RecentTurns(limit int) []TurnView {
 	defer s.mu.Unlock()
 	out := make([]TurnView, 0, len(s.turns))
 	now := time.Now()
+	grace := s.graceLocked()
 	for _, ti := range s.turns {
 		v := ti.view
 		v.Events = nil
 		v.OpenRuns = ti.opens
-		st := TurnStats{
-			EventCount:   len(ti.evIdx),
-			OpenRuns:     ti.opens,
-			RequestCount: len(ti.view.RequestIDs),
-			CloudLive:    s.cloudLiveLocked(ti, now),
-			ByKind:       make(map[string]int),
-		}
-		for _, i := range ti.evIdx {
-			if i >= 0 && i < len(s.events) {
-				st.ByKind[string(s.events[i].Kind)]++
-			}
-		}
+		st := s.EventLog.turnStats(ti, now, grace)
 		v.Stats = &st
 		out = append(out, v)
 	}
@@ -607,20 +446,17 @@ func (s *Store) Stats() StoreStats {
 	st := StoreStats{
 		Turns:    len(s.turns),
 		Events:   len(s.events),
-		Entities: len(s.entities),
+		Entities: s.EntityIndex.len(),
 		ByKind:   make(map[string]int),
-	}
-	if s.entities == nil {
-		st.Entities = 0
 	}
 	st.Sessions = len(s.bySession)
 	now := time.Now()
+	_ = now
 	for _, ti := range s.turns {
 		st.OpenRuns += ti.opens
 		switch strings.ToLower(ti.view.Route) {
 		case "cloud":
 			st.CloudTurns++
-			_ = now
 		case "local":
 			st.LocalTurns++
 		}
@@ -778,13 +614,11 @@ func (s *Store) LoadWarm(retainDays int) (int, error) {
 				s.Max = 4096
 			}
 			if len(s.events) >= s.Max {
-				cut := len(s.events) / 2
-				s.events = append([]Event(nil), s.events[cut:]...)
-				s.rebuildLocked()
+				s.EventLog.trimHalf(s.Max)
 			}
 			idx := len(s.events)
 			s.events = append(s.events, ev)
-			s.indexLocked(idx, &s.events[idx])
+			s.EventLog.index(idx, &s.events[idx])
 			loaded++
 		}
 		_ = f.Close()
@@ -836,11 +670,5 @@ func (s *Store) PruneMemory() int {
 	if s.Max <= 0 {
 		s.Max = 4096
 	}
-	if len(s.events) < s.Max {
-		return 0
-	}
-	cut := len(s.events) / 2
-	s.events = append([]Event(nil), s.events[cut:]...)
-	s.rebuildLocked()
-	return cut
+	return s.EventLog.trimHalf(s.Max)
 }

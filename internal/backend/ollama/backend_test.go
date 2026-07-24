@@ -61,6 +61,84 @@ func TestComplete_Stream(t *testing.T) {
 	}
 }
 
+func TestComplete_FormatJSONSchema(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = io.WriteString(w, `data: {"id":"1","model":"llama3","choices":[{"delta":{"content":"{\"score\":0.8,\"reason\":\"ok\"}"},"finish_reason":"stop"}]}`+"\n\n")
+		flusher.Flush()
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	b := ollama.New(srv.URL)
+	ch, err := b.Complete(context.Background(), &backend.CompletionRequest{
+		Model:    "llama3",
+		Messages: []backend.Message{{Role: "user", Content: "score it"}},
+		Format:   backend.CriticEvalFormat(),
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var content strings.Builder
+	for chunk := range ch {
+		content.WriteString(chunk.Content)
+	}
+	if !strings.Contains(content.String(), `"score"`) {
+		t.Fatalf("content=%q", content.String())
+	}
+	if _, ok := gotBody["format"]; !ok {
+		t.Fatalf("expected format in body, got %#v", gotBody)
+	}
+	rf, ok := gotBody["response_format"].(map[string]any)
+	if !ok || rf["type"] != "json_schema" {
+		t.Fatalf("response_format=%#v", gotBody["response_format"])
+	}
+}
+
+func TestComplete_FormatSchemaFallsBackToJSON(t *testing.T) {
+	var bodies []map[string]any
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		n++
+		if n == 1 {
+			http.Error(w, `{"error":"invalid format schema"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = io.WriteString(w, `data: {"id":"1","model":"llama3","choices":[{"delta":{"content":"{\"score\":0.5,\"reason\":\"fb\"}"},"finish_reason":"stop"}]}`+"\n\n")
+		flusher.Flush()
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	b := ollama.New(srv.URL)
+	ch, err := b.Complete(context.Background(), &backend.CompletionRequest{
+		Model:    "llama3",
+		Messages: []backend.Message{{Role: "user", Content: "score"}},
+		Format:   backend.CriticEvalFormat(),
+	})
+	if err != nil {
+		t.Fatalf("Complete after fallback: %v", err)
+	}
+	for range ch {
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected schema then json fallback, got %d requests", len(bodies))
+	}
+	if bodies[1]["format"] != "json" {
+		t.Fatalf("fallback format=%#v", bodies[1]["format"])
+	}
+}
+
 // T1.3.2 — Complete: handle Ollama error
 func TestComplete_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,4 +273,17 @@ func TestPing_Down(t *testing.T) {
 	if b.IsHealthy() {
 		t.Fatal("expected unhealthy")
 	}
+}
+
+func TestNewWithTimeout(t *testing.T) {
+	b := ollama.NewWithTimeout("http://127.0.0.1:11434", 5*time.Minute)
+	if b == nil {
+		t.Fatal("nil backend")
+	}
+	// Default New uses 10m (local tool loops).
+	b2 := ollama.New("http://127.0.0.1:11434")
+	if b2 == nil {
+		t.Fatal("nil default backend")
+	}
+	b2.SetRequestTimeout(8 * time.Minute)
 }

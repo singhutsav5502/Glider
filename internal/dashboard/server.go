@@ -244,6 +244,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.handleSwarmRun(w, r)
 	})
+	mux.HandleFunc("/api/swarm/runs/", s.handleSwarmRunProgress)
 	mux.HandleFunc("/api/swarm/threads", s.handleSwarmThreads)
 	mux.HandleFunc("/api/swarm/threads/", s.handleSwarmThread)
 	mux.HandleFunc("/api/swarm/templates", func(w http.ResponseWriter, r *http.Request) {
@@ -257,9 +258,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context/communities", s.handleContextCommunities)
 	mux.HandleFunc("/api/context/explain", s.handleContextExplain)
 	mux.HandleFunc("/api/agent-logs", s.handleAgentLogs)
+	mux.HandleFunc("/api/workspace", s.handleWorkspace)
 	mux.HandleFunc("/api/mcp/servers", s.handleMCPServers)
 	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)
 	mux.HandleFunc("/api/mcp/github", s.handleMCPGitHub)
+	mux.HandleFunc("/api/mcp/github/", s.handleMCPGitHub)
+	mux.HandleFunc("/oauth/callback", s.handleGitHubOAuthCallback)
 	mux.HandleFunc("/ws", s.handleWS)
 
 	if dir := strings.TrimSpace(s.DocsDir); dir != "" {

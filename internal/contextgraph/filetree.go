@@ -119,5 +119,7 @@ func (s *Store) IndexFileTree(turnID, root string, maxDepth, maxFiles int) (int,
 		n++
 		return nil
 	})
+	// Queryable summary so context_query key=file-tree / "file-tree" finds the clone root.
+	s.RecordHoopContext(turnID, HoopKeyFileTree, fmt.Sprintf("root=%s nodes=%d", filepath.ToSlash(abs), n))
 	return n, err
 }
