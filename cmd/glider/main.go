@@ -439,13 +439,14 @@ func main() {
 		plugReg := plugin.NewMemRegistry(&plugin.SimpleHost{Root: "."})
 		allowShell := cfg.Orchestration.Tools.AllowShell
 		toolReg := tools.NewRegistry(tools.Options{
-			Workspace:  ".",
+			Workspace:  tools.DefaultWorkspaceDir(),
 			AllowShell: allowShell,
 			ShellAllow: cfg.Orchestration.Tools.ShellAllowlist,
 			Context:    contextgraph.ContextQuerier{Store: ctxGraph},
 			MCP:        mcpMgr,
 			Plugins:    plugReg,
 		})
+		_ = os.MkdirAll(toolReg.Workspace(), 0o755)
 		loopMgr.Tools = toolReg
 		loopMgr.BudgetCheck = func(st *loop.LoopState) bool {
 			return st == nil || !st.Spend.HardHit

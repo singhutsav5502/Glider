@@ -27,7 +27,13 @@ ollama serve
 
 ## Smoke hoops
 
-`hello-critic.yaml`, `explain-snippet.yaml`, `rename-suggest.yaml`, `review-lite.yaml`, `summarize-notes.yaml`
+`hello-critic.yaml`, `explain-snippet.yaml`, `rename-suggest.yaml`, `review-lite.yaml`, `summarize-notes.yaml`, `workspace-existing-bind.yaml`
+
+### Workspace bind
+
+`workspace-existing-bind.yaml` demonstrates the `workspace` stage with `workspace_mode: existing`.
+It binds `projects/demo` under `~/.glider/workspace` as the run's **work** root (with `out/` for deliverables).
+Default mode `run` creates `runs/<hoop_id>/{work,out}` on hoop/swarm start. See [planning/tools_mcp.md](../../planning/tools_mcp.md#run-workspace).
 
 ## Swarm templates (`samples/swarms/`)
 

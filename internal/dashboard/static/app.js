@@ -5,6 +5,7 @@
     rules: document.getElementById("panel-rules"),
     hoops: document.getElementById("panel-hoops"),
     graphs: document.getElementById("panel-graphs"),
+    workspace: document.getElementById("panel-workspace"),
     mcp: document.getElementById("panel-mcp"),
     settings: document.getElementById("panel-settings"),
   };
@@ -61,6 +62,7 @@
     }
     if (name === "overview") loadSessions();
     if (name === "mcp") refreshMCPPanel();
+    if (name === "workspace") refreshWorkspacePanel();
   }
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -873,10 +875,10 @@
 
 
   /* ===== Hoops & Swarm + Graph editor (shared stage/swarm state) ===== */
-  const DEFAULT_STAGES = ["router", "planner", "actor", "critic", "memory"];
-  const SAMPLE_STAGES = ["router", "planner", "actor", "critic", "memory"];
+  const DEFAULT_STAGES = ["workspace", "router", "planner", "actor", "critic", "memory"];
+  const SAMPLE_STAGES = ["workspace", "router", "planner", "actor", "critic", "memory"];
   /** Loop API StageKind values only (see internal/loop/stages.go). */
-  const STAGE_KINDS = ["router", "planner", "actor", "critic", "memory", "human_gate"];
+  const STAGE_KINDS = ["workspace", "router", "planner", "actor", "critic", "memory", "context", "human_gate"];
   let liveBoardTimer = null;
   let liveWsConnected = false;
   let hotswapGenCache = {};
@@ -1555,6 +1557,9 @@
       roles: Array.isArray(raw.roles) ? raw.roles : [],
       tools: Array.isArray(raw.tools) ? raw.tools : [],
       mcp: Array.isArray(raw.mcp) ? raw.mcp : (raw.mcp_servers || []),
+      workspace_mode: raw.workspace_mode || (kind === "workspace" ? "run" : ""),
+      workspace_path: raw.workspace_path || "",
+      out_path: raw.out_path || "",
       x: typeof raw.x === "number" ? raw.x : null,
       y: typeof raw.y === "number" ? raw.y : null,
     };
@@ -1760,6 +1765,11 @@
       if (Array.isArray(n.roles) && n.roles.length) row.roles = n.roles;
       if (Array.isArray(n.tools) && n.tools.length) row.tools = n.tools;
       if (Array.isArray(n.mcp) && n.mcp.length) row.mcp = n.mcp;
+      if (kind === "workspace") {
+        row.workspace_mode = n.workspace_mode || "run";
+        if (n.workspace_path) row.workspace_path = n.workspace_path;
+        if (n.out_path) row.out_path = n.out_path;
+      }
       return row;
     });
     hidden.value = JSON.stringify(payload);
@@ -2329,6 +2339,67 @@
   }
 
   document.getElementById("mcp-refresh")?.addEventListener("click", () => refreshMCPPanel());
+
+  function formatWorkspaceTree(nodes, indent) {
+    if (!Array.isArray(nodes) || !nodes.length) return "(empty)";
+    const pad = "  ".repeat(indent || 0);
+    let out = "";
+    nodes.forEach((n) => {
+      out += pad + (n.dir ? n.name + "/" : n.name) + (n.size ? ` (${n.size}b)` : "") + "\n";
+      if (n.children && n.children.length) out += formatWorkspaceTree(n.children, (indent || 0) + 1);
+    });
+    return out.trimEnd();
+  }
+
+  async function refreshWorkspacePanel() {
+    const errEl = document.getElementById("workspace-error");
+    if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
+    const list = document.getElementById("workspace-run-list");
+    try {
+      const res = await fetch("/api/loops");
+      if (res.ok) {
+        const loops = await res.json();
+        if (list && Array.isArray(loops)) {
+          list.innerHTML = loops.map((st) => `<option value="${esc(st.spec?.id || "")}"></option>`).join("");
+        }
+      }
+    } catch (_) {}
+    const runId = String(document.getElementById("workspace-run-id")?.value || "").trim();
+    const bindEl = document.getElementById("workspace-binding");
+    const workEl = document.getElementById("workspace-work-tree");
+    const outEl = document.getElementById("workspace-out-tree");
+    if (!runId) {
+      if (bindEl) bindEl.textContent = "Select a run…";
+      if (workEl) workEl.textContent = "(empty)";
+      if (outEl) outEl.textContent = "(empty)";
+      return;
+    }
+    try {
+      const res = await fetch("/api/workspace?run=" + encodeURIComponent(runId));
+      const raw = await res.text();
+      if (!res.ok) throw new Error(raw || res.statusText);
+      const data = JSON.parse(raw);
+      if (bindEl) {
+        bindEl.textContent = [
+          `mode: ${data.mode || "run"}`,
+          `root: ${data.workspace_root || ""}`,
+          `work: ${data.work_rel || data.work_dir || ""}`,
+          `out:  ${data.out_rel || data.out_dir || ""}`,
+          `source: ${data.source || ""}`,
+        ].join("\n");
+      }
+      if (workEl) workEl.textContent = formatWorkspaceTree(data.work_tree);
+      if (outEl) outEl.textContent = formatWorkspaceTree(data.out_tree);
+    } catch (e) {
+      if (errEl) { errEl.hidden = false; errEl.textContent = String(e.message || e); }
+    }
+  }
+
+  document.getElementById("workspace-refresh")?.addEventListener("click", () => refreshWorkspacePanel());
+  document.getElementById("workspace-run-id")?.addEventListener("change", () => refreshWorkspacePanel());
+  document.getElementById("workspace-run-id")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); refreshWorkspacePanel(); }
+  });
   document.getElementById("mcp-servers-body")?.addEventListener("click", (ev) => {
     const btn = ev.target.closest("[data-mcp-act]");
     if (btn) {
@@ -2469,6 +2540,9 @@
     const routeEl = document.getElementById("stage-edit-route");
     const evalEl = document.getElementById("stage-edit-eval-min");
     const toolsEl = document.getElementById("stage-edit-tools");
+    const wsModeEl = document.getElementById("stage-edit-workspace-mode");
+    const wsPathEl = document.getElementById("stage-edit-workspace-path");
+    const outPathEl = document.getElementById("stage-edit-out-path");
     if (kindEl) kindEl.value = coerceStageKind(node?.kind || "actor");
     if (idEl) idEl.value = node?.id || "";
     if (nameEl) nameEl.value = node?.name || "";
@@ -2476,6 +2550,9 @@
     if (promptEl) promptEl.value = node?.prompt || "";
     if (routeEl) routeEl.value = node?.route || "";
     if (evalEl) evalEl.value = node?.eval_min > 0 ? String(node.eval_min) : "";
+    if (wsModeEl) wsModeEl.value = node?.workspace_mode || "run";
+    if (wsPathEl) wsPathEl.value = node?.workspace_path || "";
+    if (outPathEl) outPathEl.value = node?.out_path || "";
     if (toolsEl) {
       // Show builtins + any non-picker MCP tools in advanced JSON.
       const builtins = (Array.isArray(node?.tools) ? node.tools : []).filter((t) => t && t.kind !== "mcp");
@@ -2497,6 +2574,9 @@
     const route = String(document.getElementById("stage-edit-route")?.value || "");
     const evalRaw = Number(document.getElementById("stage-edit-eval-min")?.value);
     const eval_min = Number.isFinite(evalRaw) && evalRaw > 0 ? evalRaw : 0;
+    const workspace_mode = String(document.getElementById("stage-edit-workspace-mode")?.value || "run");
+    const workspace_path = String(document.getElementById("stage-edit-workspace-path")?.value || "").trim();
+    const out_path = String(document.getElementById("stage-edit-out-path")?.value || "").trim();
     let tools = [];
     const toolsRaw = String(document.getElementById("stage-edit-tools")?.value || "").trim();
     if (toolsRaw) {
@@ -2548,6 +2628,9 @@
       node.eval_min = eval_min;
       node.tools = tools;
       node.mcp = mcp;
+      node.workspace_mode = workspace_mode;
+      node.workspace_path = workspace_path;
+      node.out_path = out_path;
       selectStageNode(node.uid);
       renderStageGraph();
       showHoopsOk("Updated stage: " + node.id);
@@ -2564,6 +2647,9 @@
         eval_min,
         tools,
         mcp,
+        workspace_mode,
+        workspace_path,
+        out_path,
       });
       stageNodes.push(node);
       selectStageNode(node.uid);
@@ -3515,6 +3601,7 @@
           <p class="hoop-last-outcome" title="Last outcome">${esc(lastOut)}</p>
           <p class="hint" style="margin:8px 0">Goal: ${esc((st.spec?.goal || st.spec?.prompt || "").slice(0, 160))}</p>
           ${evalGoal ? `<p class="hint" style="margin:0 0 8px">Eval: ${evalGoal}</p>` : ""}
+          ${st.workspace?.work_rel ? `<p class="hint" style="margin:0 0 8px">Workspace: <code>${esc(st.workspace.work_rel)}</code> → <code>${esc(st.workspace.out_rel || "")}</code> <button type="button" class="linkish hoop-workspace" data-id="${id}">View</button></p>` : ""}
           <div class="hoop-stage-pills">${stageTags}</div>
           <div class="hoop-outcomes">${rows || `<span class="muted">No cycles yet -- start to run the pipeline</span>`}</div>
         </div>`;
@@ -3524,6 +3611,12 @@
       el.querySelectorAll(".hoop-del").forEach((b) => b.addEventListener("click", () => deleteHoop(b.dataset.id)));
       el.querySelectorAll(".hoop-approve").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, true)));
       el.querySelectorAll(".hoop-reject").forEach((b) => b.addEventListener("click", () => hoopGate(b.dataset.id, false)));
+      el.querySelectorAll(".hoop-workspace").forEach((b) => b.addEventListener("click", () => {
+        const id = b.dataset.id;
+        const inp = document.getElementById("workspace-run-id");
+        if (inp) inp.value = id || "";
+        activateTab("workspace");
+      }));
       el.querySelectorAll(".hoop-card").forEach((card) => {
         card.addEventListener("click", (ev) => {
           if (ev.target.closest("button")) return;
@@ -3633,6 +3726,11 @@
         if (row.kind === "critic" && s.eval_min > 0) row.eval_min = s.eval_min;
         if (s.parallel > 1) row.parallel = Number(s.parallel) || 0;
         if (Array.isArray(s.roles) && s.roles.length) row.roles = s.roles;
+        if (row.kind === "workspace") {
+          row.workspace_mode = s.workspace_mode || "run";
+          if (s.workspace_path) row.workspace_path = s.workspace_path;
+          if (s.out_path) row.out_path = s.out_path;
+        }
         if (Array.isArray(s.tools) && s.tools.length) {
           row.tools = s.tools.filter((t) => t && t.name && t.name !== "*");
           // MCP server bindings without specific tools → bind server for catalog fill.

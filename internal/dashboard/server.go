@@ -220,6 +220,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, loop.Catalog())
 	})
+	mux.HandleFunc("/api/workspace", func(w http.ResponseWriter, r *http.Request) {
+		s.handleWorkspace(w, r)
+	})
 	mux.HandleFunc("/api/loops/", func(w http.ResponseWriter, r *http.Request) {
 		s.handleLoopAction(w, r)
 	})

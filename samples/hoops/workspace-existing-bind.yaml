@@ -1,0 +1,53 @@
+kind: hoop
+id: workspace-existing-bind
+name: Workspace existing bind
+goal: >
+  Bind an existing folder under the tools workspace as work/out, write a short
+  note into out, and have the critic confirm the deliverable path was used.
+prompt: >
+  Create out/hello.txt containing exactly: bound-workspace-ok
+route: local
+learning: false
+autonomy: L1
+human_gate: false
+max_iterations: 1
+fail_policy: stop
+enabled: true
+eval:
+  min_score: 0.5
+  goal: out/hello.txt exists with bound-workspace-ok
+stages:
+  - kind: workspace
+    id: bind_existing
+    name: Bind existing project
+    workspace_mode: existing
+    # Relative to ~/.glider/workspace (create projects/demo first, or rely on stage Ensure).
+    workspace_path: projects/demo
+    # Optional override; default is <workspace_path>/out
+    # out_path: projects/demo/deliverables
+  - kind: router
+    name: Prefer local
+    route: local
+  - kind: planner
+    name: Plan write
+    prompt: Plan writing hello.txt under the bound out directory via artifact_write kind=out.
+    route: local
+  - kind: actor
+    name: Write note
+    prompt: >
+      Use artifact_write with kind=out to write hello.txt containing exactly
+      bound-workspace-ok. Do not invent another sandbox.
+    route: local
+    tools:
+      - name: artifact_write
+        kind: builtin
+      - name: fs_list
+        kind: builtin
+  - kind: critic
+    name: Score note
+    prompt: >
+      Score 0.0–1.0. Pass if the actor wrote hello.txt under out with the required text.
+      Reply with SCORE=x.xx and one line of rationale.
+    route: local
+  - kind: memory
+    name: Persist

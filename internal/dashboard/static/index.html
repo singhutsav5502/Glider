@@ -23,6 +23,7 @@
         <button class="tab" data-tab="rules">Rules Engine</button>
         <button class="tab" data-tab="hoops">Hoops & Swarm</button>
         <button class="tab" data-tab="graphs">Graph editor</button>
+        <button class="tab" data-tab="workspace">Workspace</button>
         <button class="tab" data-tab="mcp">MCP</button>
         <button class="tab" data-tab="settings">Config</button>
         <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
@@ -189,6 +190,7 @@
                   <div class="stage-palette-wrap" style="margin-bottom:12px">
                     <div class="dnd-label">Palette -- click or drag onto pipeline</div>
                     <div id="stage-palette-hoops" class="stage-palette" aria-label="Stage palette (form)">
+                      <div class="stage-chip" draggable="true" data-kind="workspace" title="Bind run or existing work/out">workspace</div>
                       <div class="stage-chip" draggable="true" data-kind="router" title="Add router">router</div>
                       <div class="stage-chip" draggable="true" data-kind="planner" title="Add planner">planner</div>
                       <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
@@ -347,6 +349,7 @@
               <div class="stage-palette-wrap graphs-palette">
                 <div class="dnd-label">Palette</div>
                 <div id="stage-palette" class="stage-palette" aria-label="Stage palette">
+                  <div class="stage-chip" draggable="true" data-kind="workspace" title="Bind run or existing work/out">workspace</div>
                   <div class="stage-chip" draggable="true" data-kind="router" title="Add router">router</div>
                   <div class="stage-chip" draggable="true" data-kind="planner" title="Add planner">planner</div>
                   <div class="stage-chip" draggable="true" data-kind="actor" title="Add actor">actor</div>
@@ -414,14 +417,16 @@
         <dialog id="stage-edit-dialog" class="stage-edit-dialog">
           <form id="stage-edit-form" class="stage-edit-form">
             <h3 id="stage-edit-title">Code stage</h3>
-            <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router / human_gate. Id, name, and prompt make each stage concrete.</p>
+            <p class="hint" style="margin:0 0 10px">Loop API kinds: workspace / planner / actor / critic / memory / context / router / human_gate. Id, name, and prompt make each stage concrete.</p>
             <div class="cfg-grid">
               <label>Kind
                 <select id="stage-edit-kind" required>
+                  <option value="workspace">workspace</option>
                   <option value="planner">planner</option>
                   <option value="actor" selected>actor</option>
                   <option value="critic">critic</option>
                   <option value="memory">memory</option>
+                  <option value="context">context</option>
                   <option value="router">router</option>
                   <option value="human_gate">human_gate</option>
                 </select>
@@ -439,6 +444,14 @@
                 </select>
               </label>
               <label>Eval min (critic)<input type="number" id="stage-edit-eval-min" min="0" max="1" step="0.05" placeholder="0.7" /></label>
+              <label>Workspace mode
+                <select id="stage-edit-workspace-mode">
+                  <option value="run">run (default runs/&lt;id&gt;/{work,out})</option>
+                  <option value="existing">existing (reuse path)</option>
+                </select>
+              </label>
+              <label>Workspace path<input type="text" id="stage-edit-workspace-path" placeholder="projects/demo (mode=existing)" /></label>
+              <label class="span2">Out path (optional)<input type="text" id="stage-edit-out-path" placeholder="projects/demo/deliverables" /></label>
               <label class="span2">MCP servers
                 <div id="stage-edit-mcp-pick" class="mcp-pick" aria-label="MCP server picker"></div>
                 <input type="hidden" id="stage-edit-mcp" value="" />
@@ -502,6 +515,40 @@
             </div>
           </form>
         </dialog>
+      </section>
+
+      <section id="panel-workspace" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Run workspace</h2>
+            <p class="hint" style="margin:6px 0 0">
+              Each hoop/swarm run binds <code>work</code> (scratch) and <code>out</code> (deliverables) under
+              <code>~/.glider/workspace</code>. Select a run to browse trees. Graph node
+              <code>workspace</code> can reuse an existing path (<code>workspace_mode: existing</code>).
+            </p>
+          </div>
+          <button type="button" id="workspace-refresh" class="linkish">Refresh</button>
+        </div>
+        <div class="cfg-grid" style="margin-bottom:12px">
+          <label>Run id
+            <input type="text" id="workspace-run-id" placeholder="hoop id or swarm turn id" list="workspace-run-list" />
+            <datalist id="workspace-run-list"></datalist>
+          </label>
+          <label class="span2">Binding
+            <pre id="workspace-binding" class="cfg-mono" style="min-height:3.5rem;margin:0;white-space:pre-wrap">Select a run…</pre>
+          </label>
+        </div>
+        <p id="workspace-error" class="cfg-error" hidden></p>
+        <div class="workspace-trees" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            <h3 style="margin:0 0 8px;font-size:0.95rem">work</h3>
+            <pre id="workspace-work-tree" class="cfg-mono" style="min-height:12rem;margin:0;overflow:auto">(empty)</pre>
+          </div>
+          <div>
+            <h3 style="margin:0 0 8px;font-size:0.95rem">out</h3>
+            <pre id="workspace-out-tree" class="cfg-mono" style="min-height:12rem;margin:0;overflow:auto">(empty)</pre>
+          </div>
+        </div>
       </section>
 
       <section id="panel-mcp" class="panel">
