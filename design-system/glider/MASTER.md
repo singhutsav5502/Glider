@@ -3,7 +3,7 @@
 > Overrides ui-ux-pro-max default "AI purple" recommendation — product brief forbids purple-on-white / indigo glow aesthetics.
 
 ## Product
-**Glider** — local AI routing harness for Cursor (gateway + MITM + loops/swarms). Audience: developers operating a control plane. Job: clear telemetry, dense operable panels, trustworthy status.
+**Glider** — local-first routing and permission-relay layer for AI coding CLIs (gateway + MITM + cross-CLI delegation). Audience: developers operating a control plane. Job: clear telemetry, dense operable panels, trustworthy status.
 
 ## Direction: Instrument panel
 Aviation / lab-instrument vernacular: cool slate chassis, copper accent (routing "hot path"), crisp mono for telemetry. Light mode primary (ops desks), not OLED cinema-dark.

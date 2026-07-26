@@ -28,21 +28,20 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a class="active" href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Tools</div>
       <h1>Tools &amp; MCP</h1>
       <p>
         Glider unifies builtins and Model Context Protocol (MCP) servers under
-        <code>internal/tools</code>. Hoop stages and swarm workers declare
-        <code>tools:</code> refs; the registry dispatches them (and feeds results into the model when the agentic tool loop is active).
-        Full planning write-up: <code>planning/tools_mcp.md</code>.
+        <code>internal/tools</code>. The registry dispatches <code>tools:</code> refs
+        and feeds results into the model when the agentic tool loop is active.
+        Full planning write-up: <code>planning/tools.md</code>.
       </p>
 
       <h2 id="workspace">Workspace, ScopeRel &amp; artifacts</h2>
       <p>Default sandbox: <code>~/.glider/workspace</code>. Each run gets:</p>
-      <pre>runs/&lt;hoop-or-turn-id&gt;/
+      <pre>runs/&lt;run-id&gt;/
   work/   ← clones, scratch
   out/    ← final reports</pre>
       <p><strong>ScopeRel:</strong> with a run active, bare paths resolve under that run’s <code>work/</code> (same for <code>fs_*</code> and <code>git_clone</code>):</p>
@@ -60,7 +59,7 @@ out findings.md
       <h2 id="blind">Blind pre-pass vs agent tool loop</h2>
       <table>
         <tr><th>Path</th><th>What runs</th></tr>
-        <tr><td>Blind pre-pass</td><td>Only safe tools (<code>datetime</code>, <code>fs_list</code>, git status/diff/log, MCP list) with input <code>"."</code> — never the hoop goal</td></tr>
+        <tr><td>Blind pre-pass</td><td>Only safe tools (<code>datetime</code>, <code>fs_list</code>, git status/diff/log, MCP list) with input <code>"."</code> — never the task goal</td></tr>
         <tr><td>Agent loop</td><td><code>git_clone</code>, writes, search, web, MCP — via native <code>tool_calls</code> or parsed text JSON</td></tr>
       </table>
       <pre>{"name":"fs_list","arguments":{"input":"audit-target"}}</pre>
@@ -102,7 +101,7 @@ SEARXNG_URL=http://127.0.0.1:8080</pre>
       </ol>
 
       <h2>GitHub token (env or credential file)</h2>
-      <p>Never put a PAT in YAML or hoop specs. Prefer the MCP tab UI, or set one of these in the Glider process environment (first non-empty wins):</p>
+      <p>Never put a PAT in YAML. Prefer the MCP tab UI, or set one of these in the Glider process environment (first non-empty wins):</p>
       <pre>GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # preferred
 GITHUB_TOKEN=ghp_...
 GH_TOKEN=ghp_...</pre>
@@ -114,7 +113,7 @@ GH_TOKEN=ghp_...</pre>
         <tr>
           <td>HTTP (hosted Copilot MCP)</td>
           <td><code>github</code></td>
-          <td><code>https://api.githubcopilot.com/mcp/</code> — Connect after Sign in / PAT. Glider persists <code>Mcp-Session-Id</code>, sends <code>X-MCP-Toolsets</code>, and re-handshakes once on 401/session errors. Live PAT verify steps: <a href="../planning/tools_mcp.md">tools_mcp.md</a></td>
+          <td><code>https://api.githubcopilot.com/mcp/</code> — Connect after Sign in / PAT. Glider persists <code>Mcp-Session-Id</code>, sends <code>X-MCP-Toolsets</code>, and re-handshakes once on 401/session errors. Live PAT verify steps: <a href="../planning/tools.md">tools.md</a></td>
         </tr>
         <tr>
           <td>Docker stdio</td>
@@ -131,24 +130,8 @@ GH_TOKEN=ghp_...</pre>
         <li>Tools list: <strong>live</strong> when the session is up; <strong>catalog</strong> is a static fallback with an explicit reason (not “server off”).</li>
       </ol>
 
-      <h2>Binding tools on stages / nodes</h2>
-      <ol>
-        <li>Graph editor → select a stage → <strong>Edit</strong>.</li>
-        <li>Check MCP servers and optionally specific tools (empty tool picks = bind all from those servers).</li>
-        <li>Advanced: Tools JSON for builtins, e.g. <code>{"name":"fs_list","kind":"builtin"}</code>.</li>
-        <li>Create / Update the hoop on the Hoops tab — tools are persisted on <code>StageSpec.tools</code>.</li>
-      </ol>
-
       <h2>HTTP API</h2>
       <p>See <a href="api.html#mcp">API · MCP</a> and <a href="api.html#workspace">API · Workspace</a>.</p>
-
-      <h2>Seed sample swarms</h2>
-      <pre>powershell -File scripts\seed-samples.ps1</pre>
-      <p>
-        Loads every top-level YAML under <code>samples/swarms/</code>
-        (writes swarm templates to <code>~/.glider/hoops</code>).
-        Details: <a href="samples.html#seed">Samples · Seed all</a>.
-      </p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

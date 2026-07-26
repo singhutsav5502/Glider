@@ -29,13 +29,13 @@
 - [ ] Agent **text-only** chat (no tools) with a built-in Cursor model → local fulfill when rules say local (`mitm runsse local fulfill` in process logs)
 - [ ] With `debug_agent_rpc: true`, dumps appear under `%USERPROFILE%\.glider\mitm-debug`
 - [ ] Agent **with tools** still reaches Cursor origin for child RunSSE when codec **off** (expected); use Mode A for tools locally
-- [ ] Optional Path B tool codec: `mitm.agent_rpc_tool_codec: true` — mapped tools emit Cursor ToolCall oneofs; unknown → Truncated without hang (see `planning/tools_mcp.md` inventory). **Live UI sign-off still open.**
+- [ ] Optional Path B tool codec: `mitm.agent_rpc_tool_codec: true` — mapped tools emit Cursor ToolCall oneofs; unknown → Truncated without hang (see `planning/cursor_agent_research.md` inventory). **Live UI sign-off still open.**
 - [ ] Dashboard Overview does **not** flood with CONNECT `decrypt` 0-token rows
 - [ ] If a rare OpenAI-shaped POST appears on an allowlisted host with `/local`, local model answers
 - [ ] Non-LLM Cursor HTTPS still works (blind tunnel for non-allowlisted hosts)
 
 ## Known limits
 
-- **Path B MITM — text-only Agent** when `agent_rpc_fulfill` is on (BidiAppend → root RunSSE). Child/tool RunSSE → origin; Agent+tools → Mode A (`cus-` + Override Base URL). See [cursor_agent_protocol_interception.md](../planning/cursor_agent_protocol_interception.md); routing roadmap [smart_routing_and_local_tools.md](../planning/smart_routing_and_local_tools.md).
+- **Path B MITM — text-only Agent** when `agent_rpc_fulfill` is on (BidiAppend → root RunSSE). Child/tool RunSSE → origin; Agent+tools → Mode A (`cus-` + Override Base URL). See [cursor_agent_research.md](../planning/cursor_agent_research.md); routing roadmap [smart_routing_and_local_tools.md](../planning/smart_routing_and_local_tools.md).
 - Some Cursor versions ignore `http.proxy` on Agent HTTP/2 paths — stay on HTTP/1.1
 - Proprietary Cursor envelopes that are not chat/Responses / fulfillable StreamChat* / Path B text RunSSE always passthrough

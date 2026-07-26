@@ -1,11 +1,9 @@
 # Context management for Glider orchestrator
 
-> Status **2026-07-18**. Code: `internal/contextgraph` (**hybrid MVP shipped**),
+> Code: `internal/contextgraph` (hybrid MVP shipped),
 > sticky consumers in `internal/mitm/agent_fulfill_hub.go` + `intercept.go`,
 > orchestrator emits `RouteDecided` / fulfill / error via `PipelineCompleter.Graph`.
-> Related: [routing_session_policy.md](./routing_session_policy.md),
-> [swarm_orchestration.md](./Depreceated/swarm_orchestration.md).
-> **Archival note:** longer “context + swarm architecture” prose was merged here + into swarm_orchestration (2026-07-18).
+> Related: [routing_session_policy.md](./routing_session_policy.md).
 
 ## Why this exists
 

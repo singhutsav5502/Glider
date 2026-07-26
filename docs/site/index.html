@@ -27,37 +27,28 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="orchestration-blog.html">Orchestration blog</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <header class="hero">
       <div class="badge">Hostable docs</div>
       <h1>Glider</h1>
       <p>
-        Local-first AI harness for Cursor: shared gateway + MITM completion path
-        (resolve model alias → tokenize → route → transform → execute), task-aware routing,
-        and Loop Engineering hoops that own the mission shape — stages, feeds, human gates,
-        stop conditions — and can run purely on Ollama.
+        Routing and permission-relay layer for AI coding CLIs: shared gateway + MITM
+        completion path (resolve model alias → tokenize → route → transform → execute),
+        task-aware routing, and cross-CLI delegation with permission relay.
       </p>
       <p>
         <a href="../SETUP.md">Step-by-step setup</a>
-        ·
-        <a href="orchestration-blog.html">Orchestration blog + Excalidraw</a>
       </p>
     </header>
 
     <section class="grid">
       <a class="card" href="../SETUP.md">
         <h3>Setup guide</h3>
-        <p>Ollama → build → dashboard → first hoop → optional Cursor Mode A/B.</p>
-      </a>
-      <a class="card" href="orchestration-blog.html">
-        <h3>Orchestration blog</h3>
-        <p>Hoops, swarms, feeds, workspaces — deep dive with Excalidraw diagrams.</p>
+        <p>Ollama → build → dashboard → optional CLI integration (gateway / MITM / delegation).</p>
       </a>
       <a class="card" href="c1-context.html">
         <h3>C1 Context</h3>
@@ -69,11 +60,11 @@
       </a>
       <a class="card" href="c3-components.html">
         <h3>C3 Components</h3>
-        <p>Pipeline, router, transform, fulfill hub, loop/swarm, metrics.</p>
+        <p>Pipeline, router, transform, fulfill hub, delegation, metrics.</p>
       </a>
       <a class="card" href="c4-code.html">
         <h3>C4 Code</h3>
-        <p>Complete, BidiAppend to RunSSE, sticky cloud, hoop cycle call chains.</p>
+        <p>Complete, BidiAppend to RunSSE, sticky cloud, delegation call chains.</p>
       </a>
       <a class="card" href="architecture-deep.html">
         <h3>Architecture deep dive</h3>
@@ -89,7 +80,7 @@
       </a>
       <a class="card" href="concurrency.html">
         <h3>Concurrency</h3>
-        <p>Goroutines, locks, channels, WS, loop runners, MITM hub races.</p>
+        <p>Goroutines, locks, channels, WS, delegate subprocesses, MITM hub races.</p>
       </a>
       <a class="card" href="architecture.html">
         <h3>Architecture</h3>
@@ -113,15 +104,11 @@
       </a>
       <a class="card" href="api.html">
         <h3>HTTP API</h3>
-        <p>Config, VRAM, context, swarm, MCP, hot-swap endpoints.</p>
+        <p>Config, VRAM, context, vendors, MCP, hot-swap endpoints.</p>
       </a>
       <a class="card" href="mcp.html">
         <h3>Tools &amp; MCP</h3>
-        <p>GitHub token env, dashboard MCP tab, stage tool binding, seed script.</p>
-      </a>
-      <a class="card" href="samples.html">
-        <h3>Sample hoops</h3>
-        <p>Runnable Loop Engineering samples for explain, rename, review, smoke.</p>
+        <p>GitHub token env, dashboard MCP tab, MCP server management.</p>
       </a>
     </section>
 

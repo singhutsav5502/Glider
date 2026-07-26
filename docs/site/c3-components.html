@@ -36,7 +36,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -45,7 +44,7 @@
       <p>
         Inside the Glider process: the shared orchestrator pipeline and the MITM fulfill path
         are the two hot paths. Supporting components: router, transform, contextgraph, metrics,
-        loop/swarm, hot-swap registry, dashboard APIs. Code-level call chains:
+        vendor delegation, hot-swap registry, dashboard APIs. Code-level call chains:
         <a href="c4-code.html">C4 Code</a>.
       </p>
 
@@ -96,7 +95,7 @@
 
       <pre class="seq">Gateway Handlers ──Complete──────────────────────────┐
 MITM Interceptor ──DecideLocal / CompleteLocal───────┤
-Swarm Runner ─────Complete (fan-out workers)─────────┤
+FanOutExecutor ───Complete (fan-out workers)─────────┤
                                                      v
                               PipelineCompleter.Handle
                      alias → tokenize → route → [origin gate]
@@ -138,7 +137,7 @@ Swarm Runner ─────Complete (fan-out workers)────────�
         <tr>
           <td>Episodes</td>
           <td><code>contextkit</code></td>
-          <td>Compressed session rings for local inject / swarm</td>
+          <td>Compressed session rings for local prompt inject</td>
         </tr>
       </table>
 
@@ -259,18 +258,23 @@ Swarm Runner ─────Complete (fan-out workers)────────�
         Hub races / locks: <a href="concurrency.html">concurrency</a>.
       </div>
 
-      <h2 id="ops">Ops components (swarm, hotswap, metrics, dashboard)</h2>
+      <h2 id="ops">Ops components (fan-out, hotswap, delegation, metrics, dashboard)</h2>
       <table>
         <tr><th>Component</th><th>Package</th><th>Notes</th></tr>
         <tr>
-          <td>Swarm Runner</td>
-          <td><code>swarm</code></td>
-          <td>Fan-out workers + templates; flag-gated (stubs / partial productization)</td>
+          <td>FanOutExecutor</td>
+          <td><code>orchestrator</code></td>
+          <td>Multi-backend fan-out + critique-merge; flag-gated, off by default</td>
         </tr>
         <tr>
           <td>Hot-swap Registry</td>
-          <td><code>swarm.Registry</code></td>
-          <td>Modules: fan_out, swarm, templates, classifier, loop stages</td>
+          <td><code>hotswap</code></td>
+          <td>Modules: fan_out, backends, classifier — each owns its own <code>Apply</code></td>
+        </tr>
+        <tr>
+          <td>Vendor delegation</td>
+          <td><code>vendors</code></td>
+          <td>Headless CLI exec, denial detection, permission-relay resume loop</td>
         </tr>
         <tr>
           <td>VRAM Manager</td>

@@ -28,7 +28,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Core</div>
@@ -40,8 +39,9 @@
       <p class="note">
         <strong>Model alias</strong> — rewrite the client’s model ID via <code>model_aliases</code>
         (e.g. Cursor’s <code>gpt-4o</code> → <code>qwen2.5-coder:14b</code>) before the router runs.
-        Routing picks <em>which model/backend</em> answers one request. Swarm templates define the
-        <em>mission shape</em>: worker roles, waves, weave policy, and stop conditions.
+        Routing picks <em>which model/backend</em> answers one request. Delegation (see
+        <a href="mcp.html">Tools &amp; MCP</a> and <code>planning/permission_relay_design.md</code>)
+        instead hands a whole task to a different CLI vendor.
       </p>
       <p class="note">
         For Path A/B lifecycles, sticky cloud, fulfill hub, and failure modes, see the
@@ -56,7 +56,7 @@
         <tr><th>Surface</th><th>Port</th><th>Role</th></tr>
         <tr><td>Gateway</td><td><code>:8080/v1</code></td><td>OpenAI-compatible API; Cursor Override Base URL (Path A)</td></tr>
         <tr><td>MITM</td><td><code>:8082</code></td><td>HTTPS forward proxy; decrypt allowlisted Cursor Agent hosts (Path B)</td></tr>
-        <tr><td>Dashboard</td><td><code>:8081</code></td><td>Config, VRAM, Rules, Hoops &amp; Swarm, live metrics</td></tr>
+        <tr><td>Dashboard</td><td><code>:8081</code></td><td>Config, VRAM, Rules, Vendors, MCP, Workspace, live metrics</td></tr>
       </table>
 
       <h2>Pipeline</h2>
@@ -75,7 +75,7 @@
         <tr><td><code>internal/router</code></td><td>Priority rules, classifier, wrap-up, complexity</td></tr>
         <tr><td><code>internal/mitm</code></td><td>CONNECT decrypt, Agent RPC fulfill hub</td></tr>
         <tr><td><code>internal/contextgraph</code></td><td>Event log + turn family index</td></tr>
-        <tr><td><code>internal/swarm</code></td><td>Fan-out workers + hot-swap registry</td></tr>
+        <tr><td><code>internal/vendors</code></td><td>Cross-CLI delegation: headless run, permission relay, resume</td></tr>
       </table>
 
       <h2>Config profiles</h2>

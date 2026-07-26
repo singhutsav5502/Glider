@@ -28,16 +28,15 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
       <div class="badge">Runtime</div>
       <h1>Concurrency model</h1>
       <p>
-        Glider is a long-running Go process with many concurrent clients: Cursor CONNECT
-        sessions, gateway SSE streams, dashboard WebSockets, VRAM pollers, and Loop
-        Engineering runners. This page maps mutexes, channels, and goroutine ownership so
+        Glider is a long-running Go process with many concurrent clients: CLI CONNECT
+        sessions, gateway SSE streams, dashboard WebSockets, VRAM pollers, and delegated-CLI
+        subprocesses. This page maps mutexes, channels, and goroutine ownership so
         operators and contributors can reason about races and backpressure.
       </p>
 
@@ -45,7 +44,7 @@
         <li><a href="#process">Process topology</a></li>
         <li><a href="#mitm">MITM &amp; fulfill hub</a></li>
         <li><a href="#pipeline">Pipeline &amp; orchestrator</a></li>
-        <li><a href="#swarm">Swarm fan-out</a></li>
+        <li><a href="#swarm">Fan-out &amp; delegation</a></li>
         <li><a href="#dashboard">Dashboard WebSocket</a></li>
         <li><a href="#shared">Shared state</a></li>
         <li><a href="#hazards">Hazards &amp; invariants</a></li>
@@ -57,10 +56,11 @@
   ├─ dashboard HTTP + WS                  :8081
   ├─ MITM Accept loop                     :8082
   │    └─ per CONNECT → go handleConn
+  ├─ transparent redirector (Windows, opt-in) → its own accept path on :8083
   ├─ config.Provider.Watch loop
   ├─ VRAM poller (≈5s) via stopVRAM chan
   ├─ backend health poller (≈30s)
-  └─ loop runners (on demand, one per hoop id)</pre>
+  └─ delegate subprocess exec (on demand, one-shot per /vendor call — no persistent runner)</pre>
       <p>
         Hot path config is mostly <code>atomic.Pointer</code> swaps (<code>Config</code>,
         <code>router.Engine</code>) so readers avoid long critical sections.
@@ -152,12 +152,17 @@
         <code>PipelineCompleter</code>.
       </p>
 
-      <h2 id="swarm">Swarm fan-out</h2>
+      <h2 id="swarm">Fan-out &amp; delegation</h2>
       <ul>
-        <li>Semaphore channel sized to <code>MaxInflight</code> (default 4)</li>
+        <li><code>FanOutExecutor</code>: semaphore channel sized to <code>MaxInflight</code> (default 4)</li>
         <li>Worker <code>WaitGroup</code> + result channel (default sizes 16/32)</li>
         <li>Parent cancel propagates to workers (errgroup-style <code>Group</code>)</li>
         <li>Hot-swap <code>Registry</code> Apply under module mutex; generation counter for diagnostics</li>
+        <li>Delegation (<code>vendors.RunWithOptions</code>): plain blocking <code>exec.Command</code>
+          per call, no semaphore of its own — concurrency bound is just "one HTTP request in
+          flight per delegate call," not a worker pool</li>
+        <li><code>PendingResume</code> token store: in-memory map, TTL-bounded, one-shot —
+          guarded by its own mutex, unrelated to the fan-out semaphore</li>
       </ul>
 
       <h2 id="dashboard">Dashboard WebSocket</h2>
@@ -222,8 +227,9 @@
           are best-effort, not transactional.
         </li>
         <li>
-          <strong>Loop cancel:</strong> always use WithoutCancel for hoop lifetime; HTTP
-          handlers must not share request ctx with multi-minute runners.
+          <strong>Delegate subprocess lifetime:</strong> a delegate call's <code>exec.Command</code>
+          is tied to the incoming HTTP request's context — unlike the removed hoop runner, there
+          is no long-lived background process to leak past the request.
         </li>
         <li>
           <strong>Blind tunnel:</strong> two Copy goroutines + WaitGroup; either direction

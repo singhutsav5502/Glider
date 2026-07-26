@@ -28,7 +28,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -41,16 +40,15 @@
         harness — <code>orchestrator.PipelineCompleter</code> — that runs
         <strong>resolve model alias → tokenize → route → transform → execute</strong>
         (<code>model_aliases</code> rewrites the client model ID before routing).
-        Routing chooses the backend for one request; swarm templates define the
-        mission shape (worker roles, waves, weave policy, stop conditions).
+        Routing chooses the backend for one request; cross-CLI delegation (<code>internal/vendors</code>)
+        instead hands an entire task to a different CLI vendor.
       </p>
       <p>
         This page is the long-form companion to <a href="architecture.html">Architecture</a>
         and the <a href="c1-context.html">C4 model</a> (C1-C4).
         Companion pages: <a href="data-flow.html">Data flow</a>,
         <a href="modules.html">Modules</a>, <a href="concurrency.html">Concurrency</a>.
-        Authority for status: <code>planning/README.md</code> (ignore
-        <code>planning/Depreceated/</code>).
+        Authority for status: <code>planning/README.md</code>.
       </p>
 
       <ol class="toc">
@@ -62,14 +60,15 @@
         <li><a href="#hub">Fulfill hub</a></li>
         <li><a href="#routing">Routing stack</a></li>
         <li><a href="#contextgraph">Context graph</a></li>
-        <li><a href="#hotswap">Hot-swap &amp; swarm</a></li>
+        <li><a href="#hotswap">Hot-swap &amp; delegation</a></li>
         <li><a href="#failures">Failure modes</a></li>
       </ol>
 
       <h2 id="surfaces">Surfaces &amp; ports</h2>
       <p>
         <code>cmd/glider/main.go</code> constructs one <code>PipelineCompleter</code>, then
-        attaches it to the gateway, MITM interceptor, and (when enabled) loop/swarm workers.
+        attaches it to the gateway and MITM interceptor (delegation runs headless CLI
+        subprocesses via <code>internal/vendors</code>, not a worker pool).
         Listen addresses come from config; defaults live in <code>config.DefaultConfig()</code>
         and <code>configs/glider.yaml</code>.
       </p>
@@ -100,7 +99,7 @@
 │            │  http.proxy → :8082 + Glider CA  ┌────────┴────────┐
 │            │────────────────────────────────▶│  MITM (Path B)  │──▶ Local text OR Cursor origin
 └────────────┘                                  └─────────────────┘
-                         Dashboard :8081 (metrics, rules, hoops)</pre>
+                         Dashboard :8081 (metrics, rules, vendors)</pre>
       <p>
         MITM host allowlist (intro profile): <code>api2.cursor.sh</code>,
         <code>api3.cursor.sh</code>, <code>api4.cursor.sh</code>,
@@ -315,15 +314,19 @@ InheritTurnFollowOn
         <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code>. Ring cap
         <code>context.max_events</code> (default 4096); warm load days default 2; disk retain
         default 14. Parallel episode rings live in <code>internal/contextkit</code> for local
-        prompt inject / swarm merge — not a full TipTap dump.
+        prompt inject — not a full TipTap dump.
       </p>
       <p>Event kinds include:</p>
       <ul>
         <li>Route / fulfill: <code>RouteDecided</code>, <code>FulfilledLocal</code>, <code>OriginPassthrough</code>, <code>Error</code></li>
         <li>Sticky / turn: <code>TurnOpened</code>, <code>StickyBound</code>, <code>RunSSEOpen</code>, <code>RunSSEClose</code>, <code>BidiSeen</code></li>
         <li>Agent chrome: <code>SummaryRequested</code>, <code>SubagentSpawned</code>, <code>ToolStarted</code>, <code>ToolFinished</code></li>
-        <li>Loops / swarm: <code>LoopStarted</code>, <code>LoopTick</code>, <code>LoopStopped</code>, <code>SwarmFanOut</code>, <code>EpisodeMerged</code></li>
       </ul>
+      <p class="note">
+        <code>EventLoopStarted</code>/<code>LoopTick</code>/<code>LoopStopped</code>/<code>SwarmFanOut</code>
+        constants still exist in <code>graph.go</code> but nothing currently emits them — dead
+        code left over from the removed hoop/swarm runner, not a live event stream.
+      </p>
       <p>
         APIs used by MITM sticky: <code>BindRequest</code>, <code>BindSession</code>,
         <code>CloudTurnLive</code>, <code>LiveCloudFamily</code>,
@@ -331,15 +334,17 @@ InheritTurnFollowOn
         <a href="context.html">Context</a>.
       </p>
 
-      <h2 id="hotswap">Hot-swap &amp; swarm</h2>
+      <h2 id="hotswap">Hot-swap &amp; delegation</h2>
       <p>
-        <code>internal/swarm</code> provides bounded fan-out workers (<code>FanOut</code>,
-        semaphore <code>MaxInflight</code> default 4), merge helpers, dashboard
-        <code>POST /api/swarm/run</code>, and a <strong>hot-swap Registry</strong> of named
-        modules. Hot Apply on config Watch: router stages, fan_out, swarm, swarm_templates,
-        classifier. Restart-required: backends, MITM CA/hosts, listen ports. Module
-        <code>Generation</code> increments on successful Apply. Status: foundation /
-        flag-gated; fan-out productization is partial per project summary.
+        <code>internal/orchestrator</code>'s <code>FanOutExecutor</code> provides bounded
+        multi-backend fan-out (flag-gated, off by default). <code>internal/hotswap.Registry</code>
+        is a separate, general module-registry mechanism bound to <code>config.Provider.Watch</code>:
+        named modules (<code>fan_out</code>, <code>backends</code>, <code>classifier</code>, …) each
+        declare their own <code>Apply</code>; <code>Generation</code> increments on a successful
+        one. Restart-required: MITM CA/hosts/transparent-interception settings, listen ports.
+        Cross-CLI delegation (<code>internal/vendors</code>) is a separate mechanism again — a
+        one-shot headless subprocess per delegate call, not a worker pool or hot-swap module; see
+        <code>planning/permission_relay_design.md</code>.
       </p>
 
       <h2 id="failures">Failure modes</h2>

@@ -36,7 +36,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -87,7 +86,7 @@ Rel(cursor, mitm, "HTTP CONNECT + TLS")
 Rel(user, dash, "Browser")
 Rel(gw, harness, "Complete()")
 Rel(mitm, harness, "DecideLocal / CompleteLocal")
-Rel(dash, harness, "metrics, loops, config APIs")
+Rel(dash, harness, "metrics, vendors, config APIs")
 Rel(harness, ollama, "HTTP")
 Rel(harness, vllm, "HTTP")
 Rel(harness, cloud, "HTTPS BYOK")
@@ -141,7 +140,7 @@ Rel(dash, disk, "history / context APIs")</pre>
           <td>Shared harness</td>
           <td>in-process</td>
           <td><code>orchestrator</code>, <code>router</code>, …</td>
-          <td>Single <code>PipelineCompleter</code> used by gateway + MITM + loops</td>
+          <td>Single <code>PipelineCompleter</code> used by both gateway and MITM</td>
         </tr>
         <tr>
           <td>Backend clients</td>
@@ -173,7 +172,7 @@ Rel(dash, disk, "history / context APIs")</pre>
         <li>
           <strong>Build router + executor + pipeline</strong>
           <span class="tech">router.NewEngineFromConfig · SimpleExecutor · FanOutExecutor · PipelineCompleter</span>
-          Atomic pointer for hot router swap. Optional fan-out / swarm registry.
+          Atomic pointer for hot router swap. Optional fan-out executor (flag-gated).
         </li>
         <li>
           <strong>Wire context + metrics</strong>
@@ -193,7 +192,7 @@ Rel(dash, disk, "history / context APIs")</pre>
         <li>
           <strong>Start Dashboard</strong>
           <span class="tech">dashboard.Server.Start · port 8081 · Bus for live WS</span>
-          Config, VRAM, rules, hoops/swarm APIs (UI owned separately; do not restyle here).
+          Config, VRAM, rules, vendors, MCP, workspace APIs (UI owned separately; do not restyle here).
         </li>
         <li>
           <strong>Await SIGINT/SIGTERM</strong>
@@ -216,8 +215,8 @@ Rel(dash, disk, "history / context APIs")</pre>
 
       <h2 id="hot">Hot-reload vs restart</h2>
       <div class="note">
-        <strong>Hot</strong> (config.Provider.Watch / swarm.Registry): router rules, aliases,
-        transform, log level, classifier, fan-out/swarm opts, hoop templates.
+        <strong>Hot</strong> (config.Provider.Watch / hotswap.Registry): router rules, aliases,
+        transform, log level, classifier, fan-out opts.
         <strong>Restart required:</strong> listen ports, MITM CA/hosts, backend client wiring,
         cloud provider keys at process start. Details:
         <a href="architecture-deep.html#hotswap">deep dive · hot-swap</a>,
@@ -234,7 +233,7 @@ Rel(dash, disk, "history / context APIs")</pre>
         <a href="c3-components.html">
           <span class="lvl">C3</span>
           <span class="ttl">Components</span>
-          <p class="desc">Pipeline, hub, router, loops</p>
+          <p class="desc">Pipeline, hub, router, delegation</p>
         </a>
         <a href="modules.html">
           <span class="lvl">Ref</span>

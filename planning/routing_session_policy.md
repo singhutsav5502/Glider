@@ -3,9 +3,8 @@
 > Short, actionable. Code: `internal/mitm/agent_fulfill_hub.go`, `internal/mitm/intercept.go`,
 > `internal/router/tool_followup.go`, `internal/config/config.go` (`routing.turn_family_ttl`, `routing.tool_followup`).
 > Related: [smart_routing_and_local_tools.md](./smart_routing_and_local_tools.md),
-> [swarm_orchestration.md](./Depreceated/swarm_orchestration.md),
 > [context_management.md](./context_management.md),
-> [cursor_agent_protocol_interception.md](./cursor_agent_protocol_interception.md).
+> [cursor_agent_research.md](./cursor_agent_research.md).
 
 ## Goal
 

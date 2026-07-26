@@ -28,15 +28,14 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Memory</div>
       <h1>Context management</h1>
-      <p>Hybrid dual-layer store (Graphify methodology): <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME) + in-memory turn index for sticky routing. Durable swarm <strong>threads / waves / weave</strong> sit beside the graph so wave N+1 can seed from prior outputs without dumping transcripts.</p>
+      <p>Hybrid dual-layer store: <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME) + in-memory turn index for sticky routing.</p>
 
       <h2>Why</h2>
-      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: "is this still part of turn family X?" Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (thread / wave / episode / file) without dumping transcripts.</p>
+      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: "is this still part of turn family X?" Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (episode / file / symbol) without dumping transcripts.</p>
 
       <h2>Dual-layer model</h2>
       <table>
@@ -44,96 +43,55 @@
         <tbody>
           <tr>
             <td>Event log</td>
-            <td>Append-only verbs (RouteDecided, SwarmFanOut, LoopTick, EpisodeMerged, FileTreeIndexed, &hellip;)</td>
+            <td>Append-only verbs (RouteDecided, FulfilledLocal, OriginPassthrough, FileTreeIndexed, &hellip;)</td>
             <td>Prefer RUNTIME; EXTRACTED when attrs come from tools</td>
             <td><code>~/.glider/context/events-*.jsonl</code></td>
           </tr>
           <tr>
             <td>Entity / edge store</td>
-            <td>thread, wave, worker, episode, file, dir, subtask, conflict + relations (produced, follows, contains, &hellip;)</td>
+            <td>file, dir, symbol + relations (contains, references, &hellip;)</td>
             <td>EXTRACTED | INFERRED | RUNTIME</td>
             <td><code>~/.glider/context/entities.jsonl</code></td>
-          </tr>
-          <tr>
-            <td>Durable swarm threads</td>
-            <td>Multi-wave FanOut + weave policies; resume after restart</td>
-            <td>RUNTIME writes mirrored into graph</td>
-            <td><code>~/.glider/swarm/threads/*.json</code></td>
           </tr>
         </tbody>
       </table>
 
       <h2>Query surface</h2>
       <p><code>Store.Query</code> / <code>QueryWith</code> / tool <code>context_query</code> search <strong>both</strong> layers. Filters:</p>
-      <pre>context_query: &lt;turn_id&gt; [key=clone_path|goal|plan|file-tree] [kind=note|file|dir]
-  [prov=RUNTIME|EXTRACTED|INFERRED] [path=from-&gt;to] [neigh=id] [explain=id] [communities=1] keyword&hellip;
+      <pre>context_query: &lt;turn_id&gt; [key=file-tree] [kind=note|file|dir]
+  [prov=RUNTIME|EXTRACTED|INFERRED] [neigh=id] [explain=id] [communities=1] keyword&hellip;
 
 Examples:
-  t-abc key=clone_path
-  t-abc goal OR plan OR file-tree
-  t-abc wave
+  t-abc key=file-tree
   t-abc prov=EXTRACTED readme
-  t-abc path=wave-0-&gt;wave-1
-  t-abc neigh=thr-1-wave-0
   t-abc explain=sym:demo.go#Helper
   t-abc communities=1
-  prov=RUNTIME EpisodeMerged</pre>
-      <p>Hoop helpers: <code>RecordHoopContext(turn, key, value)</code>, <code>LookupHoopContext</code>, <code>HoopContextDigest</code>. <code>IndexFileTree</code> also records a <code>file-tree</code> key.</p>
-      <p><code>PathSummary(turn, from, to)</code> prefers entity edges, falls back to event scan. Used in production by hoop cycle narratives and multi-wave prompt seeding.</p>
+  prov=RUNTIME RouteDecided</pre>
+      <p><code>IndexFileTree</code> records a <code>file-tree</code> key. <code>PathSummary(turn, from, to)</code> prefers entity edges, falls back to event scan.</p>
       <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP (not full Leiden).</p>
       <p>Ingest:</p>
       <ul>
         <li>File-tree: <code>POST /api/context/index-tree</code> or post-<code>git_clone</code> (EXTRACTED dir/file + contains)</li>
         <li>Symbols: <code>POST /api/context/index-symbols</code> — Go via <code>go/parser</code>, JS/TS/Python via regex; <code>SymbolIndexer</code> interface ready for tree-sitter</li>
       </ul>
-
-      <h2 id="hoop-seed">Hoop context seed (<code>kind: context</code>)</h2>
-      <p>Insert a context stage after the planner (and after clone/verify when auditing). It upserts shared keys and injects a short digest into later stage prompts.</p>
-      <pre>stages:
-  - id: planner
-    kind: planner
-    prompt: |
-      Plan the audit. Cite clone path when known.
-  - id: context_seed
-    kind: context
-    name: Seed shared contextgraph
-  - id: workers
-    kind: actor
-    parallel: 2
-    prompt: |
-      Use context_query key=clone_path (or goal / plan / file-tree).
-      Prefer [context_digest] / CONTEXT: block. Do not re-clone.</pre>
-      <p>Keys written by <code>RecordHoopContext</code>: <code>goal</code>, <code>plan</code>, <code>clone_path</code>, <code>file-tree</code>. Samples: <code>clone-repo-security-audit.yaml</code>, <code>parallel-swarm-mode.yaml</code>.</p>
-
-      <h2>Weave (Slate-inspired)</h2>
-      <ul>
-        <li><strong>Policies</strong> — concatenate | role_weighted | critic | conflict_callouts | llm_critic</li>
-        <li><strong>Planner decompose</strong> — numbered plan lines become bounded SubTasks for later waves</li>
-        <li><strong>Free spawn</strong> — <code>free_spawn: true</code> invents worker roles from <code>[role:]</code> / <code>role=</code> / <code>@role</code> lines (capped ≤4)</li>
-        <li><strong>Resume</strong> — <code>GET /api/swarm/threads</code>, <code>POST /api/swarm/threads/{id}/resume</code></li>
-        <li><strong>Wave timeline</strong> — Durable thread View paints Cytoscape wave→worker timeline on the Graph editor</li>
-        <li><strong>Sample</strong> — <code>samples/swarms/multi-wave-weave.yaml</code></li>
-      </ul>
-      <pre>POST /api/swarm/run
-{"prompt":"&hellip;","waves":3,"weave_policy":"conflict_callouts","decompose":true,"free_spawn":true}
-
-POST /api/swarm/run
-{"prompt":"&hellip;","waves":2,"weave_policy":"llm_critic"}
-
-POST /api/swarm/threads/{id}/resume
-{"waves":1}</pre>
+      <p class="note">
+        <code>RecordHoopContext</code>/<code>LookupHoopContext</code>/<code>HoopContextDigest</code>
+        and durable multi-wave "thread" facts still exist in <code>contextgraph</code>
+        (<code>hoop_context.go</code>, <code>thread_facts.go</code>) but have no caller since the
+        hoop/swarm stage runner that used to drive them was removed — dead library code, not a
+        live feature.
+      </p>
 
       <h2>Storage</h2>
       <ul>
         <li><strong>Hot</strong> — <code>internal/contextgraph.Store</code> keyed by turn_family / request_uuid / connect_session</li>
         <li><strong>Warm events</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
         <li><strong>Entities</strong> — <code>~/.glider/context/entities.jsonl</code></li>
-        <li><strong>Durable swarm threads</strong> — <code>~/.glider/swarm/threads/*.json</code></li>
         <li><strong>Episodes</strong> — compact outcomes for local prompts (<code>contextkit</code>)</li>
       </ul>
 
       <h2>What locals receive</h2>
-      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>). Wave N+1 also gets graph-seeded prior_wave + optional PathSummary hint. Dashboard Overview paints <strong>episode chips</strong> from <code>GET /api/context/episodes</code>.</p>
+      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>). Dashboard Overview paints <strong>episode chips</strong> from <code>GET /api/context/episodes</code>.</p>
 
       <h2>Inspect</h2>
       <pre>GET  /api/context/recent
@@ -143,11 +101,8 @@ GET  /api/context/export
 POST /api/context/index-tree
 POST /api/context/index-symbols
 GET  /api/context/communities?turn_id=
-GET  /api/context/explain?turn_id=&amp;id=
-GET  /api/swarm/threads
-GET  /api/swarm/threads/{id}
-POST /api/swarm/threads/{id}/resume</pre>
-      <p>Plan: <code>planning/slate_weave_graphify_plan.md</code>. Full write-up: <code>planning/context_management.md</code>. Graphify notes: <code>planning/graphify_context_notes.md</code>.</p>
+GET  /api/context/explain?turn_id=&amp;id=</pre>
+      <p>Full write-up: <code>planning/context_management.md</code>.</p>
     </main>
     <footer class="foot"><a href="index.html">&larr; Home</a></footer>
   </div>

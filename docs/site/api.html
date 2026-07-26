@@ -28,7 +28,6 @@
       <a href="pure-local.html">Pure local</a>
       <a class="active" href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">HTTP</div>
@@ -61,14 +60,14 @@
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
         <tr><td>GET</td><td><code>/api/workspace</code></td><td>Root listing + workspace path</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that hoop/turn</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that run</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>List a relative directory</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?file=runs/&lt;id&gt;/out/report.md</code></td><td>Capped text preview (<code>limit=</code>)</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Unified diff of two paths</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;path=runs/&lt;id&gt;/work/x</code></td><td>Git diff if <code>.git</code> present</td></tr>
       </table>
-      <pre>GET /api/workspace?run=clone-repo-security-audit
-GET /api/workspace?file=runs/clone-repo-security-audit/out/findings.md&amp;limit=8000</pre>
+      <pre>GET /api/workspace?run=run-3f9c1a
+GET /api/workspace?file=runs/run-3f9c1a/out/findings.md&amp;limit=8000</pre>
 
       <h2>Agent logs</h2>
       <table>
@@ -77,15 +76,16 @@ GET /api/workspace?file=runs/clone-repo-security-audit/out/findings.md&amp;limit
         <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm</code></td><td>List instance ids</td></tr>
         <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Clear one ring</td></tr>
       </table>
-      <pre>GET /api/agent-logs?scope=hoop&amp;id=clone-repo-security-audit&amp;after_seq=120&amp;limit=50</pre>
+      <p class="note">The <code>agentlog</code> store and its <code>hoop</code>/<code>swarm</code> scopes still exist in <code>internal/agentlog</code>, but nothing currently calls <code>Append</code> — the hoop/swarm runners were its only writers, and both are gone. These endpoints work but return empty until something new writes to this store.</p>
 
-      <h2>Swarm &amp; hot-swap</h2>
+      <h2>Vendors &amp; hot-swap</h2>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>POST</td><td><code>/api/swarm/run</code></td><td>One-shot FanOut (+ optional waves)</td></tr>
-        <tr><td>GET/POST</td><td><code>/api/swarm/templates</code></td><td>Templates</td></tr>
-        <tr><td>GET</td><td><code>/api/swarm/threads</code></td><td>Durable threads</td></tr>
-        <tr><td>POST</td><td><code>/api/swarm/threads/{id}/resume</code></td><td>Continue waves</td></tr>
+        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Persisted vendor registry (discovered CLIs, templates, default workspace)</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Rescan <code>configs/vendor_candidates.yaml</code>, persist result</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Set the default delegate workspace directory</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Toggle a vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Update a vendor's command templates</td></tr>
         <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td><td>Hot-swap registry</td></tr>
       </table>
 

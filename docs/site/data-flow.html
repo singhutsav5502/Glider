@@ -28,7 +28,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -192,9 +191,9 @@ Later: summary / title chrome (new UUID, user_visible_*)
   → config.Provider.Watch
   → atomic.Pointer swap Config
   → rebuild router.Engine (main atomic.Pointer)
-  → swarm.Registry.Apply hot modules (generation++)
+  → hotswap.Registry.Apply hot modules (generation++)
   → MITM routing policy refresh
-  ✗ ports / CA / hosts / backend clients → require restart</pre>
+  ✗ ports / CA / hosts / transparent-interception / backend clients → require restart</pre>
 
       <h2>Context transform data shape</h2>
       <pre>Path B extract (one turn):

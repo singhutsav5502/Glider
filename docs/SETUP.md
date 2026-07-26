@@ -1,20 +1,18 @@
 # Glider — step-by-step setup
 
-Get Glider running locally (Ollama + dashboard + optional Cursor). Windows-focused; Linux/macOS commands are analogous (`./glider` instead of `.\glider.exe`).
+Windows-focused; Linux/macOS commands are analogous (`./glider` instead of `.\glider.exe`, transparent interception is Windows-only).
 
 ---
 
 ## 0. Prerequisites
 
 | Tool | Why |
-|------|-----|
+|---|---|
 | **Go 1.22+** (1.25 OK) | Build `cmd/glider` |
 | **Git** | Clone this repo |
 | **Ollama** | Local inference (default model `qwen2.5-coder:14b`) |
-| Optional: **OpenAI / Anthropic API keys** | Gateway “cloud” / BYOK |
-| Optional: **Cursor** | Path A (Base URL) and/or Path B (MITM proxy) |
-
-Check:
+| Optional: **OpenAI / Anthropic API keys** | Cloud fallback / BYOK |
+| Optional: **Claude Code / Cursor / agy** | Any CLI you want Glider to route or delegate to |
 
 ```powershell
 go version
@@ -27,7 +25,7 @@ ollama --version
 
 ```powershell
 cd D:\___repos\Glider   # or your clone path
-go test ./internal/loop/ ./internal/tools/ -count=1   # smoke
+go test ./... -count=1
 go build -o glider.exe ./cmd/glider
 ```
 
@@ -47,12 +45,12 @@ Configs probe `http://127.0.0.1:11434` (prefer `127.0.0.1` over `localhost` on W
 ## 3. Choose a config profile
 
 | Profile | File | Use when |
-|---------|------|----------|
+|---|---|---|
 | **Dual mode** (default) | `configs/glider.yaml` | Gateway + MITM + dashboard |
 | **Pure local** | `configs/glider.local.yaml` | Ollama only, no cloud fallback |
 | **Gateway-oriented cloud** | `configs/glider.cloud.yaml` | Bias toward BYOK cloud |
 
-Optional env file (not committed): copy [`.env.example`](../.env.example) → `.env.local` for API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, web search keys, etc.). Glider loads dotenv on start when present.
+Optional env file (not committed): copy [`.env.example`](../.env.example) → `.env.local` for API keys. Glider loads dotenv on start when present.
 
 ---
 
@@ -64,15 +62,13 @@ From the **repo root** (so relative config + `docs/site` resolve):
 .\glider.exe --config configs\glider.yaml
 ```
 
-You should see listeners roughly:
+On Windows this also puts Glider in the system tray — right-click the icon for **Exit**.
 
 | Port | URL | Role |
-|------|-----|------|
+|---|---|---|
 | **8080** | http://127.0.0.1:8080 | OpenAI-compatible gateway |
 | **8081** | http://127.0.0.1:8081 | Dashboard |
-| **8082** | MITM proxy | Cursor `http.proxy` (if MITM enabled) |
-
-Health check:
+| **8082** | MITM proxy | CLI `http.proxy` target (if MITM enabled) |
 
 ```powershell
 curl http://127.0.0.1:8080/healthz
@@ -83,139 +79,85 @@ Open the dashboard: [http://127.0.0.1:8081](http://127.0.0.1:8081)
 
 ---
 
-## 5. First hoop (no Cursor required)
+## 5. Point a CLI at Glider (gateway mode)
 
-### Seed sample hoops + swarm templates
+Works with any OpenAI-compatible "Override Base URL" setting (Cursor's Models settings, for example):
 
-```powershell
-powershell -File scripts\seed-samples.ps1
+1. Override Base URL → `http://127.0.0.1:8080/v1`
+2. Set a real API key for cloud fallback, or leave it dummy for local-only via model aliases.
+3. Model ids: prefix with `cus-` when you want to force the request through Glider instead of the client's built-in routing (e.g. `cus-qwen2.5-coder:14b`).
+4. Try `/local …` and `/cloud …` in a prompt — the dashboard **Overview** tab should reflect the route.
+
+Cursor-specific checklist: [`docs/CURSOR_CHECKLIST.md`](CURSOR_CHECKLIST.md).
+
+---
+
+## 6. MITM mode (TLS-decrypt a CLI's own cloud traffic)
+
+Two ways to get a CLI's HTTPS traffic to Glider's MITM proxy (`:8082`):
+
+**Cooperative (any OS):** point the CLI's proxy setting at `http://127.0.0.1:8082` and trust Glider's CA.
+
+1. Trust `~/.glider/mitm/ca.crt` in your OS trust store.
+2. Point `NODE_EXTRA_CA_CERTS` at that file for Node/Electron-based CLIs.
+3. Configure the CLI's proxy (e.g. Cursor's `settings.json` → `http.proxy`).
+4. Fully quit and relaunch the CLI.
+
+**Transparent (Windows only, no CLI cooperation needed):** set `mitm.transparent: true` and `mitm.windivert_dll_path` in config, restart Glider. It redirects outbound HTTPS on the configured ports for allowlisted process names via WinDivert — works retroactively on a CLI session that's already running, no env var or proxy setting required.
+
+Deep dive: [`docs/MITM_NETWORK.md`](MITM_NETWORK.md).
+
+---
+
+## 7. Delegate a task to another CLI
+
+From inside any CLI Glider is routing, a message with a vendor flag hands the prompt to a different installed CLI:
+
+```
+/claude fix the failing test in internal/foo
+/cursor-agent refactor this function
+/agy summarize recent commits
 ```
 
-### Start the smoke hoop
+Glider runs that CLI headless. If it pauses for a permission prompt, Glider relays the prompt back as the reply along with a resume token:
 
-```powershell
-go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start
+```
+/claude:allow <token>
+/claude:deny <token>
 ```
 
-Or in the dashboard: **Hoops & Swarm** → find `hello-critic` → **Start**.
-
-Watch:
-
-1. **Agent log** on the hoop card / graph rail  
-2. **Workspace** tab → `runs/hello-critic/work` and `out`  
-3. HITL **Approve** if it pauses on `human_gate`
-
-Clear stale results before re-runs if CONTEXT/plan facts look poisoned: hoop **Clear results**.
+The dashboard's **Vendors** tab lists discovered CLIs, lets you rescan (`configs/vendor_candidates.yaml` defines the candidates), enable/disable one, and set a default workspace directory for delegated runs. Design detail: [`planning/permission_relay_design.md`](../planning/permission_relay_design.md).
 
 ---
 
-## 6. Workspace mental model
+## 8. GitHub MCP (optional)
 
-Tools are sandboxed under:
+1. Dashboard → **MCP** tab.
+2. **Sign in with GitHub** (OAuth device flow) or **Paste PAT**.
+3. Confirm `source=live` on the tools list once connected.
 
-```text
-%USERPROFILE%\.glider\workspace\
-  runs\<hoop-or-turn-id>\
-    work\     ← clones, scratch, intermediate
-    out\      ← final reports
-```
-
-- Drop a **workspace** stage early in the graph (`run` = fresh boxes, `existing` = reuse a path under the sandbox).
-- Sample: `samples/hoops/workspace-existing-bind.yaml`.
+See [`docs/site/mcp.html`](site/mcp.html) and [`planning/tools.md`](../planning/tools.md).
 
 ---
 
-## 7. Optional — Cursor Mode A (BYOK gateway)
+## 9. Config hot-reload vs restart
 
-Best path for **Agent + tools** against local/BYOK models.
+**Hot** (edit `glider.yaml` while running, or save from dashboard Config): routing, model aliases, context threshold, log level, backend/model clients.
 
-1. Glider running with `configs/glider.yaml` (or cloud profile).
-2. Cursor → **Settings → Models**:
-   - Enable OpenAI API Key (can be a dummy if you only hit local via aliases — better: set a real key for cloud fallback).
-   - **Override OpenAI Base URL** → `http://127.0.0.1:8080/v1`
-3. Prefer model ids with `cus-` prefix when forcing Agent onto the gateway (e.g. `cus-qwen2.5-coder:14b`).
-4. Try prompts: `/local …` and `/cloud …` — dashboard Overview should reflect route mix.
+**Restart required:** listen ports, MITM CA/hosts/transparent-interception settings.
 
-Full checklist: [`docs/CURSOR_CHECKLIST.md`](CURSOR_CHECKLIST.md).
+Check reload status: dashboard **Config** tab hot-swap module list, or response header `X-Glider-Backend-Reload` after a Config save.
 
 ---
 
-## 8. Optional — Cursor Mode B (MITM / Path B)
-
-Use when you want Cursor **Agent** TLS (subscription hosts) to hit Glider first.
-
-1. Trust Glider MITM CA (`%USERPROFILE%\.glider\mitm\ca.crt`) in Windows Trusted Root.
-2. Point `NODE_EXTRA_CA_CERTS` at that `ca.crt`.
-3. Cursor `settings.json` (sketch):
-
-```json
-{
-  "http.proxy": "http://127.0.0.1:8082",
-  "http.proxySupport": "override",
-  "http2": { "disabled": true }
-}
-```
-
-4. Fully quit + relaunch Cursor.
-5. Config: `mitm.agent_rpc_fulfill: true`, keep `agent_rpc_canned_on_error: false`.
-6. Expect **text-only** local fulfill; tool-heavy Agent still prefers Mode A unless you opt into `mitm.agent_rpc_tool_codec`.
-
-`/cloud` in TipTap = **StickyCloud** turn family → Cursor origin for that turn (+ wrap-up), with `runs/<turn-id>/{work,out}` still associated in the sandbox.
-
-Deep dive (CONNECT, allowlist, BidiAppend→RunSSE, sticky TTL, file map): [`docs/MITM_NETWORK.md`](MITM_NETWORK.md).
-
----
-
-## 9. Optional — GitHub MCP
-
-1. Dashboard → **MCP**.
-2. Connect GitHub (device flow or PAT per UI).
-3. Declare tools on hoop stages (`kind: mcp`, `server: github`).
-
-See [`docs/site/mcp.html`](site/mcp.html) and [`planning/tools_mcp.md`](../planning/tools_mcp.md).
-
----
-
-## 10. Config hot-reload vs restart
-
-**Hot** (Config save or edit `glider.yaml` while running): routing, model aliases, context threshold, log level, **backend/model clients**.
-
-**Restart required:** listen ports, MITM CA/hosts.
-
-Check: **Hoops → hot-swap modules** (`backends` row) or response header `X-Glider-Backend-Reload` after Config save.
-
----
-
-## 11. Docs and deeper reading
-
-| Doc | Topic |
-|-----|--------|
-| [docs/MITM_NETWORK.md](MITM_NETWORK.md) | MITM / Cursor networking brief |
-| [docs/blog/orchestration-deep-dive.md](blog/orchestration-deep-dive.md) | Orchestration blog + Excalidraw |
-| [docs/site/](site/) | Hostable product docs (`scripts\serve-docs.ps1`) |
-| [planning/remaining_gaps.md](../planning/remaining_gaps.md) | Feature matrix |
-| [planning/intentional_backlog.md](../planning/intentional_backlog.md) | Deferred enterprise items |
-
-Serve docs locally:
-
-```powershell
-powershell -File scripts\serve-docs.ps1
-# → http://127.0.0.1:8090
-```
-
-With Glider running from repo root: [http://127.0.0.1:8081/docs/](http://127.0.0.1:8081/docs/).
-
----
-
-## 12. Troubleshooting (fast)
+## 10. Troubleshooting
 
 | Symptom | Fix |
-|---------|-----|
-| Local Completes hang / truncate | Raise `thresholds.request_timeout` / `default_max_tokens`; use 14b coder model |
-| Tools write into Glider repo | Workspace should be `~/.glider/workspace` — check Config → tools.workspace |
-| Clone OK but `fs_list` misses | Use ScopeRel paths (`audit-target`); ensure same run id |
-| Critic chatty / no score | Critic must emit `SCORE:`; leave tools empty on critic |
-| HITL marked success wrongly | Upgrade past Success=`success && !waitHuman` fix; Approve then resume |
-| MITM Agent tools broken | Use Mode A for tools; Path B codec is opt-in / partial |
+|---|---|
+| Local completions hang or truncate | Raise `thresholds.request_timeout` / `default_max_tokens` |
+| Tools write into the Glider repo itself | `orchestration.tools.workspace` should be `~/.glider/workspace`, not `.` |
+| MITM Agent+tools broken via Cursor | Use gateway mode for tool-heavy Agent work; the MITM tool codec is opt-in/partial |
+| Delegated CLI keeps re-describing an already-granted action instead of doing it | Known limitation for `agy`'s resume path — see `STATUS.md` |
+| `mitm.transparent: true` has no effect | Check `windivert_dll_path` points at a real `WinDivert.dll`/`WinDivertNN.sys` pair, and that you're on Windows |
 
-Still stuck: process logs (`log_level: debug`) + dashboard agent log for the hoop id.
+Still stuck: run with `log_level: debug` and check the dashboard's **Overview** tab and process logs.

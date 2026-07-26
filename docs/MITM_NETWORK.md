@@ -6,13 +6,13 @@ How Glider sits on the wire between Cursor and Cursor cloud (and your local/BYOK
 
 ## Listeners
 
-Glider binds **all interfaces** (`:port` → `0.0.0.0`). Point Cursor and curl at **`127.0.0.1`**.
+Glider binds **all interfaces** (`:port` → `0.0.0.0`). Point clients and curl at **`127.0.0.1`**.
 
 | Port | Role | Client URL |
 |------|------|------------|
 | **8080** | OpenAI-compatible gateway (Path A) | `http://127.0.0.1:8080` / `…/v1` |
 | **8081** | Dashboard + embedded docs | `http://127.0.0.1:8081` |
-| **8082** | HTTPS MITM forward proxy (Path B) | `http://127.0.0.1:8082` (`http.proxy`) |
+| **8082** | HTTPS MITM forward proxy (Path B) | `http://127.0.0.1:8082` (`http.proxy`), or transparent redirect (below) |
 
 Defaults from `configs/glider.yaml` (`server.proxy_port`, `server.dashboard_port`, `mitm.port`). Changing ports or MITM CA/hosts requires a process restart.
 
@@ -21,23 +21,39 @@ Defaults from `configs/glider.yaml` (`server.proxy_port`, `server.dashboard_port
 ## Two paths
 
 ```
- Cursor
+ CLI (Claude Code / Cursor Agent / agy)
    │
-   ├─ Path A (gateway)  Override OpenAI Base URL → http://127.0.0.1:8080/v1
+   ├─ Path A (gateway)  Override Base URL → http://127.0.0.1:8080/v1
    │                      → alias → route → local / BYOK cloud
    │
-   └─ Path B (MITM)     http.proxy → http://127.0.0.1:8082
+   └─ Path B (MITM)     http.proxy, or transparent WinDivert redirect → :8082
                           → CONNECT allowlisted hosts → TLS decrypt
-                          → Agent RPC fulfill or origin passthrough
+                          → local fulfill, delegation, or origin passthrough
 ```
 
 | | Path A — gateway | Path B — MITM |
 |--|------------------|---------------|
-| **Cursor config** | Models → Override OpenAI Base URL | `http.proxy` + trust Glider CA |
-| **Traffic** | OpenAI / Responses JSON you pointed at Glider | Cursor subscription hosts (`api2`…`api5`) |
-| **Auth** | Your `OPENAI_API_KEY` / Anthropic / local | Cursor session cookies / tokens to origin when passthrough |
-| **Best for** | Agent + tools (`cus-…` model ids) | Text-only Agent local fulfill; `/cloud` sticky to Cursor origin |
+| **CLI config** | Override Base URL setting | `http.proxy`, or nothing at all (transparent mode) |
+| **Traffic** | OpenAI / Responses / Anthropic JSON you pointed at Glider | The CLI's own cloud plane (`api2`–`api5.cursor.sh`, `api.anthropic.com`, Google's `*.googleapis.com` / `antigravity-unleash.goog` for agy) |
+| **Auth** | Your `OPENAI_API_KEY` / Anthropic / local | The CLI's own session credentials, forwarded to origin on passthrough |
+| **Best for** | Agent + tools (`cus-…` model ids); works with any CLI | Text-only Cursor Agent local fulfill; `/cloud` sticky; delegation (any vendor); transparent interception is Path B's mechanism |
 | **Shared** | Same `PipelineCompleter` / routing stack when a request is harness-handled |
+
+---
+
+## Transparent interception (Windows, WinDivert)
+
+The cooperative forms above require the CLI to be configured to use Glider — a proxy setting, an env var, an Override Base URL. Transparent interception removes that requirement: Glider redirects outbound HTTPS on chosen ports for chosen process names at the OS packet level, so an unmodified CLI (no flags, no env vars, no settings changes) has its traffic intercepted — including a session that was already running before Glider started.
+
+```yaml
+mitm:
+  transparent: true
+  transparent_port: 8083
+  transparent_ports: [443]
+  windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll   # WinDivertNN.sys must sit alongside it
+```
+
+The redirector narrows by process name using the same vendor registry the delegation route reads (`internal/vendors`, `configs/vendor_candidates.yaml`) — run discovery from the dashboard's **Vendors** tab first, or transparent mode has no process-based narrowing and only the IP/port filter applies. Implementation: `internal/mitm/redirector_windows.go` (`internal/mitm/redirector_other.go` is a no-op stub on other platforms). Design notes: [`planning/transparent_redirector_design.md`](../planning/transparent_redirector_design.md).
 
 ---
 
@@ -65,16 +81,17 @@ Implementation: `internal/mitm/proxy.go` (`handleCONNECT`, `mitmSession`, `blind
 
 ## Host allowlist
 
-Default `mitm.hosts` (also applied when the list is empty at load time):
+`mitm.hosts` in `configs/glider.yaml`:
 
-| Pattern | Notes |
-|---------|--------|
-| `api2.cursor.sh` | Primary Agent / Connect plane |
-| `api3.cursor.sh` | Allowlisted |
-| `api4.cursor.sh` | Allowlisted |
-| `*.api5.cursor.sh` | Wildcard; apex `api5.cursor.sh` also matches |
+| Pattern | Vendor | Notes |
+|---------|--------|--------|
+| `api2.cursor.sh` | Cursor | Primary Agent / Connect plane |
+| `api3.cursor.sh` / `api4.cursor.sh` | Cursor | Allowlisted |
+| `*.api5.cursor.sh` | Cursor | Wildcard; apex `api5.cursor.sh` also matches |
+| `api.anthropic.com` | Claude Code | Confirmed live via TLS-trust of a forged leaf |
+| `daily-cloudcode-pa.googleapis.com`, `cloudcode-pa.googleapis.com`, `antigravity-unleash.goog`, `oauth2.googleapis.com`, `www.googleapis.com`, `play.googleapis.com` | agy (Antigravity CLI) | Completion plane + auxiliary calls, all confirmed to honor a redirected connection and trust a forged leaf |
 
-Only these hosts are decrypted. Everything else through the proxy is a blind tunnel.
+Only these hosts are decrypted; everything else through the proxy is a blind tunnel. This list is hand-maintained today (see the `TODO` in `configs/glider.yaml`) — the intent is to eventually derive it from the vendor registry rather than a static array.
 
 ---
 
@@ -188,18 +205,21 @@ StickyLocal works similarly for `/local` families. Explicit `/local` can beat St
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/glider/main.go` | Wires gateway `:8080`, MITM `:8082`, dashboard `:8081`, fulfill hub |
+| `cmd/glider/main.go` | Wires gateway `:8080`, MITM `:8082`, dashboard `:8081`, fulfill hub, redirector |
 | `internal/mitm/proxy.go` | CONNECT, decrypt session, blind tunnel, origin passthrough |
 | `internal/mitm/ca.go` | CA load/create, per-host leaf forge |
 | `internal/mitm/hosts.go` | Allowlist matcher (`*` patterns) |
 | `internal/mitm/classify.go` | Path kinds (openai / agent_rpc / control / other) |
 | `internal/mitm/intercept.go` | Decrypted request → harness / fulfill |
-| `internal/mitm/agent_fulfill_hub.go` | BidiAppend↔RunSSE correlation, StickyCloud/Local |
+| `internal/mitm/redirector_windows.go` | WinDivert transparent redirection (Windows) |
+| `internal/mitm/delegate_handler.go` | `/vendor-name <prompt>` flag → cross-CLI delegation, ahead of normal interception |
+| `internal/mitm/agent_fulfill_hub.go` | BidiAppend↔RunSSE correlation, StickyCloud/Local (Cursor) |
 | `internal/api/` | Path A OpenAI + Responses gateway |
-| `internal/cursorrpc/` | Connect/protobuf helpers, RunSSE encode |
+| `internal/cursorrpc/` | Cursor Connect/protobuf helpers, RunSSE encode |
+| `internal/vendors/` | Vendor registry, headless CLI execution, delegation/resume flow |
 | `configs/glider.yaml` | Dual-mode defaults |
-| `docs/SETUP.md` | Install + Cursor Mode A/B steps |
-| `docs/CURSOR_CHECKLIST.md` | Mode A/B verification |
+| `docs/SETUP.md` | Install + integration steps |
+| `docs/CURSOR_CHECKLIST.md` | Gateway/MITM verification |
 
 ---
 
@@ -207,14 +227,14 @@ StickyLocal works similarly for `/local` families. Explicit `/local` can beat St
 
 | Topic | Status |
 |-------|--------|
-| Path B text Agent fulfill | Shipped (`agent_rpc_fulfill`) |
-| Path B tool codec | Opt-in; extended ToolCall map ships; live UI + grind/VM/computer_use still Truncated — prefer **Path A** for Agent+tools |
+| Path B Cursor text Agent fulfill | Shipped (`agent_rpc_fulfill`) |
+| Path B Cursor tool codec | Opt-in; extended ToolCall map ships; live UI + grind/VM/computer_use still Truncated — prefer **Path A** for Agent+tools |
 | MITM / listen-port live reload | Not supported; restart required |
-| Native Cursor IDE plugin | Out of scope (gateway + MITM only) |
 | Full Cursor protocol RE | Non-goal beyond fulfillable RunSSE / mapped tools |
-| HTTP/2 via proxy | Fragile; disable HTTP/2 in Cursor |
+| HTTP/2 via proxy | Fragile; disable HTTP/2 in the CLI when using cooperative MITM mode |
+| Transparent interception scope | Windows/WinDivert only; live-verified end-to-end for Claude Code, not yet for cursor-agent/agy in that same zero-cooperation mode |
 
-Tracked in [planning/remaining_gaps.md](../planning/remaining_gaps.md) (§1.8–1.9) and [planning/intentional_backlog.md](../planning/intentional_backlog.md).
+See [STATUS.md](../STATUS.md) for the current gap list.
 
 ---
 
@@ -222,7 +242,9 @@ Tracked in [planning/remaining_gaps.md](../planning/remaining_gaps.md) (§1.8–
 
 | Doc | Use |
 |-----|-----|
-| [SETUP.md](SETUP.md) | Step-by-step install and Cursor Mode A/B |
+| [SETUP.md](SETUP.md) | Step-by-step install and CLI integration |
 | [CURSOR_CHECKLIST.md](CURSOR_CHECKLIST.md) | Verification checklist |
 | [site/path-a-b.html](site/path-a-b.html) | Product overview of gateway vs MITM |
-| [planning/cursor_agent_protocol_interception.md](../planning/cursor_agent_protocol_interception.md) | Protocol notes |
+| [planning/cursor_agent_research.md](../planning/cursor_agent_research.md) | Cursor wire-format research |
+| [planning/transparent_redirector_design.md](../planning/transparent_redirector_design.md) | WinDivert design |
+| [planning/permission_relay_design.md](../planning/permission_relay_design.md) | Delegation / permission-relay design |

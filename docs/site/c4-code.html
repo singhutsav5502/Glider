@@ -36,7 +36,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -99,8 +98,8 @@
         </tr>
         <tr>
           <td><code>Registry</code> / <code>Module</code></td>
-          <td><code>swarm</code></td>
-          <td>Hot-swap apply functions for fan-out / swarm / templates</td>
+          <td><code>hotswap</code></td>
+          <td>Hot-swap apply functions for fan-out / backends / classifier</td>
         </tr>
       </table>
 
@@ -290,7 +289,8 @@ Graph sync: contextgraph.DefaultCloudGrace / LiveCloudFamily</pre>
         <tr><td><code>cursorrpc</code></td><td><code>ExtractBidiCompletionRequest</code>, RunSSE codec, <code>IsRootAgentRunSSE</code></td></tr>
         <tr><td><code>transform</code></td><td><code>Tokenizer</code>, <code>BoundLocalContext</code>, <code>Transformer.Apply</code></td></tr>
         <tr><td><code>contextgraph</code></td><td><code>Store.Append</code>, sticky / LiveCloudFamily helpers</td></tr>
-        <tr><td><code>swarm</code></td><td><code>Registry.Apply</code>, <code>Runner</code>, <code>FanOut</code></td></tr>
+        <tr><td><code>hotswap</code></td><td><code>Registry.Apply</code>, module <code>Status</code></td></tr>
+        <tr><td><code>vendors</code></td><td><code>RunWithOptions</code>, <code>ParseDelegateCommand</code>, <code>ResolveDelegate</code></td></tr>
         <tr><td><code>metrics</code></td><td><code>Collector</code>, <code>Bus</code>, <code>HistoryStore</code></td></tr>
         <tr><td><code>dashboard</code></td><td><code>Server</code>, <code>/api/*</code>, <code>/ws</code></td></tr>
         <tr><td><code>vram</code></td><td><code>Manager</code> -- allocate / idle unload</td></tr>

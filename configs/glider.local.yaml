@@ -171,7 +171,7 @@ mitm:
   # Production local: never canned; surface real Ollama failures to Cursor.
   agent_rpc_canned_on_error: false
   # PARTIAL Path B tool codec (TruncatedToolCall + common map). Prefer Path A for Agent+tools.
-  # See planning/remaining_gaps.md §1.9. Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1
+  # See planning/cursor_agent_research.md. Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1
   agent_rpc_tool_codec: false
   # Pure-local: do not silently fall back to Cursor subscription on Ollama errors.
   origin_on_local_error: false

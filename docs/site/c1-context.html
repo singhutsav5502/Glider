@@ -36,7 +36,6 @@
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -46,8 +45,7 @@
         Glider is a local-first AI harness that sits <em>beside</em> Cursor. It is not a fork of
         Cursor and not a replacement IDE. It intercepts or receives model traffic, routes simple
         work to local GPUs (Ollama / vLLM), and falls back to BYOK cloud APIs or Cursor origin
-        depending on path. Authority for status: <code>planning/README.md</code> (skip
-        <code>planning/Depreceated/</code>).
+        depending on path. Authority for status: <code>planning/README.md</code>.
       </p>
 
       <div class="c4-strip">
@@ -138,7 +136,7 @@ Rel(glider, osfs, "Read/write mitm CA, history, context/")</pre>
         <tr>
           <td>OS + <code>~/.glider</code></td>
           <td>External</td>
-          <td>MITM CA (<code>mitm/</code>), history, contextgraph JSONL, optional hoops</td>
+          <td>MITM CA (<code>mitm/</code>), history, contextgraph JSONL, vendor registry</td>
         </tr>
       </table>
       <div class="note">
