@@ -28,7 +28,8 @@
 - [ ] `mitm.agent_rpc_fulfill: true` and `agent_rpc_canned_on_error: false` (prefer real Ollama)
 - [ ] Agent **text-only** chat (no tools) with a built-in Cursor model → local fulfill when rules say local (`mitm runsse local fulfill` in process logs)
 - [ ] With `debug_agent_rpc: true`, dumps appear under `%USERPROFILE%\.glider\mitm-debug`
-- [ ] Agent **with tools** still reaches Cursor origin for child RunSSE (expected); use Mode A for tools locally
+- [ ] Agent **with tools** still reaches Cursor origin for child RunSSE when codec **off** (expected); use Mode A for tools locally
+- [ ] Optional Path B tool codec: `mitm.agent_rpc_tool_codec: true` — mapped tools emit Cursor ToolCall oneofs; unknown → Truncated without hang (see `planning/tools_mcp.md` inventory). **Live UI sign-off still open.**
 - [ ] Dashboard Overview does **not** flood with CONNECT `decrypt` 0-token rows
 - [ ] If a rare OpenAI-shaped POST appears on an allowlisted host with `/local`, local model answers
 - [ ] Non-LLM Cursor HTTPS still works (blind tunnel for non-allowlisted hosts)

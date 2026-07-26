@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a class="active" href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Memory</div>
@@ -135,9 +134,6 @@ POST /api/swarm/threads/{id}/resume
 
       <h2>What locals receive</h2>
       <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>). Wave N+1 also gets graph-seeded prior_wave + optional PathSummary hint. Dashboard Overview paints <strong>episode chips</strong> from <code>GET /api/context/episodes</code>.</p>
-
-      <h2 id="feeds">Feeds → contextgraph</h2>
-      <p>Hoop <code>graph_edges kind=feeds</code> upserts producer summaries (<code>feed_&lt;stageId&gt;</code> + <code>RelFeeds</code>) so consumers can <code>context_query</code> or read the <code>FEEDS:</code> prompt block. See <a href="loop-engineering.html#feeds">Loop Engineering · Feeds</a>.</p>
 
       <h2>Inspect</h2>
       <pre>GET  /api/context/recent

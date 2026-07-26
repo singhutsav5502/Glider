@@ -33,11 +33,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -97,7 +96,7 @@
 
       <pre class="seq">Gateway Handlers ──Complete──────────────────────────┐
 MITM Interceptor ──DecideLocal / CompleteLocal───────┤
-Loop Manager ─────Complete (hoop stages)─────────────┤
+Swarm Runner ─────Complete (fan-out workers)─────────┤
                                                      v
                               PipelineCompleter.Handle
                      alias → tokenize → route → [origin gate]
@@ -260,14 +259,9 @@ Loop Manager ─────Complete (hoop stages)──────────
         Hub races / locks: <a href="concurrency.html">concurrency</a>.
       </div>
 
-      <h2 id="ops">Ops components (loop, swarm, hotswap, metrics, dashboard)</h2>
+      <h2 id="ops">Ops components (swarm, hotswap, metrics, dashboard)</h2>
       <table>
         <tr><th>Component</th><th>Package</th><th>Notes</th></tr>
-        <tr>
-          <td>Loop Manager</td>
-          <td><code>loop</code></td>
-          <td>Hoops: observe→plan→act→critique→learn via <code>runCycle</code>; stages hot-swappable</td>
-        </tr>
         <tr>
           <td>Swarm Runner</td>
           <td><code>swarm</code></td>
@@ -321,11 +315,6 @@ Loop Manager ─────Complete (hoop stages)──────────
           <span class="lvl">Ref</span>
           <span class="ttl">Concurrency</span>
           <p class="desc">Locks, channels, WS</p>
-        </a>
-        <a href="loop-engineering.html">
-          <span class="lvl">Ref</span>
-          <span class="ttl">Loop Engineering</span>
-          <p class="desc">Hoop stages and eval</p>
         </a>
       </div>
     </main>

@@ -221,6 +221,9 @@ cloud:
 # Local inference backends. Ollama-only is fine -- Glider does not require vLLM.
 # Prefer 127.0.0.1 over localhost on Windows (avoids IPv6 [::1] when the service binds IPv4 only).
 backends:
+    # Live hot-reload: editing url / adding vllm / models list swaps clients without
+    # process restart (config.Provider.Watch → backends module). In-flight Complete
+    # keeps the previous client until that request finishes. MITM/ports still need restart.
     - name: ollama
       type: local
       url: http://127.0.0.1:11434
@@ -256,7 +259,30 @@ mitm:
         - api3.cursor.sh
         - api4.cursor.sh
         - '*.api5.cursor.sh'
+        # Claude Code's completion plane (confirmed live via ANTHROPIC_BASE_URL
+        # and, separately, TLS-trust of a forged leaf — planning/native_glider_orchestration.md §7).
+        - api.anthropic.com
+        # agy (Antigravity CLI)'s completion plane + auxiliary calls, all confirmed
+        # live to honor a redirected connection and trust a forged leaf (same doc).
+        - daily-cloudcode-pa.googleapis.com
+        - cloudcode-pa.googleapis.com
+        - antigravity-unleash.goog
+        - oauth2.googleapis.com
+        - www.googleapis.com
+        - play.googleapis.com
+        # TODO: derive this list from the vendor registry (internal/vendors) instead
+        # of a static array once vendor packs carry a hosts field of their own —
+        # today it's hand-maintained from the live research in that planning doc.
     passthrough_default: true
+    # OS-level transparent interception (planning/transparent_redirector_design.md).
+    # Windows only for now (WinDivert). Off by default — flip transparent: true and
+    # point windivert_dll_path at a real WinDivert.dll (WinDivertNN.sys alongside it)
+    # to make interception cooperation-free and retroactive on already-open CLI
+    # sessions, instead of relying on env vars a process only reads at launch.
+    transparent: false
+    transparent_port: 8083
+    transparent_ports: [443]
+    windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll
     # Path B R&D: observe/dump Connect Agent RPCs. Turn off after R&D.
     # Also: set GLIDER_MITM_DEBUG_RPC=1
     debug_agent_rpc: true
@@ -285,37 +311,15 @@ context:
     retain_days: 14
     warm_load_days: 2
 
-# Swarm / fan-out / loops (off by default).
+# Fan-out (off by default).
 # orchestration:
 #   fan_out:
 #     enabled: false
 #     max_workers: 2
-#   swarm:
-#     enabled: false
 #   concurrency:
 #     worker_queue_size: 16
 #     result_chan_size: 32
 #     max_inflight: 4
-#   hoops_dir: ~/.glider/hoops
-#   loops:
-#     enabled: true
-#     default_route: local
-#     hoop_learning:
-#       enabled: false
-#       local_bias_step: 0.05
-#       max_bias: 0.5
-#       window: 20
-#   # Glider-owned loops (dashboard /api/loops). Default route local = pure local
-#   # harness; no Cursor subscription required for the loop runner itself.
-#   loops:
-#     enabled: true
-#     default_route: local
-#     # dir: ~/.glider/loops
-#     hoop_learning:
-#       enabled: false
-#       local_bias_step: 0.05
-#       max_bias: 0.5
-#       window: 20
 
 orchestration:
   tools:
@@ -334,22 +338,7 @@ orchestration:
   fan_out:
     enabled: true
     max_workers: 2
-  swarm:
-    enabled: true
   concurrency:
     worker_queue_size: 16
     result_chan_size: 32
     max_inflight: 4
-  loops:
-    enabled: true
-    default_route: local
-    # Optional root for SKILL.md / skill-id resolution (also tools workspace + cwd).
-    # skills_dir: ~/.glider/skills
-    # Isolate parallel>1 fan-out workers under runs/<id>/work/wN (git worktree when
-    # the tools workspace is a git repo; else plain subdirs). Default off.
-    worktrees: false
-    hoop_learning:
-      enabled: true
-      local_bias_step: 0.05
-      max_bias: 0.5
-      window: 20

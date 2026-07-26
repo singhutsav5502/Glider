@@ -40,9 +40,24 @@ type Proxy struct {
 	// Debug optionally peeks RunSSE (and similar) response bodies during origin passthrough.
 	Debug *AgentRPCDebugger
 
-	ln     net.Listener
-	mu     sync.Mutex
-	closed bool
+	// Redirector, when set, makes Start also listen on TransparentPort for
+	// OS-level redirected connections (see redirector.go, redirector_windows.go
+	// and planning/transparent_redirector_design.md) — a second, cooperation-free
+	// ingress alongside the CONNECT-based one, converging on the same
+	// mitmSession/blindTunnel engine.
+	Redirector       TransparentRedirector
+	TransparentPort  int
+	TransparentPorts []int // destination ports to intercept; defaults to []int{443}
+	// TransparentAllowProcessNames further scopes interception to only
+	// connections owned by one of these process image basenames (e.g.
+	// "claude.exe") — see RedirectConfig.AllowProcessNames for why this
+	// matters beyond IP/port scoping alone.
+	TransparentAllowProcessNames []string
+
+	ln       net.Listener
+	transpLn net.Listener
+	mu       sync.Mutex
+	closed   bool
 }
 
 // Start begins listening for CONNECT (and plain HTTP proxy) requests.
@@ -59,6 +74,32 @@ func (p *Proxy) Start() error {
 	}
 	p.ln = ln
 	go p.serve()
+
+	if p.Redirector != nil && p.TransparentPort != 0 {
+		// 0.0.0.0, not 127.0.0.1: the redirector rewrites destinations to the
+		// machine's real local IP (not loopback — see redirector_windows.go's
+		// detectPrimaryLocalIP for why), so this listener must accept on that
+		// interface too, not just loopback.
+		transpLn, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p.TransparentPort))
+		if err != nil {
+			return fmt.Errorf("mitm: transparent listener: %w", err)
+		}
+		p.transpLn = transpLn
+		go p.serveTransparent()
+
+		ports := p.TransparentPorts
+		if len(ports) == 0 {
+			ports = []int{443}
+		}
+		if err := p.Redirector.Start(context.Background(), RedirectConfig{
+			ListenPort:        p.TransparentPort,
+			MatchPorts:        ports,
+			AllowHosts:        p.Hosts.Patterns(),
+			AllowProcessNames: p.TransparentAllowProcessNames,
+		}); err != nil {
+			return fmt.Errorf("mitm: transparent redirector: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -75,6 +116,14 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
+	if p.Redirector != nil {
+		if err := p.Redirector.Stop(); err != nil {
+			p.Log.Warn("mitm redirector stop error", "err", err)
+		}
+	}
+	if p.transpLn != nil {
+		_ = p.transpLn.Close()
+	}
 	if p.ln != nil {
 		return p.ln.Close()
 	}
@@ -96,6 +145,106 @@ func (p *Proxy) serve() {
 		}
 		go p.handleConn(conn)
 	}
+}
+
+func (p *Proxy) serveTransparent() {
+	for {
+		conn, err := p.transpLn.Accept()
+		if err != nil {
+			p.mu.Lock()
+			closed := p.closed
+			p.mu.Unlock()
+			if closed || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			p.Log.Warn("mitm transparent accept error", "err", err)
+			continue
+		}
+		go p.handleTransparent(conn)
+	}
+}
+
+// handleTransparent is the OS-level-redirect counterpart of handleCONNECT:
+// same destination decision (matchHostPattern → mitmSession/blindTunnel),
+// reached without any CONNECT request because the connection didn't arrive
+// via an HTTP proxy at all — the OS's own TCP stack was redirected into this
+// listener by p.Redirector (see redirector.go). Two things this path needs
+// that handleCONNECT gets for free from the request line: the hostname
+// (peeked from the TLS ClientHello's SNI, since packet-level redirection
+// never sees DNS) and the original destination (p.Redirector.
+// ResolveOriginalDestination, used to dial the real IP directly for
+// non-allowlisted traffic rather than re-resolving DNS for the SNI name).
+func (p *Proxy) handleTransparent(conn net.Conn) {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(p.DialTimeout))
+
+	origHost, origPort, resolveErr := "", 0, error(nil)
+	if p.Redirector != nil {
+		if resolver, ok := p.Redirector.(OriginResolver); ok {
+			origHost, origPort, resolveErr = resolver.ResolveOriginalDestination(conn)
+		}
+	}
+
+	// bufio.NewReader's default 4096-byte buffer would make a blind
+	// Peek(4096) block until either 4096 bytes arrive or the deadline hits —
+	// a real TLS client sends one ClientHello record then waits for the
+	// server, so a fixed-size peek routinely stalls every connection for
+	// the full DialTimeout. Peek the 5-byte TLS record header first to learn
+	// the actual record length, then peek exactly that many bytes.
+	br := bufio.NewReaderSize(conn, 8192)
+	header, headerErr := br.Peek(5)
+	if headerErr != nil {
+		return
+	}
+	recLen := int(header[3])<<8 | int(header[4])
+	want := 5 + recLen
+	if want > 8192 {
+		want = 8192
+	}
+	peeked, peekErr := br.Peek(want)
+	if len(peeked) == 0 && peekErr != nil {
+		return
+	}
+	sni, sniErr := peekClientHelloSNI(peeked)
+
+	host := sni
+	if sniErr != nil {
+		if resolveErr != nil {
+			p.Log.Debug("mitm transparent: no SNI and no original-destination record", "sni_err", sniErr, "resolve_err", resolveErr)
+			return
+		}
+		host = origHost
+	}
+
+	hostport := host
+	if origPort != 0 {
+		hostport = net.JoinHostPort(host, fmt.Sprintf("%d", origPort))
+	} else if !strings.Contains(hostport, ":") {
+		hostport = net.JoinHostPort(host, "443")
+	}
+	_ = conn.SetDeadline(time.Time{})
+
+	if p.Authority != nil && p.Hosts != nil && p.Hosts.Match(host) {
+		p.Log.Debug("mitm decrypt transparent", "host", host, "sni", sni, "resolved_dest", fmt.Sprintf("%s:%d", origHost, origPort))
+		if p.Metrics != nil {
+			p.Metrics.IncAction("mitm", "decrypt")
+		}
+		p.mitmSession(conn, br, host, hostport)
+		return
+	}
+
+	// Not allowlisted: blind-tunnel to the real destination. Prefer the
+	// resolved original IP (guaranteed to hit the same server the client
+	// meant, no fresh DNS lookup needed) over re-resolving the SNI hostname.
+	dialTarget := hostport
+	if resolveErr == nil && origHost != "" {
+		dialTarget = net.JoinHostPort(origHost, fmt.Sprintf("%d", origPort))
+	}
+	p.Log.Debug("mitm blind tunnel transparent", "host", host, "dial", dialTarget)
+	if p.Metrics != nil {
+		p.Metrics.IncAction("mitm", "blind_tunnel")
+	}
+	p.blindTunnel(conn, br, dialTarget)
 }
 
 func (p *Proxy) handleConn(conn net.Conn) {

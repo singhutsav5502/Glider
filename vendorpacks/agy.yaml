@@ -1,0 +1,151 @@
+# agy (Antigravity CLI) tool catalog — revised after the exhaustive
+# follow-up pass (planning/agent_cli_interop.md §3). The wire-declared
+# catalog (~40 CortexStep* names extracted from the binary) is a superset
+# of what this CLI build actually exposes to the model — confirmed twice,
+# directly: the model self-reports missing tools rather than reaching for
+# wire-declared ones. Every entry below defaults to confirmed:false unless
+# an actual live trace flipped it; never assume liveness from the binary's
+# oneof alone.
+vendor: agy
+observed_cli_version: "antigravity-cli (Gemini 3.6 build, 2026-07)"
+tools:
+  replace_file_content:
+    confirmed: true # actually invoked live and decoded — not just wire-declared
+    tags: [edit, write]
+    args:
+      path: [TargetFile]
+      old_content: [TargetContent]
+      new_content: [ReplacementContent]
+    diff_view: range_replace
+  write_to_file:
+    confirmed: true
+    tags: [edit, write, create]
+    args:
+      path: [TargetFile]
+      content: [CodeContent]
+    diff_view: whole_file # confirmed live — covers both create and overwrite; no separate create_file ever invoked
+  view_file:
+    confirmed: true
+    tags: [read]
+    args:
+      path: [AbsolutePath]
+    # view_file_outline was never actually invoked even when asked for "the outline" — same read tool, no distinct outline mode observed.
+  list_dir:
+    confirmed: true # NB: live wire name — NOT the wire-catalog's "list_directory" (see that entry below)
+    tags: [list]
+    args:
+      path: [DirectoryPath]
+  run_command:
+    confirmed: true
+    tags: [shell, execute]
+    args:
+      command: [CommandLine]
+      cwd: [Cwd]
+    # universal fallback whenever a dedicated fs tool agy doesn't actually have would otherwise be needed (find/move/delete all substitute this).
+  propose_code:
+    confirmed: false # deliberately re-tried twice (risky edit without --dangerously-skip-permissions, and --mode plan) and never fired
+    tags: [edit]
+  delete_file:
+    confirmed: false # model explicitly stated it has no dedicated delete tool; substitutes run_command
+    tags: [delete]
+  create_file:
+    confirmed: false # no separate invocation ever occurred; write_to_file covers this case
+    tags: [create]
+  move:
+    confirmed: false # model substituted run_command (Move-Item) unprompted
+    tags: [other]
+  find:
+    confirmed: false # model substituted run_command (Get-ChildItem) unprompted
+    tags: [search]
+  file_change:
+    confirmed: false
+    tags: [edit]
+  lint_diff:
+    confirmed: false
+    tags: [edit]
+  list_directory:
+    confirmed: false # wire-declared name — the actual live tool is "list_dir" above, not this
+    tags: [list]
+  grep_search:
+    confirmed: false
+    tags: [search]
+  view_file_outline:
+    confirmed: false # tried, never fired — see view_file's note
+    tags: [read]
+  view_code_item:
+    confirmed: false
+    tags: [read]
+  view_content_chunk:
+    confirmed: false
+    tags: [read]
+  delete_directory:
+    confirmed: false
+    tags: [delete]
+  search_web:
+    confirmed: false
+    tags: [web, search]
+  read_url_content:
+    confirmed: false
+    tags: [web, fetch]
+  mcp_tool:
+    confirmed: false
+    tags: [mcp]
+  list_resources:
+    confirmed: false
+    tags: [mcp]
+  read_resource:
+    confirmed: false
+    tags: [mcp]
+  git_commit:
+    confirmed: false
+    tags: [git]
+  open_browser_url:
+    confirmed: false
+    tags: [browser]
+  execute_browser_javascript:
+    confirmed: false
+    tags: [browser]
+  click_browser_pixel:
+    confirmed: false
+    tags: [browser]
+  capture_browser_screenshot:
+    confirmed: false
+    tags: [browser]
+  capture_browser_console_logs:
+    confirmed: false
+    tags: [browser]
+  list_browser_pages:
+    confirmed: false
+    tags: [browser]
+  clipboard:
+    confirmed: false
+    tags: [other]
+  checkpoint:
+    confirmed: false
+    tags: [other]
+  task_boundary:
+    confirmed: false
+    tags: [other]
+  notify_user:
+    confirmed: false
+    tags: [other]
+  suggested_responses:
+    confirmed: false
+    tags: [other]
+  command_status:
+    confirmed: false
+    tags: [other]
+  error_message:
+    confirmed: false
+    tags: [other]
+  workspace_api:
+    confirmed: false
+    tags: [other]
+  trajectory_search:
+    confirmed: false
+    tags: [search]
+  search_knowledge_base:
+    confirmed: false
+    tags: [search, knowledge_base]
+unknown_tool_policy: passthrough
+confirmed_policy: prefer

@@ -216,9 +216,9 @@ func TestInterceptorRunSSEToolLoopFulfillsWhenCodecOn(t *testing.T) {
 	hub.ArmLocal(reqID, &mitm.AgentFulfillOffer{
 		Local: true,
 		Request: &backend.CompletionRequest{
-			Model: "x",
+			Model:    "x",
 			Messages: []backend.Message{{Role: "user", Content: "read"}},
-			Tools: mustToolsJSON(t),
+			Tools:    mustToolsJSON(t),
 		},
 	})
 	runBody := buildRunSSERequest(reqID)
@@ -433,7 +433,7 @@ func TestComposerChromeOriginEvenWithoutStickyFamily(t *testing.T) {
 	// Dump 48f01fc5 shape: StickyCloud expired, but user_visible_high_level_summary
 	// still present — must ArmOrigin path (ShouldStickyCloudOrigin ok), never local.
 	hub := mitm.NewAgentFulfillHub()
-	hub.Graph = contextgraph.New("") // isolate from process Default() pollution
+	hub.Graph = contextgraph.New("") // explicit store for sticky/family isolation
 	body := []byte("Refresh planning docs to latest\x00user_visible_high_level_summary\x00Planning docs are now current")
 	root, src, ok := hub.ShouldStickyCloudOrigin("Refresh planning docs to latest", "printable_hint", nil, body)
 	if !ok {
@@ -622,7 +622,7 @@ func TestInterceptorDumpShapeChromeWithoutFamilyNeverLocal(t *testing.T) {
 	}
 	c := metrics.NewCollector(nil)
 	hub := mitm.NewAgentFulfillHub()
-	hub.Graph = contextgraph.New("") // isolate from Default() live-cloud leftovers
+	hub.Graph = contextgraph.New("") // explicit store for live-cloud isolation
 	inter := &mitm.Interceptor{
 		Harness:         &orchestrator.PipelineCompleter{Router: engine, Executor: &countingExecutor{}},
 		Metrics:         c,
@@ -701,8 +701,8 @@ func TestInterceptorRunSSECannedOnCompleteError(t *testing.T) {
 
 	reqID := "22222222-2222-4222-8222-222222222222"
 	hub.ArmLocal(reqID, &mitm.AgentFulfillOffer{
-		Local:   true,
-		Request: &backend.CompletionRequest{Model: "codellama:7b", Messages: []backend.Message{{Role: "user", Content: "ping"}}},
+		Local:    true,
+		Request:  &backend.CompletionRequest{Model: "codellama:7b", Messages: []backend.Message{{Role: "user", Content: "ping"}}},
 		UserText: "ping",
 	})
 	runBody := buildRunSSERequest(reqID)
@@ -786,7 +786,7 @@ func TestInterceptorRunSSECompleteErrorSurfacesLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := mitm.NewAgentFulfillHub()
-	hub.Graph = contextgraph.New("") // isolate from package Default sticky pollution
+	hub.Graph = contextgraph.New("") // explicit store for sticky isolation
 	c := metrics.NewCollector(nil)
 	inter := &mitm.Interceptor{
 		Harness:           &orchestrator.PipelineCompleter{Router: engine, Executor: failExecutor{}},

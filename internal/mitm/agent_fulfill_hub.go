@@ -12,6 +12,7 @@ import (
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/cursorrpc"
 	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/tools"
 )
 
 // Default wait for BidiAppend decision after RunSSE opens (same-second in captures).
@@ -73,7 +74,8 @@ type AgentFulfillHub struct {
 	family    *turnFamily
 	ttl       time.Duration
 	familyTTL time.Duration
-	Graph     *contextgraph.Store // optional; nil → contextgraph.Default()
+	Graph     *contextgraph.Store // optional; nil → graph writes skipped
+	Tools     *tools.Registry     // optional; binds runs/<turn>/{work,out} on /cloud|/local families
 }
 
 type turnFamily struct {
@@ -82,6 +84,9 @@ type turnFamily struct {
 	Until         time.Time
 	Source        string
 	ParentActive  int // in-flight root RunSSE count; keeps family live past Until
+	WorkRel       string
+	OutRel        string
+	WorkspaceRoot string
 }
 
 // NewAgentFulfillHub constructs a coordination hub.
@@ -100,7 +105,7 @@ func (h *AgentFulfillHub) graph() *contextgraph.Store {
 	if h != nil && h.Graph != nil {
 		return h.Graph
 	}
-	return contextgraph.Default()
+	return nil
 }
 
 // ArmLocal records a local-intent offer for requestID (from BidiAppend).
@@ -214,11 +219,31 @@ func (h *AgentFulfillHub) OpenTurnFamily(rootRequestID string, mode StickyMode, 
 	}
 	h.mu.Unlock()
 
+	// Associate work/out folders with this turn family (harness /cloud and /local).
+	if h.Tools != nil && rootRequestID != "" {
+		if lay, err := h.Tools.EnsureRunLayout(rootRequestID); err == nil {
+			h.mu.Lock()
+			if h.family != nil && h.family.RootRequestID == rootRequestID {
+				h.family.WorkRel = lay.RelWork
+				h.family.OutRel = lay.RelOut
+				h.family.WorkspaceRoot = lay.RootAbs
+			}
+			h.mu.Unlock()
+		}
+	}
+
 	attrs := map[string]string{
 		"route":           mode.String(),
 		"source":          source,
 		"root_request_id": rootRequestID,
 	}
+	h.mu.Lock()
+	if h.family != nil && h.family.WorkRel != "" {
+		attrs["work_rel"] = h.family.WorkRel
+		attrs["out_rel"] = h.family.OutRel
+		attrs["workspace_root"] = h.family.WorkspaceRoot
+	}
+	h.mu.Unlock()
 	g := h.graph()
 	if g != nil && ttl > 0 {
 		g.Grace = ttl
@@ -408,9 +433,10 @@ func (h *AgentFulfillHub) InheritTurnFollowOn(userText string, requestID ...stri
 // (never local-fulfill).
 //
 // Bulletproof rule while StickyCloud is live (TTL map OR session/graph):
-//   deny-local by default — ONLY an allowlisted fresh TipTap user send may
-//   re-decide. Everything else (composer chrome, printable_hint titles, empty/
-//   short extract, system-only envelopes, children/tool crumbs) → ArmOrigin.
+//
+//	deny-local by default — ONLY an allowlisted fresh TipTap user send may
+//	re-decide. Everything else (composer chrome, printable_hint titles, empty/
+//	short extract, system-only envelopes, children/tool crumbs) → ArmOrigin.
 //
 // Composer system chrome (user_visible_*, high_level_summary, …) always returns
 // origin even when the StickyCloud TTL/graph already expired — wrap-ups must

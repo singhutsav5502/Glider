@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -46,7 +45,6 @@
         <li><a href="#process">Process topology</a></li>
         <li><a href="#mitm">MITM &amp; fulfill hub</a></li>
         <li><a href="#pipeline">Pipeline &amp; orchestrator</a></li>
-        <li><a href="#loop">Loop runners</a></li>
         <li><a href="#swarm">Swarm fan-out</a></li>
         <li><a href="#dashboard">Dashboard WebSocket</a></li>
         <li><a href="#shared">Shared state</a></li>
@@ -152,16 +150,6 @@
         completer is designed as mostly immutable wiring + shared dependencies that are
         themselves synchronized. Do not stash per-request mutable fields on
         <code>PipelineCompleter</code>.
-      </p>
-
-      <h2 id="loop">Loop runners</h2>
-      <p>
-        <code>loop.Manager</code> holds <code>runners map</code> under <code>mu</code>.
-        Start creates a cancelable context derived with
-        <code>context.WithoutCancel</code> from the HTTP request context so returning
-        the REST response does not abort the hoop. Each hoop id has at most one active
-        runner; Stop cancels and waits on a done channel. Stage Completer calls reuse the
-        shared pipeline — same concurrency rules as gateway traffic.
       </p>
 
       <h2 id="swarm">Swarm fan-out</h2>

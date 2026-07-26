@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -48,7 +47,6 @@
         <li><a href="#path-b-origin">Path B — sticky /cloud origin</a></li>
         <li><a href="#path-b-child">Path B — child tool RunSSE</a></li>
         <li><a href="#hub-race">Hub Arm/Wait races</a></li>
-        <li><a href="#loop-cycle">Loop Engineering cycle</a></li>
         <li><a href="#hot-reload">Config hot-reload</a></li>
       </ol>
 
@@ -188,22 +186,6 @@ Later: summary / title chrome (new UUID, user_visible_*)
           <td>Fail-soft origin (<code>runsse_wait_origin</code>) — idle/prewarm reconnects must not hang</td>
         </tr>
       </table>
-
-      <h2 id="loop-cycle">Loop Engineering cycle</h2>
-      <pre class="seq">Dashboard POST /api/loops/:id/start
-  → loop.Manager.Start
-  → context.WithoutCancel (HTTP return must not kill hoop)
-  → runCycle:
-       memory → router stage (optional) → planner → actor → critic
-       parse SCORE; if &lt; EvalMin and iterations left → learn + repeat
-       stop on goal / score / max iterations / human gate
-  → contextgraph EventLoopTick / Started / Stopped
-  → Completer.Complete or CompleteLocal per RoutePref</pre>
-      <p>
-        Stages are hot-swappable modules registered on <code>swarm.Registry</code>
-        (<code>RegisterLoopStages</code>). Learning bias knobs:
-        <code>local_bias_step</code>, <code>max_bias</code>, <code>window</code>.
-      </p>
 
       <h2 id="hot-reload">Config hot-reload</h2>
       <pre class="seq">File change on configs/*.yaml

@@ -146,18 +146,66 @@ Config validation rejects `auth.token` inline secrets; use `token_env`.
 
 At process start Glider hydrates token from `~/.glider/credentials/github_token` if env empty, `Configure`s both presets, and soft-connects HTTP GitHub when a token is present.
 
-### Hosted Copilot MCP — manual verify (needs live PAT)
+### Hosted Copilot MCP — ops verification checklist (needs live PAT)
 
-Automated tests cover headers + session retry against `httptest`. Against production (`https://api.githubcopilot.com/mcp/`) still confirm with a real token + Copilot-capable account:
+> **Status: NOT production-verified.** Code-side session/auth harden is tested against `httptest`. Do **not** mark this SHIPPED until a human runs the steps below with a real Copilot-capable PAT. Record quirks here (never secrets).
 
-1. Paste PAT (or device flow) → Connect `github` → tools list shows `source=live`.
-2. Call a cheap tool (`get_me`) twice; second call must not 400 on missing session.
-3. If Connect fails with 401 after rotating a PAT in the UI without Disconnect, click **Reconnect** (or rely on the one-shot auth refresh above).
-4. Optional: set `toolsets: [repos, issues]` on the server config and confirm fewer tools than the full catalog.
-5. Prefer Docker `github-stdio` if hosted session/auth still flakes on your account.
+**Prereqs**
 
-Remaining uncertainty (cannot close without production PAT): whether Copilot’s edge requires a newer `MCP-Protocol-Version` than Glider’s `2024-11-05` negotiate, or extra Copilot-only headers beyond `X-MCP-Toolsets`.
+- Glider running (`go run ./cmd/glider -config configs/glider.local.yaml`); dashboard `http://127.0.0.1:8081`
+- PAT in env **or** Dashboard MCP → Paste PAT (writes `~/.glider/credentials/github_token`, mode 0600)
+- Account has GitHub Copilot entitlement that includes hosted MCP
+- `.env.example` stays placeholder-only; never commit real PATs
 
+**Commands / API signals**
+
+```powershell
+# Optional: put PAT in gitignored env (shell still wins over dotenv)
+# $env:GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_..."   # do not commit
+
+# After Paste PAT or env set:
+Invoke-RestMethod http://127.0.0.1:8081/api/mcp/github
+# expect: token_configured=true, token_source=credentials_file|env:..., hint may say not connected yet
+
+Invoke-RestMethod -Method POST http://127.0.0.1:8081/api/mcp/servers/github/connect
+Invoke-RestMethod http://127.0.0.1:8081/api/mcp/servers/github
+# expect: connected=true, health_ok=true, tool_count>0
+
+Invoke-RestMethod http://127.0.0.1:8081/api/mcp/servers/github/tools
+# expect: source=live (not catalog)
+
+# Cheap tool twice — second call must not 400 on missing session
+# (Dashboard MCP tools panel → get_me, or hoop/stage CallTool)
+```
+
+**Success signals**
+
+| Step | Pass if |
+|------|---------|
+| Connect | `connected=true`, `health_ok=true`, `health_error` empty |
+| Tools list | `source=live`, non-empty tools |
+| `get_me` ×2 | both succeed; no `mcp http 400` session error on 2nd |
+| Status after | `GET /api/mcp/github` → `http_connected=true`, hint mentions live session |
+| Auth errors | 401/403 surface as `authentication failed` / `forbidden` in connect/status (not a hang) |
+
+**Failure modes (expected surfaces)**
+
+| Symptom | Likely cause | Operator action |
+|---------|--------------|-----------------|
+| `authentication failed (401)` | Bad/expired PAT, or no token | Paste PAT / device flow; Reconnect |
+| `forbidden (403)` | Token lacks Copilot MCP / org policy | Use Copilot-capable account; or Docker `github-stdio` |
+| `timeout talking to hosted MCP` | Network / VPN / edge | Retry; check URL `https://api.githubcopilot.com/mcp/` |
+| Connect OK then tools `source=catalog` | Session dropped | Reconnect; confirm token still configured |
+| 401 after rotating PAT in UI without Disconnect | Stale session auth | Reconnect (handshake refreshes credential file) |
+| Toolsets subset empty / tiny | `toolsets:` filter too narrow | Clear toolsets or set `[repos, issues]` intentionally |
+
+**Rollback:** Dashboard **Forget token** or delete `~/.glider/credentials/github_token` and revoke the PAT on GitHub.
+
+**Still unverified without live PAT:** whether Copilot’s edge requires a newer `MCP-Protocol-Version` than Glider’s `2024-11-05`, or extra Copilot-only headers beyond `X-MCP-Toolsets`.
+
+### Hosted Copilot MCP — manual verify (short)
+
+Automated tests cover headers + session retry + initialize auth refresh against `httptest`. Against production still confirm with the checklist above.
 ## Dashboard MCP UI
 
 Tab **MCP** (`http://127.0.0.1:8081`):
@@ -218,34 +266,60 @@ Hoop stages and swarm fan-out **do not** `InvokeAllParallel` every declared tool
 
 Local models that emit the JSON object above in text (instead of native `tool_calls`) are still parsed into tool invocations.
 
-## Path B tool codec (opt-in) — **SHIPPED** (common map)
+## Path B tool codec (opt-in) — **SHIPPED** (extended common map)
 
-> Verified 2026-07-24: `internal/cursorrpc/toolcall_map.go` + `runsse_codec.go`; flag `mitm.agent_rpc_tool_codec` / `GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1`. Full Cursor catalog + live UI acceptance **DEFERRED**.
+> Verified 2026-07-24: `internal/cursorrpc/toolcall_map.go` + `runsse_codec.go`; flag `mitm.agent_rpc_tool_codec` / `GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1`.  
+> Schema pin: `planning/vendor_ref/agent_v1.proto` (Cursor `agent.v1.ToolCall` oneofs).  
+> Live UI acceptance on a real Cursor install remains **DEFERRED** (see [intentional_backlog.md](intentional_backlog.md) §1).
 
-With `mitm.agent_rpc_tool_codec: true` (or `GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1`), child/tool-loop `RunSSE` can emit tool frames locally. Common OpenAI/Cursor/Glider names map to Cursor `agent.v1.ToolCall` oneofs; unknown names fall back to `TruncatedToolCall`.
+With `mitm.agent_rpc_tool_codec: true` (or `GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1`), child/tool-loop `RunSSE` can emit tool frames locally. OpenAI/Cursor/Glider names map to Cursor `agent.v1.ToolCall` oneofs; **unknown names → `TruncatedToolCall` (field 34)**.
 
 | Layer | Status |
 |-------|--------|
-| Common name → Cursor oneof map (Read/Grep/Edit/Shell/Glob/Ls/Web…) | **SHIPPED** (`toolcall_map.go` + tests) |
+| Name → Cursor oneof map (FS/web + Todos/Lints/MCP/SemSearch/Task/Plan/Mode/Exa/…) | **SHIPPED** (`toolcall_map.go` + tests) |
 | TruncatedToolCall fallback | **SHIPPED** |
-| Full Cursor ToolCall catalog / live UI acceptance | **DEFERRED** — prefer Path A (`cus-` + Override Base URL) for Agent+tools demos |
+| Live UI sign-off on pinned Cursor build | **DEFERRED** — prefer Path A (`cus-` + Override Base URL) for Agent+tools demos |
 
-| OpenAI / Cursor / Glider name | Cursor wire | Glider builtin |
-|------------------------------|-------------|----------------|
-| `read`, `read_file`, `Read`, `fs_read` | `read_tool_call` | `fs_read` |
-| `grep`, `Grep`, `code_grep` | `grep_tool_call` | `code_grep` |
-| `write`, `Write`, `edit`, `fs_write` | `edit_tool_call` | `fs_write` |
-| `shell`, `Shell`, `shell_exec` | `shell_tool_call` | `shell_exec` (still gated by `allow_shell`) |
-| `glob`, `Glob`, `fs_search` | `glob_tool_call` | `fs_search` |
-| `ls`, `list_dir`, `fs_list` | `ls_tool_call` | `fs_list` |
-| `web_search`, `WebSearch` | `web_search_tool_call` | `web_search` |
-| `web_fetch`, `WebFetch` | `web_fetch_tool_call` | `web_fetch` |
-| `http_fetch`, `Fetch` | `fetch_tool_call` | `http_fetch` |
-| unknown | `truncated_tool_call` | — |
+### Mapped vs Truncated inventory (schema pin: `vendor_ref/agent_v1.proto`)
+
+| Wire field | Cursor oneof | Example names | Glider builtin |
+|-----------:|--------------|---------------|----------------|
+| 1 | `shell_tool_call` | `shell`, `Shell`, `shell_exec`, `bash` | `shell_exec` |
+| 3 | `delete_tool_call` | `Delete`, `delete_file` | — |
+| 4 | `glob_tool_call` | `Glob`, `fs_search`, `file_search` | `fs_search` |
+| 5 | `grep_tool_call` | `Grep`, `code_grep` | `code_grep` |
+| 8 | `read_tool_call` | `Read`, `read_file`, `fs_read` | `fs_read` |
+| 9 | `update_todos_tool_call` | `TodoWrite`, `update_todos` | — |
+| 10 | `read_todos_tool_call` | `TodoRead`, `read_todos` | — |
+| 12 | `edit_tool_call` | `Write`, `StrReplace`, `fs_write` | `fs_write` |
+| 13 | `ls_tool_call` | `Ls`, `list_dir`, `fs_list` | `fs_list` |
+| 14 | `read_lints_tool_call` | `ReadLints` | — |
+| 15 | `mcp_tool_call` | `CallMcpTool`, `mcp` | — |
+| 16 | `sem_search_tool_call` | `SemSearch`, `codebase_search` | `fs_search` |
+| 17 | `create_plan_tool_call` | `CreatePlan` | — |
+| 18 | `web_search_tool_call` | `WebSearch`, `web_search` | `web_search` |
+| 19 | `task_tool_call` | `Task` | — |
+| 20 | `list_mcp_resources_tool_call` | `ListMcpResources` | — |
+| 21 | `read_mcp_resource_tool_call` | `ReadMcpResource` | — |
+| 22 | `apply_agent_diff_tool_call` | `ApplyAgentDiff` | — |
+| 23 | `ask_question_tool_call` | `AskQuestion` | — |
+| 24 | `fetch_tool_call` | `Fetch`, `http_fetch` | `http_fetch` |
+| 25 | `switch_mode_tool_call` | `SwitchMode` | — |
+| 26 | `exa_search_tool_call` | `ExaSearch` | `web_search` |
+| 27 | `exa_fetch_tool_call` | `ExaFetch` | `web_fetch` |
+| 28 | `generate_image_tool_call` | `GenerateImage` | — |
+| 31 | `write_shell_stdin_tool_call` | `WriteShellStdin` | — |
+| 32 | `reflect_tool_call` | `Reflect` | — |
+| 37 | `web_fetch_tool_call` | `WebFetch`, `web_fetch` | `web_fetch` |
+| 34 | `truncated_tool_call` | **any unmapped name** | — |
+
+**Still Truncated-only (no map):** `record_screen` (29), `computer_use` (30), `setup_vm_environment` (33), `start_grind_*` (35–36), `report_bugbot_results` (38), and any future oneofs not in the table.
 
 Default remains **off** (child RunSSE → origin). Implementation: `internal/cursorrpc/toolcall_map.go` + `runsse_codec.go`.
 
 ## Shared context engine (hoop)
+
+> **2026-07-25:** `internal/loop` (the stage runner that executed `kind: context`/`memory`/`feeds` YAML stages below) was removed in the v1 CLI-interop strip-down — the YAML stage examples in this section no longer have a runner and won't execute. The underlying mechanism they describe (`contextgraph`'s `RecordHoopContext`/`LookupHoopContext`/`HoopContextDigest`/`context_query`) is still real, live code, just currently only reachable from `internal/swarm`, not from hoop stages. Kept for reference until this section is rewritten swarm-only.
 
 | Piece | Behavior |
 |-------|----------|
@@ -360,11 +434,9 @@ Hoops / Graph help panels link to the MCP tab.
 
 ```powershell
 powershell -File scripts\seed-samples.ps1
-powershell -File scripts\seed-samples.ps1 -Start
-.\scripts\seed-samples.ps1 -Base http://127.0.0.1:8081
 ```
 
-Loads every top-level YAML under `samples/hoops/` + `samples/swarms/` (hoops via dashboard API; swarms → `~/.glider/hoops`). See [`docs/site/samples.html#seed`](../docs/site/samples.html).
+Loads every top-level YAML under `samples/swarms/` → `~/.glider/hoops`. See [`docs/site/samples.html#seed`](../docs/site/samples.html).
 
 ## Governance MVP
 

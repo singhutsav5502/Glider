@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a class="active" href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Ollama</div>
@@ -57,12 +56,7 @@ model_aliases:
   claude-3.5-sonnet: qwen2.5-coder:14b</pre>
 
       <h2>Gateway-only (no MITM)</h2>
-      <p>Set <code>mitm.enabled: false</code>. Cursor Override Base URL → <code>http://127.0.0.1:8080/v1</code>. Hoops use <code>/api/loops</code> with <code>route: local</code>.</p>
-
-      <h2>Sample local hoop</h2>
-      <pre>go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start
-# Nested swarm demo (local):
-go run ./scripts/loadhoop -file samples/hoops/parallel-swarm-mode.yaml -start</pre>
+      <p>Set <code>mitm.enabled: false</code>. Cursor Override Base URL → <code>http://127.0.0.1:8080/v1</code>.</p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

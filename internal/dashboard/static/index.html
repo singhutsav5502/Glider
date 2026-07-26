@@ -21,9 +21,8 @@
         <button class="tab active" data-tab="overview">Overview</button>
         <button class="tab" data-tab="vram">VRAM & Models</button>
         <button class="tab" data-tab="rules">Rules Engine</button>
-        <button class="tab" data-tab="hoops">Hoops & Swarm</button>
-        <button class="tab" data-tab="graphs">Graph editor</button>
         <button class="tab" data-tab="mcp">MCP</button>
+        <button class="tab" data-tab="vendors">Vendors</button>
         <button class="tab" data-tab="workspace">Workspace</button>
         <button class="tab" data-tab="settings">Config</button>
         <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
@@ -99,464 +98,12 @@
           <button type="button" id="rules-save">Save rules</button>
           <button type="button" id="rules-reload" class="linkish">Reload</button>
         </div>
-      </section>
-
-      <section id="panel-hoops" class="panel">
-        <div class="hoops-panel-head">
-          <p class="hint">
-            <strong>Loop Engineering</strong> hoops: compose fields here, edit stage and swarm
-            graphs on the <button type="button" class="linkish open-graph-editor" data-graph-focus="stage">Graph editor</button> tab.
-            Pure-local default (Ollama/vLLM).
-            See <a href="/docs/loop-engineering.html" target="_blank">docs</a>
-            · <a href="/docs/architecture-deep.html" target="_blank">deep architecture</a>.
-          </p>
-        </div>
-
-        <aside class="ux-help" aria-label="How to use Hoops and Swarm">
-          <strong class="ux-help-title">How it works</strong>
-          <ol class="ux-help-steps">
-            <li><strong>Build stages</strong> on Graph editor (palette + Link mode), then Create / Update hoop here.</li>
-            <li><strong>Click a hoop card</strong> to bind the Agent log, then Start -- cycle runs Memory → Router → Planner → Actor → Critic.</li>
-            <li><strong>Swarm</strong> is a one-shot fan-out: link orchestrator to worker roles on the graph, set prompt, Run swarm. Merge summary appears below.</li>
-            <li><strong>MCP tools</strong>: connect servers on the <button type="button" class="linkish" data-goto-tab="mcp">MCP</button> tab, then bind them on a stage (Edit → MCP servers / tools).</li>
-          </ol>
-          <p class="ux-help-note">Parallel actors inside a hoop also call <code>swarm.FanOut</code> mid-cycle when a stage has <code>parallel &gt; 1</code>. Docs: <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.</p>
-        </aside>
-
-        <div id="live-status-board" class="live-board" aria-live="polite">
-          <div class="live-card" data-live="ws">
-            <span class="live-label">WebSocket</span>
-            <span class="live-value" id="live-ws">...</span>
-          </div>
-          <div class="live-card" data-live="hoops">
-            <span class="live-label">Hoops</span>
-            <span class="live-value" id="live-hoops">--</span>
-          </div>
-          <div class="live-card" data-live="running">
-            <span class="live-label">Running</span>
-            <span class="live-value" id="live-running">0</span>
-          </div>
-          <div class="live-card" data-live="route">
-            <span class="live-label">Local / Cloud</span>
-            <span class="live-value" id="live-route">--</span>
-          </div>
-          <div class="live-card" data-live="modules">
-            <span class="live-label">Modules on</span>
-            <span class="live-value" id="live-modules">--</span>
-          </div>
-          <div class="live-card" data-live="ctx">
-            <span class="live-label">Context turns</span>
-            <span class="live-value" id="live-ctx">--</span>
-          </div>
-          <div class="live-card" data-live="spend">
-            <span class="live-label">Hoop spend</span>
-            <span class="live-value" id="live-spend">--</span>
-          </div>
-        </div>
-
-        <div class="agent-log-hoops-wrap agent-log-shell">
-          <details class="fold-section" id="hoops-agent-log-fold">
-            <summary class="fold-summary">
-              <span class="dnd-label" style="margin:0">Agent log</span>
-              <span class="agent-log-badge" id="hoops-agent-log-badge">Not following</span>
-              <span class="fold-hint muted">click to expand</span>
-            </summary>
-            <div class="fold-body">
-              <div class="agent-log-head" style="margin-top:8px">
-                <p class="hint" id="hoops-agent-log-hint" style="margin:0">Click a hoop card to bind the log stream. Swarm binds after Run swarm.</p>
-                <div class="graph-toolbar">
-                  <button type="button" id="hoops-agent-log-pause" class="linkish" aria-pressed="false" title="Pause auto-scroll append">Pause</button>
-                  <button type="button" id="hoops-agent-log-copy" class="linkish" title="Copy all lines for the focused hoop/swarm">Copy all</button>
-                  <button type="button" id="hoops-agent-log-clear" class="linkish" title="Clear local view + server ring for focused instance">Clear log</button>
-                  <button type="button" id="hoops-agent-log-refresh" class="linkish">Refresh</button>
-                </div>
-              </div>
-              <div class="agent-log-cols" aria-hidden="true">
-                <span>TIME</span><span>LEVEL</span><span>STAGE / ROLE</span><span>MESSAGE</span>
-              </div>
-              <div id="hoops-agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
-            </div>
-          </details>
-        </div>
-
-        <div class="hoops-layout">
-          <fieldset class="cfg-section">
-            <legend>Compose hoop</legend>
-            <form id="hoop-form" class="cfg-grid">
-              <div class="span2 compose-meta cfg-grid">
-                <label data-tip-key="hoop-name">Name<input type="text" id="hoop-name" placeholder="daily-triage" required /></label>
-                <label data-tip-key="hoop-interval">Heartbeat<input type="text" id="hoop-interval" placeholder="5m" value="" /></label>
-                <label class="span2" data-tip-key="hoop-prompt">Goal / purpose<textarea id="hoop-prompt" class="cfg-mono" rows="3" placeholder="Triage open issues and summarize blockers" required></textarea></label>
-              </div>
-
-              <div class="span2 graph-cta-block">
-                <div class="dnd-label">Stage pipeline</div>
-                <p class="graph-cta-copy">Build and edit the stage graph (pan / zoom / drag) on the Graph editor tab. Changes sync here for Create / Update.</p>
-                <div class="graph-cta-row">
-                  <button type="button" class="graph-cta-btn open-graph-editor" data-graph-focus="stage">Open graph editor</button>
-                  <span id="stage-edit-banner" class="muted" hidden></span>
-                </div>
-                <details class="stage-pipeline-details" open>
-                  <summary>Pipeline chips (reorder / drop)</summary>
-                  <div class="stage-palette-wrap" style="margin-bottom:12px">
-                    <div class="dnd-label">Palette -- click or drag onto pipeline</div>
-                    <div id="stage-palette-hoops" class="stage-palette" aria-label="Stage palette (form)">
-                      <div class="stage-chip" draggable="true" data-kind="router"  data-tip-key="stage-chip-router">router</div>
-                      <div class="stage-chip" draggable="true" data-kind="planner"  data-tip-key="stage-chip-planner">planner</div>
-                      <div class="stage-chip" draggable="true" data-kind="actor"  data-tip-key="stage-chip-actor">actor</div>
-                      <div class="stage-chip" draggable="true" data-kind="critic"  data-tip-key="stage-chip-critic">critic</div>
-                      <div class="stage-chip" draggable="true" data-kind="memory"  data-tip-key="stage-chip-memory">memory</div>
-                      <div class="stage-chip" draggable="true" data-kind="human_gate"  data-tip-key="stage-chip-human gate">human_gate</div>
-                      <div class="stage-chip stage-chip-code" data-kind="__code__"  data-tip-key="stage-chip-code stage">+ code</div>
-                    </div>
-                  </div>
-                  <div id="stage-pipeline" class="stage-pipeline" aria-label="Stage pipeline">
-                    <p class="dnd-empty" id="stage-pipeline-empty">Drop stages here -- order = cycle order</p>
-                  </div>
-                </details>
-              </div>
-              <input type="hidden" id="hoop-stages-json" value="[]" />
-              <input type="hidden" id="hoop-edit-id" value="" />
-
-              <div class="span2 compose-form-fields cfg-grid">
-                <label class="span2" data-tip-key="hoop-eval-goal">Eval goal (critic)<input type="text" id="hoop-eval-goal" placeholder="Summary written; no critical failures" /></label>
-                <label data-tip-key="hoop-route">Route
-                  <select id="hoop-route">
-                    <option value="local" selected>local (Ollama/vLLM)</option>
-                    <option value="cloud">cloud (BYOK OpenAI)</option>
-                    <option value="auto">auto (gateway rules)</option>
-                  </select>
-                </label>
-                <label class="check" data-tip-key="hoop-learning"><input type="checkbox" id="hoop-learning" /> Self-learning</label>
-                <label data-tip-key="hoop-max-iter">Max iterations<input type="number" id="hoop-max-iter" min="0" value="3" /></label>
-              </div>
-              <div class="span2 cfg-actions">
-                <button type="submit" id="hoop-submit-btn">Create hoop</button>
-                <button type="button" id="hoop-cancel-edit" class="linkish" hidden>Cancel edit</button>
-                <button type="button" id="hoops-refresh" class="linkish">Refresh managers</button>
-                <button type="button" id="hoops-load-sample" class="linkish" title="Load hello-critic sample stages">Load sample stages</button>
-              </div>
-            </form>
-            <p id="hoops-error" class="cfg-error" hidden></p>
-            <p id="hoops-ok" class="cfg-ok" hidden></p>
-          </fieldset>
-
-          <fieldset class="cfg-section">
-            <legend>Module manager (hot-swap)</legend>
-            <p class="hint" style="margin:0 0 12px">Enable/disable Loop Engineering stages and infra modules. Live generation counters update while this tab is open.</p>
-            <div id="hotswap-list" class="hotswap-list"></div>
-          </fieldset>
-        </div>
 
         <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Hoop manager -- live status</legend>
-          <div class="cfg-actions" style="margin-bottom:10px">
-            <button type="button" id="hoops-expand-all" class="linkish">Expand all</button>
-            <button type="button" id="hoops-collapse-all" class="linkish">Collapse all</button>
-            <button type="button" id="hoops-clear-all-results" class="linkish" title="Clear outcomes + agent logs for all stopped hoops">Clear all logs &amp; results</button>
-          </div>
-          <div id="hoops-list" class="hoops-list"></div>
+          <legend>Module manager (hot-swap)</legend>
+          <p class="hint" style="margin:0 0 12px">Enable/disable routing and infra modules. Live generation counters update while this tab is open.</p>
+          <div id="hotswap-list" class="hotswap-list"></div>
         </fieldset>
-
-          <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Swarm wave</legend>
-          <div class="graph-cta-block">
-            <p class="graph-cta-copy">Edit the thread graph (orchestrator fan-out) on the Graph editor tab. Roles sync with the field below. Multi-wave weave persists under ~/.glider/swarm/threads.</p>
-            <div class="graph-cta-row">
-              <button type="button" class="graph-cta-btn open-graph-editor" data-graph-focus="swarm">Open graph editor</button>
-            </div>
-          </div>
-          <form id="swarm-form" class="cfg-grid">
-            <label data-tip-key="swarm-prompt" class="span2">Prompt<textarea id="swarm-prompt" class="cfg-mono" rows="2" placeholder="Plan then execute a short summary of this repo"></textarea></label>
-            <label data-tip-key="swarm-roles">Roles (comma)<input type="text" id="swarm-roles" value="plan,exec" /></label>
-            <label data-tip-key="swarm-workers">Max workers<input type="number" id="swarm-workers" min="1" max="4" value="2" /></label>
-            <label data-tip-key="swarm-waves">Waves<input type="number" id="swarm-waves" min="1" max="4" value="1" /></label>
-            <label data-tip-key="swarm-route">Route
-              <select id="swarm-route">
-                <option value="local" selected>local (Ollama/vLLM)</option>
-                <option value="cloud">cloud (BYOK OpenAI)</option>
-                <option value="auto">auto (gateway rules)</option>
-              </select>
-            </label>
-            <label data-tip-key="swarm-weave-policy">Weave policy
-              <select id="swarm-weave-policy">
-                <option value="critic">critic</option>
-                <option value="concatenate">concatenate</option>
-                <option value="role_weighted">role_weighted</option>
-                <option value="conflict_callouts">conflict_callouts</option>
-                <option value="llm_critic">llm_critic</option>
-              </select>
-            </label>
-            <label class="check" data-tip-key="swarm-decompose"><input type="checkbox" id="swarm-decompose" /> Decompose planner</label>
-            <label class="check" data-tip-key="swarm-free-spawn"><input type="checkbox" id="swarm-free-spawn" /> Free spawn roles</label>
-            <div class="span2 cfg-actions">
-              <button type="submit">Run swarm</button>
-            </div>
-          </form>
-          <div id="swarm-run-inspect" class="run-inspect" hidden>
-            <details class="fold-section" open>
-              <summary class="fold-summary">
-                <strong>Run output</strong>
-                <span class="muted" id="swarm-run-inspect-meta"></span>
-              </summary>
-              <div class="fold-body">
-                <div id="swarm-run-inspect-body" class="run-inspect-body"></div>
-                <details class="run-inspect-raw">
-                  <summary>Raw JSON</summary>
-                  <pre id="swarm-result" class="swarm-result"></pre>
-                </details>
-              </div>
-            </details>
-          </div>
-        </fieldset>
-
-        <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Durable threads</legend>
-          <p class="hint" style="margin:0 0 10px">List / resume multi-wave threads. View paints a Cytoscape wave timeline on the Graph editor swarm canvas.</p>
-          <div class="cfg-actions" style="margin-bottom:10px">
-            <button type="button" id="swarm-threads-refresh">Refresh threads</button>
-            <button type="button" id="swarm-timeline-clear" class="linkish">Clear wave timeline</button>
-            <button type="button" id="swarm-clear-logs" class="linkish" title="Clear all swarm agent log rings">Clear swarm logs</button>
-          </div>
-          <div id="swarm-threads" class="hoops-list"></div>
-        </fieldset>
-
-        <fieldset class="cfg-section" style="margin-top:28px">
-          <legend>Swarm templates</legend>
-          <div id="swarm-templates" class="hoops-list"></div>
-          <form id="tpl-form" class="cfg-grid" style="margin-top:16px">
-            <label data-tip-key="tpl-id">ID<input type="text" id="tpl-id" placeholder="dual-role" /></label>
-            <label data-tip-key="tpl-name">Name<input type="text" id="tpl-name" placeholder="Dual role" /></label>
-            <label class="span2" data-tip-key="tpl-prompt">Prompt<textarea id="tpl-prompt" class="cfg-mono" rows="2"></textarea></label>
-            <label data-tip-key="tpl-roles">Roles<input type="text" id="tpl-roles" value="plan,exec" /></label>
-            <label class="check" data-tip-key="tpl-local"><input type="checkbox" id="tpl-local" checked /> Prefer local</label>
-            <div class="span2 cfg-actions">
-              <button type="submit">Save template</button>
-            </div>
-          </form>
-        </fieldset>
-      </section>
-
-      <section id="panel-graphs" class="panel">
-        <div class="graphs-panel-head">
-          <div>
-            <h2 class="graphs-title">Graph editor</h2>
-            <p class="hint" style="margin:0">
-              <strong>Cytoscape.js</strong> + edgehandles (MIT, vendored). Turn on <em>Link mode</em>, then
-              drag node-to-node to draw or reconnect edges. Del removes. Syncs to Hoops
-              (<code>#hoop-stages-json</code> / swarm roles) for Create / Update / Run.
-            </p>
-          </div>
-          <button type="button" class="linkish" id="graphs-back-hoops">Back to Hoops</button>
-        </div>
-
-        <aside class="ux-help" aria-label="Graph editor guide">
-          <strong class="ux-help-title">Stage vs Swarm</strong>
-          <ol class="ux-help-steps">
-            <li><strong>Stage graph</strong> (top): hoop pipeline. Link mode + drag edges; Fit / wheel zoom / pan blank area. Create hoop on Hoops tab when ready.</li>
-            <li><strong>Swarm graph</strong> (bottom-left): orchestrator fan-out. Only linked worker roles are sent to Run swarm.</li>
-            <li><strong>Agent log</strong> (bottom-right): follows the selected hoop id or last swarm <code>turn_id</code> -- not a global mixed stream.</li>
-            <li><strong>MCP binding</strong>: Edit a stage → pick servers and tools (or raw JSON). Manage connections on the <button type="button" class="linkish" data-goto-tab="mcp">MCP</button> tab · <a href="/docs/mcp.html" target="_blank" rel="noopener">docs</a>.</li>
-          </ol>
-        </aside>
-
-        <div class="graphs-workspace">
-          <section class="graphs-stage" id="graphs-stage-section" aria-labelledby="graphs-stage-label">
-            <div class="graphs-section-bar">
-              <div class="dnd-label" id="graphs-stage-label">
-                Stage graph
-                <span class="graph-hint">Link mode = draw/reconnect * Del removes * dbl-click edge = flow/feedback</span>
-              </div>
-              <div class="graph-toolbar" id="stage-graph-toolbar">
-                <button type="button" id="stage-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
-                <button type="button" id="stage-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
-                <button type="button" id="stage-link-mode" class="linkish" aria-pressed="false" title="Drag from a node onto another to draw or reconnect">Link mode</button>
-                <button type="button" id="stage-node-add-code" class="linkish" title="Add stage with id / name / prompt">+ Code stage</button>
-                <button type="button" id="stage-node-edit" class="linkish" disabled>Edit</button>
-                <button type="button" id="stage-node-remove" class="linkish" disabled>Remove</button>
-                <button type="button" id="stage-edge-toggle" class="linkish" disabled title="Toggle flow / feedback on selected edge">Edge type</button>
-                <button type="button" id="stage-node-up" class="linkish" disabled title="Move earlier in cycle">Up</button>
-                <button type="button" id="stage-node-down" class="linkish" disabled title="Move later in cycle">Down</button>
-                <button type="button" id="stage-zoom-out" class="linkish" title="Zoom out">-</button>
-                <button type="button" id="stage-zoom-in" class="linkish" title="Zoom in">+</button>
-                <button type="button" id="stage-zoom-reset" class="linkish" title="Fit graph">Fit</button>
-              </div>
-            </div>
-            <div class="graphs-stage-body">
-              <div class="stage-palette-wrap graphs-palette">
-                <div class="dnd-label">Palette</div>
-                <div id="stage-palette" class="stage-palette" aria-label="Stage palette">
-                  <div class="stage-chip" draggable="true" data-kind="router"  data-tip-key="stage-chip-router">router</div>
-                  <div class="stage-chip" draggable="true" data-kind="planner"  data-tip-key="stage-chip-planner">planner</div>
-                  <div class="stage-chip" draggable="true" data-kind="actor"  data-tip-key="stage-chip-actor">actor</div>
-                  <div class="stage-chip" draggable="true" data-kind="critic"  data-tip-key="stage-chip-critic">critic</div>
-                  <div class="stage-chip" draggable="true" data-kind="memory"  data-tip-key="stage-chip-memory">memory</div>
-                  <div class="stage-chip" draggable="true" data-kind="human_gate"  data-tip-key="stage-chip-human gate">human_gate</div>
-                  <div class="stage-chip stage-chip-code" data-kind="__code__"  data-tip-key="stage-chip-code stage (custom id/prompt)">+ code</div>
-                </div>
-              </div>
-              <div class="stage-graph-wrap graphs-canvas-wrap">
-                <div id="stage-graph-host" class="cy-host graphs-canvas" aria-label="Stage graph">
-                  <p class="dnd-empty" id="stage-graph-empty">Add stages from the palette -- click or drag onto the canvas</p>
-                </div>
-              </div>
-              <aside id="stage-run-rail" class="stage-run-rail" hidden aria-label="Live stage outputs">
-                <div class="stage-run-rail-head">
-                  <strong>Run timeline</strong>
-                  <span class="muted" id="stage-run-rail-meta">Idle</span>
-                </div>
-                <div id="stage-run-rail-body" class="stage-run-rail-body"></div>
-              </aside>
-            </div>
-          </section>
-
-          <div class="graphs-bottom">
-            <section class="graphs-swarm" id="graphs-swarm-section" aria-labelledby="graphs-swarm-label">
-              <div class="graphs-section-bar">
-                <div class="dnd-label" id="graphs-swarm-label">
-                  Swarm thread graph
-                  <span class="graph-hint">Link mode: orch &lt;-&gt; workers * click fan-out edge to unlink * only linked roles run</span>
-                </div>
-                <div class="graph-toolbar">
-                  <button type="button" id="swarm-undo" class="linkish" disabled title="Undo (Ctrl+Z)">Undo</button>
-                  <button type="button" id="swarm-redo" class="linkish" disabled title="Redo (Ctrl+Y)">Redo</button>
-                  <button type="button" id="swarm-link-mode" class="linkish" aria-pressed="false" title="Drag between orchestrator and workers">Link mode</button>
-                  <button type="button" id="swarm-thread-add" class="linkish">Add thread</button>
-                  <button type="button" id="swarm-thread-remove" class="linkish" disabled>Remove selected</button>
-                  <button type="button" id="swarm-thread-edit" class="linkish" disabled>Edit role</button>
-                  <button type="button" id="swarm-zoom-out" class="linkish" title="Zoom out">-</button>
-                  <button type="button" id="swarm-zoom-in" class="linkish" title="Zoom in">+</button>
-                  <button type="button" id="swarm-zoom-reset" class="linkish" title="Fit graph">Fit</button>
-                </div>
-              </div>
-              <div class="graphs-canvas-wrap graphs-swarm-canvas">
-                <div id="swarm-graph-host" class="cy-host graphs-canvas" aria-label="Swarm thread graph">
-                  <p class="dnd-empty" id="swarm-graph-empty">Add threads, then Link mode to connect orchestrator</p>
-                </div>
-              </div>
-              <div id="swarm-node-inspect" class="node-inspect" hidden>
-                <div class="node-inspect-head">
-                  <strong id="swarm-node-inspect-title">Worker</strong>
-                  <span class="muted" id="swarm-node-inspect-status"></span>
-                </div>
-                <pre id="swarm-node-inspect-body" class="node-inspect-body"></pre>
-              </div>
-            </section>
-
-            <section class="graphs-agent-log agent-log-shell" id="graphs-agent-log" aria-labelledby="agent-log-label">
-              <div class="agent-log-head">
-                <div>
-                  <div class="dnd-label" id="agent-log-label" style="margin:0">Agent log</div>
-                  <span class="agent-log-badge" id="agent-log-badge">Not following</span>
-                  <span class="graph-hint" id="agent-log-scope-hint">Select a hoop card or run a swarm</span>
-                </div>
-                <div class="graph-toolbar">
-                  <button type="button" id="agent-log-pause" class="linkish" aria-pressed="false" title="Pause live append">Pause</button>
-                  <button type="button" id="agent-log-copy" class="linkish" title="Copy all lines for the focused instance">Copy all</button>
-                  <button type="button" id="agent-log-clear-view" class="linkish" title="Clear local view (server ring kept)">Clear</button>
-                  <button type="button" id="agent-log-refresh" class="linkish">Refresh</button>
-                </div>
-              </div>
-              <div class="agent-log-cols" aria-hidden="true">
-                <span>TIME</span><span>LEVEL</span><span>STAGE / ROLE</span><span>MESSAGE</span>
-              </div>
-              <div id="agent-log-panel" class="agent-log-panel" aria-live="polite"></div>
-            </section>
-          </div>
-        </div>
-
-        <dialog id="stage-edit-dialog" class="stage-edit-dialog">
-          <form id="stage-edit-form" class="stage-edit-form">
-            <h3 id="stage-edit-title">Code stage</h3>
-            <p class="hint" style="margin:0 0 10px">Loop API kinds: planner / actor / critic / memory / router / human_gate. Id, name, and prompt make each stage concrete.</p>
-            <div class="cfg-grid">
-              <label data-tip-key="stage-edit-kind">Kind
-                <select id="stage-edit-kind" required>
-                  <option value="planner">planner</option>
-                  <option value="actor" selected>actor</option>
-                  <option value="critic">critic</option>
-                  <option value="memory">memory</option>
-                  <option value="router">router</option>
-                  <option value="human_gate">human_gate</option>
-                </select>
-              </label>
-              <label data-tip-key="stage-edit-id">Id<input type="text" id="stage-edit-id" placeholder="actor_impl" required /></label>
-              <label class="span2" data-tip-key="stage-edit-name">Name<input type="text" id="stage-edit-name" placeholder="Implementer" /></label>
-              <label class="check span2" data-tip-key="stage-edit-enabled"><input type="checkbox" id="stage-edit-enabled" checked /> Enabled</label>
-              <label class="span2" data-tip-key="stage-edit-prompt">Prompt<textarea id="stage-edit-prompt" class="cfg-mono" rows="4" placeholder="Stage instructions for the model"></textarea></label>
-              <label data-tip-key="stage-edit-route">Route
-                <select id="stage-edit-route">
-                  <option value="">(inherit hoop)</option>
-                  <option value="local">local (Ollama/vLLM)</option>
-                  <option value="cloud">cloud (BYOK OpenAI)</option>
-                  <option value="auto">auto (gateway rules)</option>
-                </select>
-              </label>
-              <label data-tip-key="stage-edit-eval-min">Eval min (critic)<input type="number" id="stage-edit-eval-min" min="0" max="1" step="0.05" placeholder="0.7" /></label>
-              <label class="span2" data-tip="Which MCP servers this stage may call (bind tools from those servers).">MCP servers
-                <div id="stage-edit-mcp-pick" class="mcp-pick" aria-label="MCP server picker"></div>
-                <input type="hidden" id="stage-edit-mcp" value="" />
-              </label>
-              <label class="span2" data-tip="Optional subset of MCP tool names. Leave empty to allow all tools from selected servers.">MCP tools (optional — empty = all from selected servers)
-                <div id="stage-edit-mcp-tools" class="mcp-tool-pick" aria-label="MCP tool picker"></div>
-              </label>
-              <label class="span2" data-tip-key="stage-edit-tools">Tools JSON (advanced — builtins + MCP)
-                <textarea id="stage-edit-tools" class="cfg-mono" rows="3" placeholder='[{"name":"fs_list","kind":"builtin"},{"name":"get_me","kind":"mcp","server":"github"}]'></textarea>
-              </label>
-            </div>
-            <div class="cfg-actions" style="margin-top:14px">
-              <button type="button" id="stage-edit-save">Save</button>
-              <button type="button" id="stage-edit-cancel" class="linkish">Cancel</button>
-            </div>
-          </form>
-        </dialog>
-
-        <dialog id="edge-kind-dialog" class="stage-edit-dialog">
-          <form id="edge-kind-form" class="stage-edit-form">
-            <h3>Edge kind</h3>
-            <p class="hint" style="margin:0 0 10px">Pick how this transition is classified for the state machine and live route paint.</p>
-            <label data-tip-key="edge-kind-select">Kind
-              <select id="edge-kind-select">
-                <option value="flow">flow</option>
-                <option value="feedback">feedback</option>
-                <option value="on_fail">on_fail</option>
-                <option value="escalate">escalate</option>
-                <option value="conditional">conditional</option>
-                <option value="budget_exceeded">budget_exceeded</option>
-                <option value="parallel">parallel</option>
-                <option value="merge">merge</option>
-                <option value="feeds">feeds</option>
-              </select>
-            </label>
-            <div class="cfg-actions" style="margin-top:14px">
-              <button type="button" id="edge-kind-save">Apply</button>
-              <button type="button" id="edge-kind-cancel" class="linkish">Cancel</button>
-            </div>
-          </form>
-        </dialog>
-
-        <dialog id="glider-prompt-dialog" class="stage-edit-dialog">
-          <form id="glider-prompt-form" class="stage-edit-form" method="dialog">
-            <h3 id="glider-prompt-title">Input</h3>
-            <p class="hint" id="glider-prompt-hint" style="margin:0 0 10px"></p>
-            <label class="span2" data-tip-key="glider-prompt-input">Value<input type="text" id="glider-prompt-input" autocomplete="off" /></label>
-            <div class="cfg-actions" style="margin-top:14px">
-              <button type="submit" id="glider-prompt-ok">OK</button>
-              <button type="button" id="glider-prompt-cancel" class="linkish" value="cancel">Cancel</button>
-            </div>
-          </form>
-        </dialog>
-
-        <dialog id="glider-confirm-dialog" class="stage-edit-dialog">
-          <form id="glider-confirm-form" class="stage-edit-form" method="dialog">
-            <h3 id="glider-confirm-title">Confirm</h3>
-            <p class="hint" id="glider-confirm-message" style="margin:0 0 10px"></p>
-            <div class="cfg-actions" style="margin-top:14px">
-              <button type="submit" id="glider-confirm-ok">OK</button>
-              <button type="button" id="glider-confirm-cancel" class="linkish">Cancel</button>
-            </div>
-          </form>
-        </dialog>
       </section>
 
       <section id="panel-mcp" class="panel">
@@ -614,6 +161,58 @@
             <div id="mcp-tools-list" class="mcp-tools-list"></div>
           </fieldset>
         </div>
+      </section>
+
+      <section id="panel-vendors" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Agent CLIs</h2>
+            <p class="hint" style="margin:6px 0 0">
+              CLIs discovered on this host (<code>configs/vendor_candidates.yaml</code> is the candidate list —
+              add an entry there for a new CLI, no rebuild needed). Enabled CLIs can be addressed from any
+              intercepted session with <code>/name &lt;prompt&gt;</code> (same convention as /local /cloud) to delegate to them headlessly.
+            </p>
+          </div>
+          <button type="button" id="vendors-discover" class="linkish">Discover</button>
+        </div>
+
+        <p id="vendors-error" class="cfg-error" hidden></p>
+        <p id="vendors-ok" class="cfg-ok" hidden></p>
+
+        <fieldset class="cfg-section">
+          <legend>Default workspace</legend>
+          <p class="hint" style="margin:0 0 8px">
+            Directory delegated CLI calls run in when Glider can't otherwise identify the origin session's own
+            project directory (or on a platform where that's not resolvable at all). Left blank, Glider asks once
+            per session instead (reply with <code>/workspace &lt;path&gt;</code>) rather than guessing.
+          </p>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="vendors-default-workspace" placeholder="e.g. C:\Users\me\myproject" style="flex:1">
+            <button type="button" id="vendors-default-workspace-save" class="linkish">Save</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Registered CLIs</legend>
+          <div class="mcp-table-wrap">
+            <table class="mcp-table" id="vendors-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Binary</th>
+                  <th>Path</th>
+                  <th>Version</th>
+                  <th>Enabled</th>
+                  <th>Templates</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="vendors-body">
+                <tr><td colspan="7" class="hint">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </fieldset>
       </section>
 
       <section id="panel-workspace" class="panel">
@@ -681,7 +280,7 @@
 
       <section id="panel-settings" class="panel">
         <div class="cfg-toolbar">
-          <p class="hint cfg-reload-note">Structured form is the primary editor. Save writes the config file and hot-reloads routing, aliases, context threshold, and log level. Restart Glider to apply listen ports, MITM, backends, or cloud provider registration.</p>
+          <p class="hint cfg-reload-note">Structured form is the primary editor. Save writes the config file and hot-reloads routing, aliases, context threshold, log level, and backend/model clients (Ollama/vLLM/cloud). Restart Glider to apply listen ports or MITM CA/hosts. In-flight completions keep the old backend client until the cycle ends — see Hoops → hot-swap <code>backends</code> (<code>last_ok</code> / gen) or <code>X-Glider-Backend-Reload</code> on save.</p>
           <button type="button" id="cfg-toggle-yaml" class="linkish" aria-expanded="false">Edit YAML (optional)</button>
         </div>
         <p id="cfg-error" class="cfg-error" hidden></p>
@@ -783,7 +382,7 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Local inference backends. Restart required to re-register clients.">Local backends</legend>
+            <legend title="Local inference backends. URL / timeout / model registry hot-reload without process restart.">Local backends</legend>
             <label class="block" data-tip-key="cfg-backends">JSON array (ollama / vllm)
               <textarea id="cfg-backends" class="cfg-mono" rows="6" spellcheck="false"></textarea>
             </label>

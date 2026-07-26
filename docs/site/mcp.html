@@ -25,7 +25,6 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a class="active" href="mcp.html">Tools &amp; MCP</a>
@@ -143,14 +142,12 @@ GH_TOKEN=ghp_...</pre>
       <h2>HTTP API</h2>
       <p>See <a href="api.html#mcp">API · MCP</a> and <a href="api.html#workspace">API · Workspace</a>.</p>
 
-      <h2>Seed sample hoops &amp; swarms</h2>
-      <pre>powershell -File scripts\seed-samples.ps1
-powershell -File scripts\seed-samples.ps1 -Start
-.\scripts\seed-samples.ps1 -Base http://127.0.0.1:8081</pre>
+      <h2>Seed sample swarms</h2>
+      <pre>powershell -File scripts\seed-samples.ps1</pre>
       <p>
-        Loads every top-level YAML under <code>samples/hoops/</code> and <code>samples/swarms/</code>
-        (upsert hoops via dashboard API; write swarm templates to <code>~/.glider/hoops</code>).
-        Requires the dashboard for hoops. Details: <a href="samples.html#seed">Samples · Seed all</a>.
+        Loads every top-level YAML under <code>samples/swarms/</code>
+        (writes swarm templates to <code>~/.glider/hoops</code>).
+        Details: <a href="samples.html#seed">Samples · Seed all</a>.
       </p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>

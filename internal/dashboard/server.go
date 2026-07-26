@@ -12,11 +12,10 @@ import (
 	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
-	"github.com/glider-ai/glider/internal/loop"
+	"github.com/glider-ai/glider/internal/hotswap"
 	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
-	"github.com/glider-ai/glider/internal/swarm"
 	"github.com/gorilla/websocket"
 )
 
@@ -40,18 +39,12 @@ type Server struct {
 	Episodes *contextkit.Store
 	// ContextRetainDays used by POST /api/context/prune (0 → 14).
 	ContextRetainDays int
-	// Loops is optional Glider-owned loop manager (CRUD + start/stop on /api/loops).
-	Loops *loop.Manager
+	// Workspace is the tools sandbox root for GET /api/workspace (empty → tools.DefaultWorkspaceDir()).
+	Workspace string
 	// HotSwap is optional module registry (GET /api/hotswap/modules).
-	HotSwap *swarm.Registry
-	// Swarm is optional fan-out runner (POST /api/swarm/run).
-	Swarm *swarm.Runner
-	// Templates is optional swarm template store (~/.glider/hoops).
-	Templates *swarm.TemplateStore
-	// AgentLogs is per-hoop / per-swarm-run activity rings (NOT a global mixed log).
+	HotSwap *hotswap.Registry
+	// AgentLogs is per-run activity rings (NOT a global mixed log).
 	AgentLogs *agentlog.Store
-	// HoopsDir is where hoop YAML mirrors are written.
-	HoopsDir string
 	// DocsDir optional static docs root (e.g. docs/site). Served at /docs/.
 	DocsDir string
 	// MCP is optional live MCP manager (GET /api/mcp/*, connect/disconnect/tools).
@@ -203,26 +196,6 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.handleContextPrune(w, r)
 	})
-	mux.HandleFunc("/api/loops", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			s.handleListLoops(w, r)
-		case http.MethodPost:
-			s.handleCreateLoop(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/loops/modules", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		writeJSON(w, loop.Catalog())
-	})
-	mux.HandleFunc("/api/loops/", func(w http.ResponseWriter, r *http.Request) {
-		s.handleLoopAction(w, r)
-	})
 	mux.HandleFunc("/api/hotswap/modules", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -237,22 +210,6 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.handleHotSwapEnable(w, r)
 	})
-	mux.HandleFunc("/api/swarm/run", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		s.handleSwarmRun(w, r)
-	})
-	mux.HandleFunc("/api/swarm/runs/", s.handleSwarmRunProgress)
-	mux.HandleFunc("/api/swarm/threads", s.handleSwarmThreads)
-	mux.HandleFunc("/api/swarm/threads/", s.handleSwarmThread)
-	mux.HandleFunc("/api/swarm/templates", func(w http.ResponseWriter, r *http.Request) {
-		s.handleSwarmTemplates(w, r)
-	})
-	mux.HandleFunc("/api/swarm/templates/", func(w http.ResponseWriter, r *http.Request) {
-		s.handleSwarmTemplate(w, r)
-	})
 	mux.HandleFunc("/api/context/index-tree", s.handleContextIndexTree)
 	mux.HandleFunc("/api/context/index-symbols", s.handleContextIndexSymbols)
 	mux.HandleFunc("/api/context/communities", s.handleContextCommunities)
@@ -263,6 +220,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)
 	mux.HandleFunc("/api/mcp/github", s.handleMCPGitHub)
 	mux.HandleFunc("/api/mcp/github/", s.handleMCPGitHub)
+	mux.HandleFunc("/api/vendors", s.handleVendors)
+	mux.HandleFunc("/api/vendors/", s.handleVendors)
 	mux.HandleFunc("/oauth/callback", s.handleGitHubOAuthCallback)
 	mux.HandleFunc("/ws", s.handleWS)
 

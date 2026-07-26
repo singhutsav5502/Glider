@@ -10,7 +10,6 @@ import (
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
-	"github.com/glider-ai/glider/internal/swarm"
 )
 
 // ErrFanOutDisabled is returned when StrategyFanOut is requested but not enabled.
@@ -34,7 +33,7 @@ type FanOutConfig struct {
 
 // FanOutConfigFromOrchestration maps YAML orchestration block into FanOutConfig.
 func FanOutConfigFromOrchestration(c config.OrchestrationConfig, store *contextkit.Store, sessionID string) FanOutConfig {
-	opts := swarm.OptionsFromConfig(c)
+	opts := OptionsFromConfig(c)
 	return FanOutConfig{
 		Enabled:        c.FanOut.Enabled,
 		MaxWorkers:     opts.MaxWorkers,
@@ -103,7 +102,7 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 		n = 4
 	}
 
-	workers := make([]swarm.Worker, n)
+	workers := make([]Worker, n)
 	for i := 0; i < n; i++ {
 		i := i
 		model := decision.Model
@@ -117,9 +116,9 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 				target = st.Target
 			}
 		}
-		workers[i] = swarm.Worker{
+		workers[i] = Worker{
 			ID:    fmt.Sprintf("worker-%d", i),
-			Role:  swarm.Role(decision.Role),
+			Role:  Role(decision.Role),
 			Model: model,
 			Run: func(wctx context.Context) (contextkit.Episode, error) {
 				d := *decision
@@ -158,15 +157,15 @@ func (e *FanOutExecutor) Execute(ctx context.Context, decision *backend.RoutingD
 	if req != nil {
 		turnID = req.Metadata.RequestID
 	}
-	results, err := swarm.FanOut(ctx, workers, swarm.Options{
+	results, err := FanOut(ctx, workers, Options{
 		MaxWorkers:     n,
 		MaxInflight:    cfg.MaxInflight,
 		ResultChanSize: cfg.ResultChanSize,
 		TurnID:         turnID,
 	})
 	// Partial success still merges; only hard-fail when parent cancelled with zero text.
-	merged := swarm.CritiqueMerge(results)
-	buf := swarm.ChanSize(cfg.ResultChanSize, swarm.DefaultResultChanSize)
+	merged := CritiqueMerge(results)
+	buf := ChanSize(cfg.ResultChanSize, DefaultResultChanSize)
 	out := make(chan backend.CompletionChunk, buf)
 	go func() {
 		defer close(out)

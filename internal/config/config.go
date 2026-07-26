@@ -29,17 +29,10 @@ type ContextConfig struct {
 	WarmLoadDays int `yaml:"warm_load_days,omitempty" json:"warm_load_days,omitempty"`
 }
 
-// OrchestrationConfig holds swarm/fan-out feature flags (foundation; default off).
+// OrchestrationConfig holds routing/fan-out feature flags.
 type OrchestrationConfig struct {
-	FanOut FanOutConfig `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
-	// Swarm gates POST /api/swarm/run and dashboard swarm runner (default off).
-	Swarm       SwarmConfig       `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	FanOut      FanOutConfig      `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
 	Concurrency ConcurrencyConfig `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
-	// HoopsDir is where swarm templates + hoop YAML live (default ~/.glider/hoops).
-	HoopsDir string `yaml:"hoops_dir,omitempty" json:"hoops_dir,omitempty"`
-	// Loops configures Glider-owned recurring jobs (dashboard /api/loops).
-	// Independent of Cursor IDE /loop; default route local needs no Cursor sub.
-	Loops LoopConfig `yaml:"loops,omitempty" json:"loops,omitempty"`
 	// Tools configures shell_exec allowlist and related agent tool policy.
 	Tools ToolsConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
@@ -75,34 +68,6 @@ type WebSearchConfig struct {
 	FetchMaxBytes int `yaml:"fetch_max_bytes,omitempty" json:"fetch_max_bytes,omitempty"`
 }
 
-// SwarmConfig enables the swarm FanOut API runner.
-type SwarmConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
-}
-
-// LoopConfig gates the loop runner and hoop-learning weight adjust.
-type LoopConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
-	// DefaultRoute is local|cloud|auto when a LoopSpec omits route (default local).
-	DefaultRoute string `yaml:"default_route,omitempty" json:"default_route,omitempty"`
-	// Dir overrides ~/.glider/loops state persistence.
-	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
-	// SkillsDir is an optional root for SKILL.md / skill-id resolution (also searches tools workspace + cwd).
-	SkillsDir string `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"`
-	// Worktrees isolates parallel>1 fan-out workers under runs/<id>/work/wN
-	// (git worktree add when the workspace is a git repo; else plain subdirs). Default off.
-	Worktrees bool `yaml:"worktrees,omitempty" json:"worktrees,omitempty"`
-	// HoopLearning stores iteration outcomes and optionally biases next auto route.
-	HoopLearning HoopLearningConfig `yaml:"hoop_learning,omitempty" json:"hoop_learning,omitempty"`
-}
-
-// HoopLearningConfig is self-learning MVP for loops (see planning docs "hoop learning").
-type HoopLearningConfig struct {
-	Enabled       bool    `yaml:"enabled" json:"enabled"`
-	LocalBiasStep float64 `yaml:"local_bias_step,omitempty" json:"local_bias_step,omitempty"`
-	MaxBias       float64 `yaml:"max_bias,omitempty" json:"max_bias,omitempty"`
-	Window        int     `yaml:"window,omitempty" json:"window,omitempty"`
-}
 
 // FanOutConfig enables StrategyFanOut on the gateway executor (max 2–4 workers).
 type FanOutConfig struct {
@@ -155,6 +120,24 @@ type MITMConfig struct {
 	// RequireLocalHealthy gates ArmLocal on a live Ollama (or local) health check.
 	// When true and local is down, Path B does not arm local (avoids silent origin).
 	RequireLocalHealthy bool `yaml:"require_local_healthy,omitempty" json:"require_local_healthy,omitempty"`
+
+	// Transparent enables OS-level packet interception (see
+	// planning/transparent_redirector_design.md) — the primary transport for
+	// vendors that don't cooperate via a proxy setting or base-URL env var
+	// (and, per that design doc, the default even for ones that do). Windows
+	// only for now (WinDivert); other OSes return a clear "not implemented"
+	// error from Proxy.Start rather than silently no-op'ing.
+	Transparent bool `yaml:"transparent,omitempty" json:"transparent,omitempty"`
+	// TransparentPort is Glider's local ingress for redirected connections —
+	// distinct from Port (the CONNECT-based listener above).
+	TransparentPort int `yaml:"transparent_port,omitempty" json:"transparent_port,omitempty"`
+	// TransparentPorts are the destination ports intercepted system-wide.
+	// Empty → []int{443}.
+	TransparentPorts []int `yaml:"transparent_ports,omitempty" json:"transparent_ports,omitempty"`
+	// WinDivertDLLPath points at WinDivert.dll (WinDivertNN.sys must sit
+	// alongside it — WinDivert's own requirement). Empty → Transparent is a
+	// no-op even if true, since there's nothing to load.
+	WinDivertDLLPath string `yaml:"windivert_dll_path,omitempty" json:"windivert_dll_path,omitempty"`
 }
 
 // OriginOnLocalErrorOrDefault is true unless explicitly set false.

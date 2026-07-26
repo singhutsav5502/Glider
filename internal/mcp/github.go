@@ -27,7 +27,7 @@ Docker stdio (official image):
   docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
 
 Never put the PAT in hoop YAML — use auth.token_env only.
-Manual hosted verify: Connect → tools source=live → get_me twice; Reconnect after PAT rotate.
+Manual hosted verify: see planning/tools_mcp.md § ops verification checklist (NOT production-verified without live PAT).
 `
 
 // DefaultGitHubConfig returns a recommended ServerConfig for GitHub MCP HTTP.

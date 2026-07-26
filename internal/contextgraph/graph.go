@@ -126,18 +126,6 @@ func New(dir string) *Store {
 	return s
 }
 
-var defaultStore = New("")
-
-// Default returns the process-wide store (MITM wires into this unless overridden).
-func Default() *Store { return defaultStore }
-
-// SetDefault replaces the process-wide store (tests / main).
-func SetDefault(s *Store) {
-	if s != nil {
-		defaultStore = s
-	}
-}
-
 // Append records an event and updates the turn index.
 func (s *Store) Append(ev Event) {
 	if s == nil {

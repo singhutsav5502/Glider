@@ -66,24 +66,36 @@ func (t *artifactWrite) Call(_ context.Context, input string, args json.RawMessa
 	if relPath == "" || looksLikeProsePath(relPath) {
 		return fail(t.Name(), fmt.Errorf("path required (work|out relative/path)"))
 	}
-	runID := "run"
-	if t.reg != nil {
-		if id := t.reg.RunID(); id != "" {
-			runID = id
-		}
-	}
 	root := t.root
 	if t.reg != nil && t.reg.Workspace() != "" {
 		root = t.reg.Workspace()
 	}
-	lay := LayoutForRun(root, runID)
+	var lay RunLayout
+	if t.reg != nil {
+		if cur, ok := t.reg.CurrentLayout(); ok {
+			lay = cur
+		}
+	}
+	if lay.RelWork == "" {
+		runID := "run"
+		if t.reg != nil {
+			if id := t.reg.RunID(); id != "" {
+				runID = id
+			}
+		}
+		lay = LayoutForRun(root, runID)
+	}
 	_ = lay.Ensure()
 	base := lay.RelOut
 	if kind == "work" {
 		base = lay.RelWork
 	}
 	joined := filepath.ToSlash(filepath.Join(filepath.FromSlash(base), filepath.FromSlash(relPath)))
-	abs, err := safeJoin(root, joined)
+	joinRoot := root
+	if lay.RootAbs != "" {
+		joinRoot = lay.RootAbs
+	}
+	abs, err := safeJoin(joinRoot, joined)
 	if err != nil {
 		return fail(t.Name(), err)
 	}

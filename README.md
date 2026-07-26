@@ -1,208 +1,184 @@
 # Glider
 
-Local AI harness above Cursor: dual-mode proxy that routes simple work to Ollama/vLLM and otherwise either (A) your OpenAI/Anthropic keys or (B) Cursor’s original upstream via HTTPS MITM.
+**Local-first AI harness for Cursor** — a dual-mode proxy that routes inference to Ollama/vLLM locally or to your own OpenAI/Anthropic keys (BYOK), with an optional MITM path that intercepts Cursor's Agent traffic for selective local fulfillment.
+
+Glider adds intelligent routing, a Loop Engineering runtime (hoops, swarms, parallel fan-out), sandboxed tool execution, MCP integration, and a live dashboard — all without requiring a cloud subscription for local work.
+
+---
+
+## Features
+
+| Category | What it does |
+|----------|-------------|
+| **Dual-mode proxy** | Gateway (`:8080`) for BYOK base-URL override + MITM (`:8082`) for TLS-intercepted Cursor Agent traffic |
+| **Smart routing** | Explicit commands, turn-family sticky, task classifier, Starlark scripts, token ceiling — routes each request to local or cloud |
+| **Loop Engineering** | Declarative YAML hoops: planner → actor → critic cycles, HITL gates, parallel fan-out, swarm mode, context seeds, governance budgets |
+| **Swarm orchestration** | Multi-worker fan-out with critique-merge, nested swarm runners, wave-based thread coordination |
+| **Sandboxed tools** | Built-in filesystem, git, shell, web search, artifact write — all scoped under `~/.glider/workspace/runs/<id>/` |
+| **MCP integration** | GitHub tools via device-flow OAuth or PAT; extensible server registry |
+| **Dashboard** | Real-time web UI: routing stats, VRAM/GPU, config editor, hoop lifecycle, graph editor, workspace browser, agent logs |
+| **Hot-reload** | Edit routing rules, model aliases, backends, thresholds, and log level without restarting |
+| **Context graph** | Turn-indexed event store for sticky routing, episode summaries, and analytics |
+| **Model aliases** | Map Cursor model IDs (e.g. `gpt-4o`) onto local models (e.g. `qwen2.5-coder:14b`) transparently |
+
+---
 
 ## Quick start
 
+> **Full walkthrough:** [docs/SETUP.md](docs/SETUP.md)
+
+### Prerequisites
+
+- **Go 1.22+** — build the binary
+- **Ollama** — local inference (`ollama pull qwen2.5-coder:14b`)
+- Optional: OpenAI / Anthropic API keys for cloud fallback
+
+### Build and run
+
 ```bash
-go test ./...
 go build -o glider.exe ./cmd/glider
 ./glider.exe --config configs/glider.yaml
 ```
 
-| Listener | Port | Role |
-|----------|------|------|
-| OpenAI-compatible **gateway** | `8080` | BYOK Base URL override |
-| **MITM** forward proxy | `8082` | Cursor `http.proxy` → inspect / local / origin passthrough |
-| Dashboard | `8081` | Overview, VRAM & Models, Rules, Config, Hoops & Swarm, Graph, MCP, Workspace, agent logs |
+### Verify
 
-Cloud keys (gateway cloud path): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Gateway | `http://127.0.0.1:8080` | OpenAI-compatible endpoint |
+| Dashboard | `http://127.0.0.1:8081` | Web UI |
+| MITM proxy | `127.0.0.1:8082` | Cursor `http.proxy` target |
 
-**Local backends:** Ollama alone is enough. Default local model is **`qwen2.5-coder:14b`** (`ollama pull qwen2.5-coder:14b`). Configs probe `http://127.0.0.1:11434` (prefer `127.0.0.1` over `localhost` on Windows). vLLM is optional — uncomment it in `configs/glider.yaml` only if you run a server on `:8001`.
+```bash
+curl http://127.0.0.1:8080/healthz
+# → ok
+```
 
-Open the dashboard at [http://localhost:8081](http://localhost:8081) → **Config** to edit the running config (structured form primary; Edit YAML optional). **Workspace** browses `runs/<id>/work` and `out` under the tools sandbox. **MCP** connects GitHub tools. Save writes the config file and hot-reloads routing, model aliases, context threshold, and log level (GPU assignments persist on the same path). Restart Glider after changing listen ports, MITM, backends, or cloud provider registration.
+Open the dashboard at [http://127.0.0.1:8081](http://127.0.0.1:8081).
 
-**Hostable docs:** [docs/site/](docs/site/) (Architecture, Routing, Context, Loop Engineering, Sample hoops). Serve with `powershell -File scripts\serve-docs.ps1` or open `docs/site/index.html`. With Glider running from the repo root, docs are also at [http://127.0.0.1:8081/docs/](http://127.0.0.1:8081/docs/).
+---
 
-**Sample Loop Engineering hoops:** [samples/hoops/](samples/hoops/) — `go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start` (Ollama + Glider required).
+## How it works
 
-### Shipped features (easy snippets)
+```
+ Cursor / any client
+       │
+       ├── Mode A (BYOK): Override Base URL → :8080/v1
+       │       → Resolve model alias → Tokenize → Route → Transform → Execute
+       │
+       └── Mode B (MITM): http.proxy → :8082
+               → TLS decrypt allowlisted hosts → same pipeline (or origin passthrough)
+```
 
-Status authority: [planning/remaining_gaps.md](planning/remaining_gaps.md) (16-area matrix). Snippets below are **SHIPPED** unless marked otherwise.
+**Model alias** — Cursor often sends a familiar ID (e.g. `gpt-4o`). Glider’s `model_aliases` map rewrites that to a registry name (e.g. `qwen2.5-coder:14b`) *before* routing, so the IDE keeps its label while inference hits your local or BYOK model.
 
-| Feature | Status | Snippet / API |
-|---------|--------|----------------|
-| **Context seed** | SHIPPED | Stage `kind: context` → `[context_digest]` ([docs](docs/site/context.html#hoop-seed)) |
-| **Feeds edges** (in-hoop) | SHIPPED | `graph_edges: [{ kind: feeds, … }]` → `FEEDS:` ([sample](samples/hoops/feeds-edge-mvp.yaml)); cross-hoop Phase 3 **DEFERRED** |
-| **Skills** | SHIPPED | `skill: security-audit` → `skills/…/SKILL.md` (plain-string fallback) |
-| **Parallel swarm** | SHIPPED | `parallel: 2` + `parallel_mode: swarm` ([sample](samples/hoops/parallel-swarm-mode.yaml)) |
-| **Worktrees** | SHIPPED | `orchestration.loops.worktrees: true` → `runs/<id>/work/wN/` |
-| **CapHooks** | SHIPPED | Plugin `hooks` → enter/exit around stages (no-op if none) |
-| **Budget chips** | SHIPPED | Hoop `governance:` soft/hard → dashboard spend chips (no chargeback UI — **DEFERRED**) |
-| **Episode chips** | SHIPPED | Overview → `GET /api/context/episodes` |
-| **Agent-log cursor** | SHIPPED | `GET /api/agent-logs?scope=hoop&id=<id>&after_seq=<n>` |
-| **Path B tool codec** (common map) | SHIPPED | Opt-in `mitm.agent_rpc_tool_codec: true` — Read/Grep/Edit/Shell/Glob/Ls/Web* → Cursor oneofs + TruncatedToolCall fallback (`toolcall_map.go`); full Cursor catalog / live UI verify **DEFERRED** — prefer Path A for Agent+tools demos |
-| **CycleExecutor** (SOLID extract) | SHIPPED | `cycle_executor.go` (~444 lines) owns completion bodies; Manager thin wrappers; `runCycle` still on Manager |
+Both modes share the same completion path (`PipelineCompleter`). That path only answers **which model/backend handles this request**. Loop Engineering (below) defines the **mission shape** — who runs, in what order, what they share, when a human vetoes, and when to stop.
 
-Not shipped as product features: SSO/RBAC, SIEM hash-chain, Temporal multi-day HITL, chargeback billing, Leiden communities.
+### Routing priority (highest first)
+
+1. Explicit `/local` `/cloud` `/heavy` `/fast` commands
+2. Turn-family sticky (Path B follow-on traffic)
+3. Tool-step re-decide (`tool_followup`)
+4. Task classifier (tools → cloud, simple → local)
+5. Starlark scripts
+6. Token ceiling
+7. Default rule
+
+---
+
+## Configuration
+
+Primary config: [`configs/glider.yaml`](configs/glider.yaml)
+
+| Profile | File | Use case |
+|---------|------|----------|
+| Dual mode (default) | `configs/glider.yaml` | Gateway + MITM + dashboard |
+| Cloud-oriented | `configs/glider.cloud.yaml` | BYOK cloud bias, MITM off |
+
+Cloud keys via env: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Copy [`.env.example`](.env.example) → `.env.local` for local credential loading.
+
+**Hot-reload** (no restart): routing rules, model aliases, context threshold, log level, backend URLs/clients.
+**Requires restart**: listen ports, MITM CA/hosts.
+
+---
+
+## Loop Engineering (Hoops)
+
+Routing picks a backend for one completion. A **hoop** is the job graph above that: stages (planner → actor → critic), edges (`feeds` / control flow), parallel fan-out or swarm, shared memory (context seed), `human_gate` pauses, and stop conditions (eval score, `max_iterations`, token budgets).
 
 ```yaml
-# feeds + context seed (see samples/hoops/)
 stages:
   - { id: seed, kind: context }
   - { id: research, kind: actor }
-  - { id: synth, kind: actor, parallel: 2, parallel_mode: fanout }  # or swarm
+  - { id: synth, kind: actor, parallel: 2, parallel_mode: fanout }
+  - { id: critic, kind: critic }
+governance:
+  soft_token_limit: 50000
+  hard_token_limit: 100000
 graph_edges:
   - { source: research, target: synth, kind: feeds }
+human_gate: true
+max_iterations: 3
 ```
+
+**Run a sample hoop:**
 
 ```bash
-# Incremental agent logs (dashboard uses this for poll merge)
-curl "http://127.0.0.1:8081/api/agent-logs?scope=hoop&id=my-hoop&after_seq=42&limit=50"
-curl "http://127.0.0.1:8081/api/context/episodes"
+go run ./scripts/loadhoop -file samples/hoops/hello-critic.yaml -start
 ```
 
----
+Or use the dashboard: **Hoops & Swarm** tab → select a hoop → **Start**.
 
-## Shared harness
-
-Both the gateway (`:8080`) and MITM (`:8082`) run the same pipeline for recognizable chat/Responses bodies:
-
-**Alias → Tokenizer → Router → Transform → Orchestrator/Executor**
-
-| Decision | Gateway (Mode A) | MITM (Mode B) |
-|----------|------------------|---------------|
-| `target: local` | Ollama / vLLM | Ollama / vLLM |
-| `target: cloud` (or non-local) | BYOK OpenAI / Anthropic | **Origin passthrough** to Cursor’s upstream Host (auth intact) |
-
-Unrecognized Cursor-proprietary envelopes always blind-passthrough on MITM.
-
-**Routing priority:** explicit (`/local`, `/cloud`, `/heavy`, `/fast`) → **turn-family sticky** (Path B) → `tool_followup` → **task_classifier** → Starlark → context-token **ceiling** → default. See `configs/glider.yaml` and [planning/README.md](planning/README.md).
-
-**Path A tools:** gateway preserves `tools` / `tool_choice` and tool-loop message fields (`assistant.tool_calls`, `role=tool` + `tool_call_id`). Anthropic-shaped `tool_use` / `tool_result` blocks are normalized to OpenAI. Stream `tool_calls` are re-emitted on Cursor SSE. Ollama/vLLM attach tools best-effort; models that reject tools fall through `FallbackChain` to BYOK cloud (`ToolsUnsupportedError`). Default `routing.task_classifier.tools_force_cloud: true` (allowlisted tools can skip via `tool_followup`). Path B child/tool RunSSE stays origin.
-
-**Analytics:** Overview LOCAL/CLOUD % counts `origin_passthrough` as cloud. Live snapshot: `GET /api/metrics` (`distribution`, `tokens_saved_est`).
-
----
-
-## Two modes
-
-### Mode A — BYOK gateway (Chat / Ask / Cmd+K)
-
-1. Run Glider.
-2. Cursor **Settings → Models**:
-   - Enable **OpenAI API Key** (BYOK).
-   - **Override OpenAI Base URL** → `http://localhost:8080/v1`
-3. Pick a model that uses the OpenAI BYOK path.
-4. Optional prompt commands: `/local`, `/cloud`, `/heavy`.
-
-Gateway “cloud” means **your** OpenAI/Anthropic endpoints — not Cursor subscription traffic.
-
-Default-to-cloud profile (no MITM):
-
-```bash
-./glider.exe --config configs/glider.cloud.yaml
-```
-
-### Mode B — MITM (Agent TLS decrypt + selective harness)
-
-Use this when you want Agent HTTPS to Cursor API hosts (`api2`/`api3`/`api4`/`*.api5.cursor.sh`) to hit Glider first.
-
-**What MITM can do today**
-
-- Decrypt allowlisted hosts and keep subscription Agent working via **origin passthrough** when not fulfilling.
-- Route **local** for OpenAI/Responses JSON (`/v1/chat/completions`, `/v1/responses`).
-- **Path B text-only Agent:** with `mitm.agent_rpc_fulfill: true`, extract prompts from `BidiAppend` and fulfill correlated `RunSSE` locally (Ollama; leave `agent_rpc_canned_on_error: false` so real backends are preferred). Legacy `AiService/StreamChat*` remains fulfillable too.
-
-**What MITM still cannot do (by default)**
-
-- Full Agent **tool loops** / child RunSSE stay on Cursor origin unless you opt in to `agent_rpc_tool_codec` (common ToolCall map ships; full Cursor catalog + live UI acceptance still **DEFERRED**). For proven Agent+tools, use **Mode A gateway** (Override OpenAI Base URL + `cus-` model prefix). See [planning/cursor_agent_protocol_interception.md](planning/cursor_agent_protocol_interception.md).
-
-**Path B (Agent RPC fulfill + debug)**
-
-```yaml
-mitm:
-  agent_rpc_fulfill: true          # BidiAppend extract → RunSSE text fulfill
-  agent_rpc_canned_on_error: false # prefer Ollama; set true only to dry-run codec
-  agent_rpc_tool_codec: false      # SHIPPED opt-in: common ToolCall map + Truncated fallback; full catalog DEFERRED
-  debug_agent_rpc: true            # or: GLIDER_MITM_DEBUG_RPC=1
-```
-
-Restart Glider, send an Agent chat, then inspect `~/.glider/mitm-debug/` dumps and `GET http://127.0.0.1:8081/api/mitm/debug/recent`.
-
-Other HTTPS (updates, telemetry, non-allowlisted hosts) still goes through the proxy as a **blind tunnel** — Glider does not decrypt it.
-
-1. Run Glider with `mitm.enabled: true` (default in `configs/glider.yaml`).
-2. On first start Glider writes a CA to `~/.glider/mitm/ca.crt` (+ `ca.key`).
-3. **Trust the CA**
-   - Windows: import `ca.crt` into **Trusted Root Certification Authorities** (current user or local machine). Glider is a Cursor-only proxy — putting the CA in Trusted Root does not change normal Windows internet for apps that are not using this proxy.
-   - Also set env when launching Cursor: `NODE_EXTRA_CA_CERTS=%USERPROFILE%\.glider\mitm\ca.crt`
-4. Cursor `settings.json`:
-
-```json
-{
-  "http.proxy": "http://127.0.0.1:8082",
-  "http.proxySupport": "override",
-  "http.proxyStrictSSL": false,
-  "cursor.general.disableHttp2": true
-}
-```
-
-5. Fully quit and relaunch Cursor (not just Reload Window).
-6. Use Agent / any Cursor model normally. Watch the dashboard at `http://localhost:8081`.
-
-**Notes**
-
-- Prefer HTTP/1.1 (`disableHttp2`). Some Cursor builds bypass `http.proxy` on HTTP/2 / Agent singleton paths.
-- With `agent_rpc_fulfill: true`, **text-only** root Agent turns (BidiAppend → RunSSE) can fulfill locally; **tool loops / child RunSSE stay origin by default** (opt-in `agent_rpc_tool_codec` for common map). Unrecognized envelopes always passthrough.
-- Force local with `/local` on chat/Responses bodies (gateway Mode A, or OpenAI-shaped MITM hits). On Path B, `/local` / `/cloud` apply via TipTap extract when present.
-
----
-
-## Model aliases
-
-In `glider.yaml`:
-
-```yaml
-model_aliases:
-  "gpt-4o": "qwen2.5-coder:14b"
-  "gpt-4o-mini": "llama3:8b-instruct"
-```
-
-Applied before routing so Cursor-selected model IDs can map onto local registry names. Explicit routing rule `action.model` still wins after the alias step when a rule matches.
-
----
-
-## Responses API
-
-Gateway accepts:
-
-- `POST /v1/chat/completions` (standard)
-- `POST /v1/responses`
-- Responses-shaped JSON posted to `/v1/chat/completions` (Cursor Agent quirk)
+See [samples/hoops/](samples/hoops/) for enterprise-grade examples (incident command, compliance packs, security audits, research synthesis).
 
 ---
 
 ## Architecture
 
-| Package | Role |
-|---------|------|
-| `internal/api` | OpenAI + Responses gateway + SSE |
-| `internal/mitm` | HTTPS MITM forward proxy (CONNECT, CA, passthrough / local) |
-| `internal/backend` | Ollama, vLLM, OpenAI, Anthropic |
-| `internal/config` | `glider.yaml` load + hot-reload |
-| `internal/router` | Explicit / classifier / Starlark / tool_followup |
-| `internal/contextgraph` | Turn-family event graph (sticky + analytics) |
-| `internal/swarm` | FanOut / Merge / multi-wave threads / nested hoop `parallel_mode: swarm` |
-| `internal/tools` | Builtins (fs/git/web/artifacts) + MCP registry; ScopeRel run layout |
-| `internal/loop` | Hoop cycles, HITL resume, context seed, parallel fanout/swarm; `CycleExecutor` completion bodies + `prompt.go` + `CheckGovernance` (**SHIPPED**) |
-| `internal/transform` | Tokenizer + opt-in trim/augment |
-| `internal/orchestrator` | Lifecycle, queue, fallback, aliases, FanOut |
-| `internal/vram` | nvidia-smi monitor + allocation |
-| `internal/metrics` | Route/token/cost/latency + event bus |
-| `internal/dashboard` | Embedded Web UI + REST + WebSocket |
+| Package | Responsibility |
+|---------|---------------|
+| `cmd/glider` | Entrypoint — wires all subsystems |
+| `internal/api` | OpenAI + Responses gateway, SSE streaming |
+| `internal/mitm` | HTTPS MITM forward proxy (CONNECT, CA, Agent RPC fulfill) |
+| `internal/backend` | Ollama, vLLM, OpenAI, Anthropic clients |
+| `internal/router` | Explicit / classifier / Starlark / tool_followup routing |
+| `internal/loop` | Hoop cycles, HITL, context seed, parallel fan-out/swarm, governance |
+| `internal/swarm` | FanOut / Merge / multi-wave threads, hot-swap modules |
+| `internal/tools` | Builtins (fs/git/web/artifacts) + MCP registry, ScopeRel sandbox |
+| `internal/orchestrator` | Lifecycle, queue, fallback chain, rate/budget, VRAM allocation |
+| `internal/dashboard` | Embedded web UI + REST API + WebSocket push |
+| `internal/contextgraph` | Turn-family event graph (sticky routing + analytics) |
+| `internal/config` | YAML load + file-watcher hot-reload |
+| `internal/transform` | Tokenizer, context trim/augment |
+| `internal/vram` | nvidia-smi GPU monitor + allocation strategy |
+| `internal/metrics` | Route/token/cost/latency collector + event bus |
+| `internal/mcp` | MCP server management (GitHub HTTP + stdio) |
 
-Feature status matrix: [planning/remaining_gaps.md](planning/remaining_gaps.md). Planning index: [planning/README.md](planning/README.md).
+---
+
+## Documentation
+
+| Resource | Description |
+|----------|-------------|
+| [docs/SETUP.md](docs/SETUP.md) | Step-by-step install, build, first hoop, Cursor integration |
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/CURSOR_CHECKLIST.md](docs/CURSOR_CHECKLIST.md) | Mode A / Mode B verification checklist |
+| [docs/MITM_NETWORK.md](docs/MITM_NETWORK.md) | MITM / Cursor networking (ports, CONNECT, CA, sticky `/cloud`) |
+| [docs/site/](docs/site/) | Hostable product docs (architecture, routing, API, samples) |
+| [samples/hoops/](samples/hoops/) | Runnable hoop YAML files |
+| [planning/README.md](planning/README.md) | Engineering planning index |
+| [planning/remaining_gaps.md](planning/remaining_gaps.md) | Feature status matrix (16 areas) |
+
+Serve docs locally:
+
+```bash
+# Via dedicated script
+powershell -File scripts/serve-docs.ps1
+
+# Or with Glider running (served at dashboard port)
+# → http://127.0.0.1:8081/docs/
+```
+
+---
 
 ## Tests
 
@@ -211,11 +187,30 @@ go test ./...
 go test ./bench -bench=. -benchtime=1s
 ```
 
-Manual Cursor checklist: [docs/CURSOR_CHECKLIST.md](docs/CURSOR_CHECKLIST.md).
+---
 
-## Config
+## Project status
 
-- [configs/glider.yaml](configs/glider.yaml) — **intro / full-system demo** (default): MITM on; Agent host allowlist; model_aliases; Starlark + `/local`/`/cloud` overrides; Ollama/vLLM + BYOK placeholders; dashboard. Gateway cloud → BYOK; MITM cloud → origin passthrough.
-- [configs/glider.cloud.yaml](configs/glider.cloud.yaml) — gateway default cloud (BYOK), MITM off
+Glider is functional and actively developed. The [feature matrix](planning/remaining_gaps.md) tracks 16 areas — all core systems are shipped and tested. Key items on the intentional backlog:
 
-Dashboard APIs (selected): `GET|PUT /api/config`, `GET /api/vram`, `GET /api/models`, `GET|POST /api/loops`, `GET /api/workspace`, `GET /api/agent-logs`, `GET|POST /api/mcp/*`, `POST /api/swarm/run`. Full tables: [docs/site/api.html](docs/site/api.html). Session history lives under `~/.glider/history` (one session = one Glider process run). Tools sandbox (default `~/.glider/workspace`) holds `runs/<hoop-or-turn-id>/work` + `out` — see [planning/tools_mcp.md](planning/tools_mcp.md).
+- Full Path B ToolCall catalog / live Cursor UI verification (prefer Mode A for Agent+tools)
+- Enterprise features (SSO/RBAC, SIEM, Temporal HITL, chargeback billing) — deferred by design
+- Dashboard pixel-perfect polish
+
+See [planning/intentional_backlog.md](planning/intentional_backlog.md) for deferred-by-design decisions.
+
+---
+
+## Contributing
+
+```bash
+# Run tests before submitting changes
+go test ./...
+
+# Build
+go build -o glider.exe ./cmd/glider
+```
+
+---
+
+*Built for developers who want local-first AI coding without giving up cloud quality when it matters.*

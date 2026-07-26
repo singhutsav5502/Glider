@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -292,11 +295,83 @@ func TestIsSessionOrAuthRetryable(t *testing.T) {
 	if !isSessionOrAuthRetryable(401, "") {
 		t.Fatal("401")
 	}
+	if !isSessionOrAuthRetryable(403, "") {
+		t.Fatal("403")
+	}
 	if !isSessionOrAuthRetryable(400, "Missing Mcp-Session-Id") {
 		t.Fatal("400 session")
 	}
+	if !isSessionOrAuthRetryable(400, "access denied") {
+		t.Fatal("400 access denied")
+	}
 	if isSessionOrAuthRetryable(500, "boom") {
 		t.Fatal("500 should not retry")
+	}
+}
+
+func TestClassifyAuthErr(t *testing.T) {
+	err := classifyAuthErr(fmt.Errorf("mcp http 401: bad token"))
+	if err == nil || !strings.Contains(err.Error(), "authentication failed") {
+		t.Fatalf("%v", err)
+	}
+	err = classifyAuthErr(fmt.Errorf("mcp http 403: no"))
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestHTTPHandshakeRefreshesAuthOn401(t *testing.T) {
+	credDir := t.TempDir()
+	t.Setenv("GLIDER_HOME", credDir)
+	_ = os.Unsetenv("GITHUB_TOKEN")
+	_ = os.Unsetenv("GH_TOKEN")
+	t.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "bad-pat")
+
+	tokenPath := filepath.Join(credDir, "credentials", "github_token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jsonRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		auth := r.Header.Get("Authorization")
+		attempts++
+		if req.Method == "initialize" {
+			if !strings.Contains(auth, "good-pat") {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`unauthorized`))
+				// Simulate UI Paste PAT: credential file rotated while connect retries.
+				_ = os.WriteFile(tokenPath, []byte("good-pat\n"), 0o600)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Mcp-Session-Id", "sess-auth-1")
+			_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Result: mustJSON(map[string]any{
+					"protocolVersion": protocolVersion,
+					"capabilities":    map[string]any{},
+					"serverInfo":      map[string]any{"name": "mock"},
+				}),
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mustJSON(map[string]any{})})
+	}))
+	defer srv.Close()
+
+	m := NewManager()
+	_, err := m.Connect(context.Background(), ServerConfig{
+		ID: "github", Transport: TransportHTTP, URL: srv.URL,
+		Auth: AuthConfig{Kind: AuthEnv, TokenEnv: "GITHUB_PERSONAL_ACCESS_TOKEN"},
+	})
+	if err != nil {
+		t.Fatalf("connect after auth refresh: %v (attempts=%d)", err, attempts)
+	}
+	if attempts < 2 {
+		t.Fatalf("expected initialize retry after 401, attempts=%d", attempts)
 	}
 }
 

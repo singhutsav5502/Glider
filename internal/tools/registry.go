@@ -121,10 +121,12 @@ func ResolveWorkspace(configured string) (string, error) {
 
 // Registry unifies native + MCP + plugin tools.
 type Registry struct {
-	mu       sync.RWMutex
-	opts     Options
-	builtins map[string]Builtin
-	runID    string // active hoop / swarm run for artifact_write layout
+	mu        sync.RWMutex
+	opts      Options
+	builtins  map[string]Builtin
+	runID     string // active hoop / swarm run for artifact_write layout
+	layout    RunLayout
+	hasLayout bool
 }
 
 // NewRegistry builds a registry and registers the standard builtin set.
@@ -175,7 +177,7 @@ func (r *Registry) Workspace() string {
 	return r.opts.Workspace
 }
 
-// EnsureRunLayout creates runs/<id>/{work,out} and sets the active run id.
+// EnsureRunLayout creates runs/<id>/{work,out} and records the association.
 func (r *Registry) EnsureRunLayout(runID string) (RunLayout, error) {
 	if r == nil {
 		return RunLayout{}, fmt.Errorf("nil registry")
@@ -184,8 +186,70 @@ func (r *Registry) EnsureRunLayout(runID string) (RunLayout, error) {
 	if err := lay.Ensure(); err != nil {
 		return lay, err
 	}
-	r.SetRunID(lay.RunID)
+	r.mu.Lock()
+	r.runID = lay.RunID
+	r.layout = lay
+	r.hasLayout = true
+	r.mu.Unlock()
 	return lay, nil
+}
+
+// BindLayout installs a pre-validated layout (e.g. workspace stage mode=existing).
+func (r *Registry) BindLayout(layout RunLayout) error {
+	if r == nil {
+		return fmt.Errorf("nil registry")
+	}
+	if err := layout.Ensure(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if layout.RootAbs != "" {
+		r.opts.Workspace = layout.RootAbs
+	}
+	if layout.RunID != "" {
+		r.runID = layout.RunID
+	}
+	r.layout = layout
+	r.hasLayout = true
+	return nil
+}
+
+// BindExisting resolves workspace_path (+ optional out_path) under the sandbox
+// and binds it as the active work/out roots for subsequent tool calls.
+func (r *Registry) BindExisting(runID, workPath, outPath string) (RunLayout, error) {
+	if r == nil {
+		return RunLayout{}, fmt.Errorf("nil registry")
+	}
+	layout, err := LayoutExisting(r.Workspace(), runID, workPath, outPath)
+	if err != nil {
+		return RunLayout{}, err
+	}
+	if err := r.BindLayout(layout); err != nil {
+		return RunLayout{}, err
+	}
+	return layout, nil
+}
+
+// CurrentLayout returns the registry-bound layout, if any.
+func (r *Registry) CurrentLayout() (RunLayout, bool) {
+	if r == nil {
+		return RunLayout{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.hasLayout {
+		return RunLayout{}, false
+	}
+	return r.layout, true
+}
+
+// ActiveLayout prefers ctx-bound layout, then registry fallback.
+func (r *Registry) ActiveLayout(ctx context.Context) (RunLayout, bool) {
+	if l, ok := RunLayoutFrom(ctx); ok {
+		return l, true
+	}
+	return r.CurrentLayout()
 }
 
 // RegisterBuiltin adds or replaces a native tool.

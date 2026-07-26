@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sample hoops and swarms · Glider Docs</title>
+  <title>Sample swarms · Glider Docs</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
 </head>
@@ -25,7 +25,6 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -33,64 +32,13 @@
     </nav>
     <main class="prose">
       <div class="badge">Runnable</div>
-      <h1>Sample hoops and swarms</h1>
-      <p>YAML under <code>samples/hoops/</code> and <code>samples/swarms/</code>. Defaults use <strong>route: local</strong> for Ollama.</p>
+      <h1>Sample swarms</h1>
+      <p>YAML under <code>samples/swarms/</code>. Defaults use <strong>route: local</strong> for Ollama.</p>
 
       <h2>Prerequisites</h2>
       <pre>ollama serve
 .\glider.exe --config configs\glider.yaml
-# Dashboard :8081 — orchestration.fan_out + swarm enabled</pre>
-
-      <h2>Enterprise showcase hoops</h2>
-      <table>
-        <tr><th>File</th><th>Features exercised</th></tr>
-        <tr>
-          <td><code>enterprise-incident-command.yaml</code></td>
-          <td>SEV command channel; 3 parallel roles; safety critic; feedback; human gate; latency stop</td>
-        </tr>
-        <tr>
-          <td><code>compliance-evidence-pack.yaml</code></td>
-          <td>SOC2 change-control pack; parallel pack writers; auditor critic; evidence gaps</td>
-        </tr>
-        <tr>
-          <td><code>clone-repo-security-audit.yaml</code></td>
-          <td>git_clone + ScopeRel work path; context_seed; parallel quality/security; human_gate; on_fail_n</td>
-        </tr>
-        <tr>
-          <td><code>parallel-swarm-mode.yaml</code></td>
-          <td><code>kind: context</code> seed + <code>parallel_mode: swarm</code> (nested Runner); local</td>
-        </tr>
-        <tr>
-          <td><code>feeds-edge-mvp.yaml</code></td>
-          <td><code>graph_edges kind=feeds</code> producer → consumer <code>FEEDS:</code> block (data-only edge)</td>
-        </tr>
-        <tr>
-          <td><code>escalation-policy.yaml</code></td>
-          <td>Severity matrix + paging ladder; parallel author; on-call critic</td>
-        </tr>
-        <tr>
-          <td><code>incident-triage.yaml</code></td>
-          <td>Lighter on-call runbook; parallel actors; critic; learning; feedback</td>
-        </tr>
-        <tr>
-          <td><code>research-synthesize.yaml</code></td>
-          <td>Research → synthesize → critique; contains stop; feedback to planner</td>
-        </tr>
-        <tr>
-          <td><code>release-changelog.yaml</code></td>
-          <td>Release checklist + changelog; human gate; high critic threshold</td>
-        </tr>
-      </table>
-
-      <h2>Smoke hoops</h2>
-      <table>
-        <tr><th>File</th><th>What it does</th></tr>
-        <tr><td><code>hello-critic.yaml</code></td><td>Minimal planner/actor/critic smoke</td></tr>
-        <tr><td><code>explain-snippet.yaml</code></td><td>Explain a short Go function</td></tr>
-        <tr><td><code>rename-suggest.yaml</code></td><td>Rename suggestions</td></tr>
-        <tr><td><code>review-lite.yaml</code></td><td>Light code review</td></tr>
-        <tr><td><code>summarize-notes.yaml</code></td><td>Summarize bullets</td></tr>
-      </table>
+# Dashboard :8081 — orchestration.swarm enabled</pre>
 
       <h2>Swarm templates</h2>
       <table>
@@ -104,19 +52,10 @@
         <tr><td><code>samples/swarms/support-triage-swarm.yaml</code></td><td>plan / exec / research</td></tr>
       </table>
 
-      <h2 id="user-guide">User guide: Hoops, Graph, Swarm</h2>
+      <h2>User guide: Graph, Swarm</h2>
       <ol>
-        <li><strong>Stage graph</strong> — build the hoop pipeline (palette, Link mode, Fit). Create / Update on Hoops tab.</li>
-        <li><strong>Start hoop</strong> — click the card to bind Agent log (<em>Following hoop &lt;id&gt;</em>), then Start. Cycle uses stages from the graph.</li>
         <li><strong>Swarm wave</strong> — link orchestrator to worker roles on Swarm graph; Run swarm calls <code>swarm.FanOut</code> + merge; log follows <code>turn_id</code>.</li>
-        <li><strong>In-hoop parallel</strong> — YAML <code>parallel: 2+</code> on an actor uses <code>parallel_mode: fanout</code> (default) or <code>swarm</code> (see <code>parallel-swarm-mode.yaml</code>).</li>
       </ol>
-      <p>Full walkthrough: <a href="loop-engineering.html#user-guide">Loop Engineering · User guide</a>.</p>
-
-      <h2>Run a hoop</h2>
-      <pre>go run ./scripts/loadhoop -file samples/hoops/enterprise-incident-command.yaml -start
-# Dashboard → Hoops: click the card to bind the per-instance agent log
-# Graph editor → Agent log panel streams that hoop id only</pre>
 
       <h2>Planning</h2>
       <p>Enterprise orchestrator MVP and graph gaps (with source URLs):
@@ -124,10 +63,8 @@
         <code>planning/graph_feature_gaps.md</code>.</p>
 
       <h2>Per-instance agent logs</h2>
-      <p>Each hoop id and each swarm <code>turn_id</code> has an independent ring buffer. Selecting a hoop or finishing a swarm run switches the UI stream (structured rows: time | level | stage/role | message). Entries carry a monotonic <code>seq</code>; the dashboard polls with <code>after_seq</code> for incremental merge. API:</p>
-      <pre>GET /api/agent-logs?scope=hoop&amp;id=incident-triage
-GET /api/agent-logs?scope=hoop&amp;id=incident-triage&amp;after_seq=42&amp;limit=50
-GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
+      <p>Each swarm <code>turn_id</code> has an independent ring buffer. Selecting/finishing a swarm run switches the UI stream (structured rows: time | level | stage/role | message). Entries carry a monotonic <code>seq</code>; the dashboard polls with <code>after_seq</code> for incremental merge. API:</p>
+      <pre>GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
       <p>WebSocket <code>/ws</code> events with <code>type: agent_log</code> include <code>scope</code> and <code>instance_id</code>.</p>
 
       <h2>Fan-out Starlark sample</h2>
@@ -135,15 +72,9 @@ GET /api/agent-logs?scope=swarm&amp;id=swarm-...</pre>
 # Match prompts containing "fanout" / "multi-agent review" → strategy fan_out</pre>
 
       <h2 id="seed">Seed all samples</h2>
-      <pre># Idempotent: upserts every samples/hoops + samples/swarms YAML
-# Hoops → dashboard API; swarms → ~/.glider/hoops (Glider must be running)
-powershell -File scripts\seed-samples.ps1
-powershell -File scripts\seed-samples.ps1 -Start   # also start each hoop
-
-# Or hoops only / one-shot start
-go run ./scripts/loadhoop -dir samples/hoops
-powershell -File scripts\run-sample-hoop.ps1 -Name incident-triage</pre>
-      <p>MCP / GitHub tools: <a href="mcp.html">Tools &amp; MCP</a>. Seed covers all top-level YAML in both sample dirs (including <code>parallel-swarm-mode</code>, <code>parallel-actor</code>, <code>swarm-dual-review</code>, and <code>repo-audit-swarm</code>).</p>
+      <pre># Idempotent: upserts every samples/swarms YAML → ~/.glider/hoops (Glider must be running)
+powershell -File scripts\seed-samples.ps1</pre>
+      <p>MCP / GitHub tools: <a href="mcp.html">Tools &amp; MCP</a>. Seed covers all top-level YAML under <code>samples/swarms/</code> (including <code>multi-wave-weave</code> and <code>repo-audit-swarm</code>).</p>
     </main>
     <footer class="foot"><a href="index.html">← Home</a></footer>
   </div>

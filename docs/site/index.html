@@ -27,23 +27,38 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
+      <a href="orchestration-blog.html">Orchestration blog</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <header class="hero">
       <div class="badge">Hostable docs</div>
       <h1>Glider</h1>
       <p>
-        Local-first AI harness for Cursor: shared gateway + MITM pipeline, task-aware routing,
-        context graph, and Loop Engineering hoops that can run purely on Ollama.
+        Local-first AI harness for Cursor: shared gateway + MITM completion path
+        (resolve model alias → tokenize → route → transform → execute), task-aware routing,
+        and Loop Engineering hoops that own the mission shape — stages, feeds, human gates,
+        stop conditions — and can run purely on Ollama.
+      </p>
+      <p>
+        <a href="../SETUP.md">Step-by-step setup</a>
+        ·
+        <a href="orchestration-blog.html">Orchestration blog + Excalidraw</a>
       </p>
     </header>
 
     <section class="grid">
+      <a class="card" href="../SETUP.md">
+        <h3>Setup guide</h3>
+        <p>Ollama → build → dashboard → first hoop → optional Cursor Mode A/B.</p>
+      </a>
+      <a class="card" href="orchestration-blog.html">
+        <h3>Orchestration blog</h3>
+        <p>Hoops, swarms, feeds, workspaces — deep dive with Excalidraw diagrams.</p>
+      </a>
       <a class="card" href="c1-context.html">
         <h3>C1 Context</h3>
         <p>Glider vs Cursor, Ollama/vLLM, cloud APIs, user, OS -- system boundary.</p>
@@ -92,17 +107,13 @@
         <h3>Path A / B</h3>
         <p>Override Base URL vs MITM Agent RPC; when to use which.</p>
       </a>
-      <a class="card" href="loop-engineering.html">
-        <h3>Loop Engineering</h3>
-        <p>Observe &rarr; plan &rarr; act &rarr; critique &rarr; learn -- not Cursor /loop cron.</p>
-      </a>
       <a class="card" href="pure-local.html">
         <h3>Pure local</h3>
         <p>glider.local.yaml, Ollama-only, no cloud keys required.</p>
       </a>
       <a class="card" href="api.html">
         <h3>HTTP API</h3>
-        <p>Config, VRAM, context, loops, swarm, MCP, hot-swap endpoints.</p>
+        <p>Config, VRAM, context, swarm, MCP, hot-swap endpoints.</p>
       </a>
       <a class="card" href="mcp.html">
         <h3>Tools &amp; MCP</h3>

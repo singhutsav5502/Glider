@@ -1,0 +1,98 @@
+# cursor-agent tool catalog — confirmed live (planning/agent_cli_interop.md
+# §2 "Cursor terminal agent (`cursor-agent`)"). Wire field names
+# (readToolCall, editToolCall, ...) are the exact same names as the
+# protobuf oneof variants internal/cursorrpc/toolcall_map.go already maps
+# for the IDE — the terminal CLI's stream-json is a friendlier JSON
+# serialization of the same agent.v1.ToolCall schema, not a second protocol.
+vendor: cursor-agent
+observed_cli_version: "cli-2026.07.23-e383d2b"
+tools:
+  readToolCall:
+    confirmed: true
+    tags: [read]
+  editToolCall:
+    confirmed: true
+    tags: [edit, write]
+    args:
+      diff: [diffString]
+      before: [beforeFullFileContent]
+      after: [afterFullFileContent]
+    diff_view: unified_text # + before_after — see internal/ngl adapter_cursor.go, richer than Claude's hunks-only shape
+  grepToolCall:
+    confirmed: true
+    tags: [search]
+  shellToolCall:
+    confirmed: true
+    tags: [shell, execute]
+  globToolCall:
+    confirmed: true
+    tags: [list, search]
+    args:
+      pattern: [globPattern]
+  deleteToolCall:
+    confirmed: true
+    tags: [delete]
+    args:
+      path: [path]
+    # result.success.prevContent preserves the deleted file's content —
+    # a real undo-friendly convention, carried into ToolResult.Text by the adapter.
+  webFetchToolCall:
+    confirmed: true
+    tags: [web, fetch]
+    args:
+      url: [url]
+  webSearchToolCall:
+    confirmed: true
+    tags: [web, search]
+    args:
+      query: [searchTerm]
+    # large results offload to a local file + pointer string (agent_cli_interop.md) —
+    # NGL's Part/ToolResult should prefer a reference over inlining a huge blob.
+  updateTodosToolCall:
+    confirmed: true
+    tags: [todos]
+    # todos[].dependencies is a real DAG-between-todos field, not yet modeled in NGL.
+  lsToolCall:
+    confirmed: false # model chose shellToolCall{command:"ls"} instead when asked for a directory listing — tool-selection behavior, not confirmed absent
+    tags: [list]
+  semSearchToolCall:
+    confirmed: false # model fell back to grepToolCall/readToolCall instead — same caveat as lsToolCall
+    tags: [search]
+  read_lints:
+    confirmed: false
+    tags: [other]
+  mcp:
+    confirmed: false
+    tags: [other]
+  create_plan:
+    confirmed: false
+    tags: [other]
+  task:
+    confirmed: false
+    tags: [delegate, subagent]
+  switch_mode:
+    confirmed: false
+    tags: [other]
+  ask_question:
+    confirmed: false
+    tags: [other]
+  apply_agent_diff:
+    confirmed: false
+    tags: [edit]
+  exa_search:
+    confirmed: false
+    tags: [search, web]
+  exa_fetch:
+    confirmed: false
+    tags: [web, fetch]
+  generate_image:
+    confirmed: false
+    tags: [other]
+  write_shell_stdin:
+    confirmed: false
+    tags: [shell]
+  reflect:
+    confirmed: false
+    tags: [other]
+unknown_tool_policy: passthrough
+confirmed_policy: prefer

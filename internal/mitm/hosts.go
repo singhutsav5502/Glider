@@ -20,6 +20,17 @@ func NewHostMatcher(patterns []string) *HostMatcher {
 	return &HostMatcher{patterns: out}
 }
 
+// Patterns returns the raw allowlist entries (exact hosts and *.domain
+// wildcards) — used by TransparentRedirector to resolve concrete IPs to
+// scope its packet filter down to just these hosts, instead of diverting
+// every outbound :443 connection on the machine.
+func (m *HostMatcher) Patterns() []string {
+	if m == nil {
+		return nil
+	}
+	return append([]string(nil), m.patterns...)
+}
+
 // Match reports whether host (without port) is allowlisted for MITM decrypt.
 func (m *HostMatcher) Match(host string) bool {
 	if m == nil || len(m.patterns) == 0 {

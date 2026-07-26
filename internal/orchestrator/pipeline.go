@@ -40,10 +40,10 @@ type CompleteOptions struct {
 // StickyCloud / deny-local happens in MITM before CompleteLocal; this pipeline
 // never overrides ArmOrigin.
 type PipelineCompleter struct {
-	Router       router.Router
-	Executor     Executor
-	Tokenizer    *transform.Tokenizer
-	Transformer  *transform.Transformer
+	Router      router.Router
+	Executor    Executor
+	Tokenizer   *transform.Tokenizer
+	Transformer *transform.Transformer
 	// TransformCfg drives BoundLocalContext for local fulfills (optional).
 	TransformCfg config.TransformConfig
 	MaxContext   int
@@ -269,14 +269,14 @@ func (p *PipelineCompleter) recordLocalEpisode(req *backend.CompletionRequest, d
 	}
 	sess := p.episodeSessionKey(req)
 	p.Episodes.RecordEpisode(sess, contextkit.Episode{
-		ID:        epID,
-		TurnID:    turnID,
-		Summary:   summary,
-		Tokens:    tokens,
-		Model:     req.Model,
-		Rule:      rule,
-		Reason:    reason,
-		Role:      role,
+		ID:      epID,
+		TurnID:  turnID,
+		Summary: summary,
+		Tokens:  tokens,
+		Model:   req.Model,
+		Rule:    rule,
+		Reason:  reason,
+		Role:    role,
 	})
 	if g := p.graph(); g != nil {
 		g.RecordEpisodeMerged(turnID, reqID, epID, map[string]string{
@@ -294,7 +294,7 @@ func (p *PipelineCompleter) graph() *contextgraph.Store {
 
 // emitRouteDecided hooks classifier / explicit / script decisions into the
 // contextgraph event log when Graph is wired (Append only). Skips when Graph
-// is nil so tests / callers without a store do not pollute contextgraph.Default.
+// is nil so tests / callers without a store skip graph writes.
 func (p *PipelineCompleter) emitRouteDecided(req *backend.CompletionRequest, decision *backend.RoutingDecision, source string) {
 	if p == nil || decision == nil || req == nil {
 		return

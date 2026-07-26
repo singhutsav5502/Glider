@@ -1,6 +1,6 @@
 # Glider as enterprise-scale orchestrator MVP
 
-> Research snapshot **2026-07-19**. Cross-check: [swarm_orchestration.md](./swarm_orchestration.md), [loop_engineering.md](./loop_engineering.md), [graph_feature_gaps.md](./graph_feature_gaps.md), [loop_swarm_gap_analysis.md](./loop_swarm_gap_analysis.md).  
+> Research snapshot **2026-07-19**. Cross-check: [swarm_orchestration.md](./Depreceated/swarm_orchestration.md), [loop_engineering.md](./loop_engineering.md), [graph_feature_gaps.md](./graph_feature_gaps.md), [loop_swarm_gap_analysis.md](./loop_swarm_gap_analysis.md).  
 > Code authority: `internal/loop`, `internal/swarm`, `internal/orchestrator`, Cytoscape dashboard graphs.
 
 Glider already sits in a useful niche: **local-first model gateway + hoop loops + bounded swarm fan-out**, with Path A/B Cursor interception. This note positions that stack as an **enterprise orchestrator MVP** — what to sell first, what to defer, and how industry practice (2024–2026) maps onto Glider.

@@ -307,23 +307,5 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 		}
 	}
 
-	if dr := strings.ToLower(strings.TrimSpace(cfg.Orchestration.Loops.DefaultRoute)); dr != "" {
-		switch dr {
-		case "local", "cloud", "auto":
-		default:
-			res.Errors = append(res.Errors, fmt.Sprintf("orchestration.loops.default_route %q is invalid (use local|cloud|auto)", cfg.Orchestration.Loops.DefaultRoute))
-		}
-	}
-	hl := cfg.Orchestration.Loops.HoopLearning
-	if hl.LocalBiasStep < 0 {
-		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.local_bias_step must be >= 0")
-	}
-	if hl.MaxBias < 0 {
-		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.max_bias must be >= 0")
-	}
-	if hl.Window < 0 {
-		res.Errors = append(res.Errors, "orchestration.loops.hoop_learning.window must be >= 0")
-	}
-
 	return res
 }

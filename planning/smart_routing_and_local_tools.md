@@ -2,7 +2,7 @@
 
 > Status: **done for Path A + classifier** (2026-07-18) — M0–M3 complete; Path B child tools still origin (M4).
 >
-> Related: [swarm_orchestration.md](./swarm_orchestration.md), [cursor_agent_protocol_interception.md](./cursor_agent_protocol_interception.md),
+> Related: [swarm_orchestration.md](./Depreceated/swarm_orchestration.md), [cursor_agent_protocol_interception.md](./cursor_agent_protocol_interception.md),
 > [cursor_prior_art.md](./cursor_prior_art.md), [project_summary.md](./project_summary.md),
 > [routing_session_policy.md](./routing_session_policy.md) (turn-family + tool-followup).
 

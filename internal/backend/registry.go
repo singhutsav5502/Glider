@@ -109,3 +109,47 @@ func (r *Registry) ListModels() []*ModelInfo {
 	}
 	return out
 }
+
+// ReplaceAll atomically swaps backend clients and model metadata.
+// Existing model State is preserved for names that remain in the new set.
+// Callers must pass fully built maps; on failure they should not call this
+// so in-flight Complete() holders keep the previous InferenceBackend instances.
+func (r *Registry) ReplaceAll(backends map[string]InferenceBackend, models []ModelInfo) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	oldStates := make(map[string]ModelState, len(r.models))
+	for name, m := range r.models {
+		if m != nil {
+			oldStates[name] = m.State
+		}
+	}
+
+	nextBackends := make(map[string]InferenceBackend, len(backends))
+	for k, v := range backends {
+		if v == nil {
+			continue
+		}
+		nextBackends[k] = v
+	}
+	nextModels := make(map[string]*ModelInfo, len(models))
+	for _, info := range models {
+		if info.Name == "" {
+			continue
+		}
+		cp := info
+		if cp.State == "" {
+			if s, ok := oldStates[cp.Name]; ok {
+				cp.State = s
+			} else {
+				cp.State = ModelStateCold
+			}
+		}
+		nextModels[cp.Name] = &cp
+	}
+	r.backends = nextBackends
+	r.models = nextModels
+}

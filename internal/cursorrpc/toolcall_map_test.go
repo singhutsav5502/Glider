@@ -20,7 +20,11 @@ func TestMapToolNameToGliderBuiltin(t *testing.T) {
 		{"list_dir", "fs_list", true},
 		{"Glob", "fs_search", true},
 		{"web_search", "web_search", true},
+		{"codebase_search", "fs_search", true},
+		{"ExaSearch", "web_search", true},
 		{"Delete", "", false}, // mapped to Cursor wire, no Glider builtin
+		{"TodoWrite", "", false},
+		{"CallMcpTool", "", false},
 		{"unknown_tool_xyz", "", false},
 	}
 	for _, c := range cases {
@@ -46,6 +50,23 @@ func TestEncodeMappedToolCallWireVariants(t *testing.T) {
 		{"web_search", `{"query":"glider"}`, 18},
 		{"web_fetch", `{"url":"https://example.com"}`, 37},
 		{"http_fetch", `{"url":"https://example.com"}`, 24},
+		{"TodoWrite", `{"merge":true,"todos":[{"id":"1","content":"do","status":"pending"}]}`, 9},
+		{"TodoRead", `{}`, 10},
+		{"ReadLints", `{"paths":["a.go","b.go"]}`, 14},
+		{"CallMcpTool", `{"name":"get_me","server":"github"}`, 15},
+		{"codebase_search", `{"query":"auth","target_directories":["internal/"]}`, 16},
+		{"CreatePlan", `{"name":"ship","plan":"steps"}`, 17},
+		{"Task", `{"description":"explore","prompt":"find bugs"}`, 19},
+		{"ListMcpResources", `{"server":"github"}`, 20},
+		{"ReadMcpResource", `{"server":"github","uri":"res://x"}`, 21},
+		{"ApplyAgentDiff", `{"agent_id":"a1"}`, 22},
+		{"AskQuestion", `{"title":"Pick one"}`, 23},
+		{"SwitchMode", `{"target_mode_id":"plan"}`, 25},
+		{"ExaSearch", `{"query":"mcp"}`, 26},
+		{"ExaFetch", `{"ids":["id1"]}`, 27},
+		{"GenerateImage", `{"description":"logo"}`, 28},
+		{"WriteShellStdin", `{"shell_id":"3","chars":"y\n"}`, 31},
+		{"Reflect", `{"next_steps":"retry"}`, 32},
 		{"mystery", `{}`, 34},
 	}
 	for _, c := range cases {
@@ -67,9 +88,42 @@ func TestEncodeMappedToolCallEmbedsPath(t *testing.T) {
 	}
 }
 
+func TestEncodeSemSearchAndTodosEmbedScalars(t *testing.T) {
+	sem := cursorrpc.EncodeMappedToolCallWire("SemSearch", `{"query":"session retry"}`, "")
+	if !strings.Contains(string(sem), "session retry") {
+		t.Fatalf("sem query missing: %x", sem)
+	}
+	todo := cursorrpc.EncodeMappedToolCallWire("TodoWrite", `{"todos":[{"id":"t1","content":"ship map"}]}`, "")
+	if !strings.Contains(string(todo), "ship map") || !strings.Contains(string(todo), "t1") {
+		t.Fatalf("todo fields missing: %x", todo)
+	}
+}
+
 func TestLookupToolNameMappingCaseFold(t *testing.T) {
 	m, ok := cursorrpc.LookupToolNameMapping("READ_FILE")
 	if !ok || m.GliderBuiltin != "fs_read" {
 		t.Fatalf("%+v ok=%v", m, ok)
+	}
+	m2, ok := cursorrpc.LookupToolNameMapping("CODEBASE_SEARCH")
+	if !ok || m2.WireField != 16 {
+		t.Fatalf("%+v ok=%v", m2, ok)
+	}
+}
+
+func TestMappedToolCallInventoryCoversExtendedSet(t *testing.T) {
+	inv := cursorrpc.MappedToolCallInventory()
+	want := map[string]bool{
+		"read_tool_call": true, "grep_tool_call": true, "update_todos_tool_call": true,
+		"read_lints_tool_call": true, "mcp_tool_call": true, "sem_search_tool_call": true,
+		"task_tool_call": true, "switch_mode_tool_call": true, "exa_search_tool_call": true,
+	}
+	got := map[string]bool{}
+	for _, m := range inv {
+		got[m.CursorVariant] = true
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("inventory missing %s; got %#v", k, got)
+		}
 	}
 }

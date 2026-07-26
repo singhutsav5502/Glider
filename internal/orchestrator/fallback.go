@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
@@ -34,17 +35,18 @@ type fallbackStep struct {
 
 // FallbackChain tries backends in order with circuit breaking and health checks.
 type FallbackChain struct {
-	registry             *backend.Registry
-	lifecycle            *ModelLifecycle
-	breakers             map[string]*CircuitBreaker
-	failureThreshold     int
-	cooldown             time.Duration
-	isHealthy            HealthFunc
-	rateLimiter          *CloudRateLimiter
-	budget               *BudgetTracker
-	cloudBackend         string
-	cloudModel           string
-	disableCloudFallback bool
+	registry         *backend.Registry
+	lifecycle        *ModelLifecycle
+	breakers         map[string]*CircuitBreaker
+	failureThreshold int
+	cooldown         time.Duration
+	isHealthy        HealthFunc
+	rateLimiter      *CloudRateLimiter
+	budget           *BudgetTracker
+	cloudBackend     string
+	cloudModel       string
+	// disableCloudFallback is atomic for live config reload.
+	disableCloudFallback atomic.Bool
 }
 
 // FallbackConfig configures the fallback chain.
@@ -73,19 +75,28 @@ func NewFallbackChain(cfg FallbackConfig) *FallbackChain {
 	if cfg.IsHealthy == nil && cfg.Registry != nil {
 		cfg.IsHealthy = DefaultHealthCheck(cfg.Registry)
 	}
-	return &FallbackChain{
-		registry:             cfg.Registry,
-		lifecycle:            cfg.Lifecycle,
-		breakers:             make(map[string]*CircuitBreaker),
-		failureThreshold:     cfg.FailureThreshold,
-		cooldown:             cfg.Cooldown,
-		isHealthy:            cfg.IsHealthy,
-		rateLimiter:          cfg.RateLimiter,
-		budget:               cfg.Budget,
-		cloudBackend:         cfg.CloudBackend,
-		cloudModel:           cfg.CloudModel,
-		disableCloudFallback: cfg.DisableCloudFallback,
+	f := &FallbackChain{
+		registry:         cfg.Registry,
+		lifecycle:        cfg.Lifecycle,
+		breakers:         make(map[string]*CircuitBreaker),
+		failureThreshold: cfg.FailureThreshold,
+		cooldown:         cfg.Cooldown,
+		isHealthy:        cfg.IsHealthy,
+		rateLimiter:      cfg.RateLimiter,
+		budget:           cfg.Budget,
+		cloudBackend:     cfg.CloudBackend,
+		cloudModel:       cfg.CloudModel,
 	}
+	f.disableCloudFallback.Store(cfg.DisableCloudFallback)
+	return f
+}
+
+// SetDisableCloudFallback updates pure-local vs BYOK-cloud fallback after a live config reload.
+func (f *FallbackChain) SetDisableCloudFallback(disable bool) {
+	if f == nil {
+		return
+	}
+	f.disableCloudFallback.Store(disable)
 }
 
 func (f *FallbackChain) breaker(name string) *CircuitBreaker {
@@ -122,7 +133,7 @@ func (f *FallbackChain) steps(decision *backend.RoutingDecision, req *backend.Co
 	// (Hoop/swarm "local" route prefixes /local; a 401 from openai here was confusing.)
 	explicitLocal := decision != nil && (strings.EqualFold(decision.RuleName, "Explicit Local") ||
 		strings.Contains(strings.ToLower(decision.RuleName), "explicit local"))
-	if primary.local && !f.disableCloudFallback && !explicitLocal && f.cloudBackend != "" {
+	if primary.local && !f.disableCloudFallback.Load() && !explicitLocal && f.cloudBackend != "" {
 		cloudModel := f.cloudModel
 		if cloudModel == "" {
 			cloudModel = req.Model

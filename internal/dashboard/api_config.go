@@ -83,6 +83,25 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if len(res.Warnings) > 0 {
 		w.Header().Set("X-Glider-Warnings", strings.Join(res.Warnings, " | "))
 	}
+	if s.HotSwap != nil {
+		for _, m := range s.HotSwap.List() {
+			if m.Name != "backends" || m.LastOK == nil {
+				continue
+			}
+			if *m.LastOK {
+				w.Header().Set("X-Glider-Backend-Reload", "ok")
+				if len(m.LastWarnings) > 0 {
+					w.Header().Set("X-Glider-Backend-Reload-Warnings", strings.Join(m.LastWarnings, " | "))
+				}
+			} else {
+				w.Header().Set("X-Glider-Backend-Reload", "error")
+				if m.LastError != "" {
+					w.Header().Set("X-Glider-Backend-Reload-Error", m.LastError)
+				}
+			}
+			break
+		}
+	}
 	writeJSON(w, s.Config.Get())
 }
 

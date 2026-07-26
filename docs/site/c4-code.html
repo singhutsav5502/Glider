@@ -33,11 +33,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -61,7 +60,6 @@
         <li><a href="#complete">Chain: PipelineCompleter.Complete / Handle</a></li>
         <li><a href="#path-b">Chain: Path B BidiAppend → RunSSE</a></li>
         <li><a href="#sticky">Chain: sticky cloud</a></li>
-        <li><a href="#hoop">Chain: hoop cycle</a></li>
         <li><a href="#packages">Package → entry symbols</a></li>
         <li><a href="#links">Cross-links</a></li>
       </ol>
@@ -98,11 +96,6 @@
           <td><code>Store</code> / <code>Event</code></td>
           <td><code>contextgraph</code></td>
           <td>JSONL event log + sticky index under <code>~/.glider/context</code></td>
-        </tr>
-        <tr>
-          <td><code>Manager</code> / <code>LoopSpec</code> / <code>StageSpec</code></td>
-          <td><code>loop</code></td>
-          <td>Hoop runners; planner/actor/critic/memory/router stages</td>
         </tr>
         <tr>
           <td><code>Registry</code> / <code>Module</code></td>
@@ -286,48 +279,6 @@ Graph sync: contextgraph.DefaultCloudGrace / LiveCloudFamily</pre>
       <p>Detail: <a href="architecture-deep.html#sticky">architecture-deep sticky</a>,
         <a href="concurrency.html">hub mutex / races</a>.</p>
 
-      <h2 id="hoop">Chain: hoop cycle</h2>
-      <p>
-        Loop Engineering (not Cursor cron <code>/loop</code>). File:
-        <code>internal/loop/cycle.go</code> · <code>stages.go</code> · <code>runner.go</code>.
-      </p>
-      <pre class="mermaid">flowchart LR
-  M["loop.Manager.runCycle"] --> PL["StagePlanner"]
-  PL --> AC["StageActor"]
-  AC --> CR["StageCritic SCORE:"]
-  CR --> MEM["StageMemory"]
-  MEM --> EV{"EvalPass?"}
-  EV -->|fail + budget| PL
-  EV -->|pass| EP["RecordEpisode / graph EventLoopTick"]
-  PL -.->|Complete| P["PipelineCompleter"]
-  AC -.-> P
-  CR -.-> P</pre>
-
-      <ol class="steps">
-        <li>
-          <strong><code>Manager.runCycle</code> starts iteration</strong>
-          <span class="tech">turnID = "loop:"+spec.ID · EventLoopTick</span>
-        </li>
-        <li>
-          <strong>Enabled stages from <code>LoopSpec.Stages</code> (or defaults)</strong>
-          <span class="tech">planner → actor → critic → memory · RoutePref per stage</span>
-        </li>
-        <li>
-          <strong>Each LLM stage calls harness Completer</strong>
-          <span class="tech">same PipelineCompleter as gateway · local-first for pure-local</span>
-        </li>
-        <li>
-          <strong>Critic parses <code>SCORE:</code> vs <code>EvalMin</code> / <code>EvalSpec.MinScore</code></strong>
-          <span class="tech">regexp scoreLine · EvalPass bool</span>
-        </li>
-        <li>
-          <strong>Persist episode / summary; optional human gate (L1-L3)</strong>
-          <span class="tech">contextkit · AutonomyLevel · CycleResult</span>
-        </li>
-      </ol>
-      <p>Operator docs: <a href="loop-engineering.html">Loop Engineering</a>,
-        <a href="samples.html">Sample hoops</a>.</p>
-
       <h2 id="packages">Package → entry symbols</h2>
       <table>
         <tr><th>Package</th><th>Start here</th></tr>
@@ -339,7 +290,6 @@ Graph sync: contextgraph.DefaultCloudGrace / LiveCloudFamily</pre>
         <tr><td><code>cursorrpc</code></td><td><code>ExtractBidiCompletionRequest</code>, RunSSE codec, <code>IsRootAgentRunSSE</code></td></tr>
         <tr><td><code>transform</code></td><td><code>Tokenizer</code>, <code>BoundLocalContext</code>, <code>Transformer.Apply</code></td></tr>
         <tr><td><code>contextgraph</code></td><td><code>Store.Append</code>, sticky / LiveCloudFamily helpers</td></tr>
-        <tr><td><code>loop</code></td><td><code>Manager.runCycle</code>, <code>StageSpec</code></td></tr>
         <tr><td><code>swarm</code></td><td><code>Registry.Apply</code>, <code>Runner</code>, <code>FanOut</code></td></tr>
         <tr><td><code>metrics</code></td><td><code>Collector</code>, <code>Bus</code>, <code>HistoryStore</code></td></tr>
         <tr><td><code>dashboard</code></td><td><code>Server</code>, <code>/api/*</code>, <code>/ws</code></td></tr>

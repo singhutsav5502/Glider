@@ -1,0 +1,344 @@
+# Glider intro profile -- dual mode (gateway :8080 + MITM :8082) + dashboard :8081.
+#
+# Routing priority (highest first):
+#   1. Explicit /local /fast /cloud /heavy on current user turn
+#   2. Turn-family sticky (reply-summary / title only; TTL = routing.turn_family_ttl)
+#   3. Tool-step re-decide for child RunSSE (routing.tool_followup)
+#   4. task_classifier (tools -> cloud unless allowlisted; must-cloud; small-local)
+#   5. Starlark scripts
+#   6. context_size token ceiling (not the primary "is this simple?" signal)
+#   7. Default always rule -> cloud when unsure (Path B opaque)
+#
+# Pure local mode (Ollama only, no cloud keys):
+#   Use configs/glider.local.yaml  OR  set:
+#     routing.default: local
+#     routing.allow_cloud_fallback: false
+#     mitm.agent_rpc_canned_on_error: false   # already the default
+#     mitm.origin_on_local_error: false       # clear Ollama errors vs Cursor origin
+#     mitm.require_local_healthy: true
+#   Gateway-only: mitm.enabled: false + Override Base URL -> :8080/v1 (cus- optional).
+#   See planning/context_management.md sec Local context -> Ollama.
+#
+# See planning/smart_routing_and_local_tools.md and planning/routing_session_policy.md
+
+server:
+    proxy_port: 8080
+    dashboard_port: 8081
+    log_level: debug
+thresholds:
+    max_local_context_tokens: 8000
+    idle_unload_timeout: 5m
+    # HTTP client timeout for Ollama/vLLM Complete (headers + body). Raise for 14b + tool loops.
+    request_timeout: 10m
+    # Hoop Completes: max_tokens → Ollama num_predict (raise if reports/tool JSON cut mid-sentence).
+    default_max_tokens: 8192
+vram:
+    strategy: hybrid
+    headroom_mb: 512
+    max_loaded_models: 3
+    gpu_assignments:
+        qwen2.5-coder:14b: 0
+models:
+    - name: qwen2.5-coder:14b
+      backend: ollama
+      vram_estimate_mb: 9000
+      max_context: 32768
+      capabilities:
+        - code
+        - refactor
+        - debug
+      keep_warm: true
+    - name: llama3:8b-instruct
+      backend: ollama
+      vram_estimate_mb: 5000
+      max_context: 8192
+      capabilities:
+        - general
+        - docs
+        - explain
+      keep_warm: false
+model_aliases:
+    claude-3.5-sonnet: qwen2.5-coder:14b
+    gpt-4o: qwen2.5-coder:14b
+    gpt-4o-mini: llama3:8b-instruct
+routing:
+    # How long DecideLocal / explicit turn family sticks for reply-summary / title
+    # follow-ons only (not the whole chat). See planning/routing_session_policy.md.
+    turn_family_ttl: 90s
+    # Child tool-loop re-decide: after parent cloud|local, each tool step may prefer
+    # local (allowlist) or stay origin (denylist). Path B logs tool_followup_would_local
+    # and still origin until tool codec; Path A can route allowlisted tools locally.
+    tool_followup:
+        enabled: true
+        inherit_parent_default: true
+        reevaluate: true
+        local_tool_allowlist:
+            - read_file
+            - Read
+            - grep
+            - Grep
+            - Glob
+            - list_dir
+            - codebase_search
+            - ReadLints
+        cloud_tool_denylist:
+            - Shell
+            - Write
+            - Delete
+            - ApplyPatch
+            - edit_file
+            - EditNotebook
+            - WebFetch
+            - WebSearch
+    # Complexity score for routing (P1). Cursor Agent/Bidi envelopes do NOT expose
+    # complexity / max_mode / model_tier in MITM dumps today -- complexity_from:
+    # heuristic uses tools + file mentions + prompt length + mode strings.
+    # When a Cursor field appears, set complexity_from: both|cursor and wire
+    # TryAttachCursorComplexity in bidi_extract. Opt-in: complexity.enabled.
+    complexity_from: heuristic
+    complexity:
+        enabled: false
+        cloud_above: 70
+        priority: 75
+        # cloud_backend: openai
+        # cloud_model: gpt-4o
+    # Task-shape routing (M1): prefer local for rename/explain/format/Q&A; force cloud
+    # for architecture/migration/multi-file; tools[] -> cloud unless tool_followup
+    # allowlists every tool. Local Ollama models that reject tools fall back to BYOK
+    # cloud via FallbackChain (ToolsUnsupportedError). Disable with enabled: false.
+    task_classifier:
+        enabled: true
+        tools_force_cloud: true
+        local_model: qwen2.5-coder:14b
+        cloud_backend: openai
+        cloud_model: gpt-4o
+        # Optional overrides (empty = built-in MVP patterns):
+        # must_cloud_patterns: []
+        # small_local_patterns: []
+        # tools_priority: 85
+        # must_cloud_priority: 80
+        # small_local_priority: 70
+    rules:
+        - name: Explicit Local
+          priority: 100
+          enabled: true
+          trigger:
+            type: explicit
+            commands:
+                - /local
+                - /fast
+          action:
+            target: local
+            model: qwen2.5-coder:14b
+        - name: Explicit Cloud
+          priority: 99
+          enabled: true
+          trigger:
+            type: explicit
+            commands:
+                - /cloud
+                - /heavy
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        # Composer wrap-up / final summary -> always origin. Beats Small Context Local
+        # and task_classifier so post-/cloud chrome (user_visible_high_level_summary,
+        # title-like printable_hint) never runsse_local. See routing_session_policy.md.
+        - name: composer_wrapup_origin
+          priority: 95
+          enabled: true
+          trigger:
+            type: composer_wrapup
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        - name: Script Refactor Local
+          priority: 50
+          enabled: true
+          trigger:
+            type: script
+            file: scripts/examples/detect_refactor.star
+          action:
+            target: local
+            model: qwen2.5-coder:14b
+        # Opt-in multi-worker fan-out: include /swarm or [fanout] in the prompt.
+        # Needs orchestration.fan_out.enabled (see bottom of this file).
+        - name: Sample FanOut Dual View
+          priority: 55
+          enabled: true
+          trigger:
+            type: script
+            file: scripts/examples/fanout_dual_view.star
+          action:
+            target: local
+            strategy: fan_out
+            model: qwen2.5-coder:14b
+        # Token ceiling -- safety net after task_classifier (not primary simplicity signal).
+        - name: Context Overflow
+          priority: 10
+          enabled: true
+          trigger:
+            type: context_size
+            operator: '>'
+            value: 8000
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+        - name: Small Context Local
+          priority: 5
+          enabled: true
+          trigger:
+            type: context_size
+            operator: <=
+            value: 8000
+          action:
+            target: local
+            model: qwen2.5-coder:14b
+        - name: Default Origin
+          priority: 0
+          enabled: true
+          trigger:
+            type: always
+          action:
+            target: cloud
+            backend: openai
+            model: gpt-4o
+cloud:
+    providers:
+        - name: openai
+          api_key_env: OPENAI_API_KEY
+          base_url: https://api.openai.com/v1
+        - name: anthropic
+          api_key_env: ANTHROPIC_API_KEY
+          base_url: https://api.anthropic.com/v1
+    rate_limit:
+        requests_per_minute: 30
+        tokens_per_minute: 100000
+    budget_cap_usd: 50
+# Local inference backends. Ollama-only is fine -- Glider does not require vLLM.
+# Prefer 127.0.0.1 over localhost on Windows (avoids IPv6 [::1] when the service binds IPv4 only).
+backends:
+    # Live hot-reload: editing url / adding vllm / models list swaps clients without
+    # process restart (config.Provider.Watch → backends module). In-flight Complete
+    # keeps the previous client until that request finishes. MITM/ports still need restart.
+    - name: ollama
+      type: local
+      url: http://127.0.0.1:11434
+      health_check_interval: 30s
+    # Optional: uncomment only if you run vLLM locally.
+    # - name: vllm
+    #   type: local
+    #   url: http://127.0.0.1:8001
+    #   health_check_interval: 30s
+dashboard:
+    enabled: true
+    auth: false
+transform:
+    enabled: false
+    trim_context: false
+    # Path A local fulfills: drop mega-history; keep bounded system + latest user
+    # turn (+ tool-loop tail). Path B TipTap extract is already single-turn.
+    # Optionally prepend compressed episodes (not TipTap dumps).
+    # full | latest_turn
+    local_context: latest_turn
+    local_system_max_chars: 4000
+    local_episode_count: 3
+    local_episode_max_chars: 1500
+    augment_prepend: ""
+    augment_append: ""
+mitm:
+    enabled: true
+    port: 8082
+    ca_cert: ~/.glider/mitm/ca.crt
+    ca_key: ~/.glider/mitm/ca.key
+    hosts:
+        - api2.cursor.sh
+        - api3.cursor.sh
+        - api4.cursor.sh
+        - '*.api5.cursor.sh'
+        # Claude Code's completion plane (confirmed live via ANTHROPIC_BASE_URL
+        # and, separately, TLS-trust of a forged leaf — planning/native_glider_orchestration.md §7).
+        - api.anthropic.com
+        # agy (Antigravity CLI)'s completion plane + auxiliary calls, all confirmed
+        # live to honor a redirected connection and trust a forged leaf (same doc).
+        - daily-cloudcode-pa.googleapis.com
+        - cloudcode-pa.googleapis.com
+        - antigravity-unleash.goog
+        - oauth2.googleapis.com
+        - www.googleapis.com
+        - play.googleapis.com
+        # TODO: derive this list from the vendor registry (internal/vendors) instead
+        # of a static array once vendor packs carry a hosts field of their own —
+        # today it's hand-maintained from the live research in that planning doc.
+    passthrough_default: true
+    # OS-level transparent interception (planning/transparent_redirector_design.md).
+    # Windows only for now (WinDivert). Off by default — flip transparent: true and
+    # point windivert_dll_path at a real WinDivert.dll (WinDivertNN.sys alongside it)
+    # to make interception cooperation-free and retroactive on already-open CLI
+    # sessions, instead of relying on env vars a process only reads at launch.
+    transparent: true
+    transparent_port: 8083
+    transparent_ports: [443]
+    windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll
+    # Path B R&D: observe/dump Connect Agent RPCs. Turn off after R&D.
+    # Also: set GLIDER_MITM_DEBUG_RPC=1
+    debug_agent_rpc: true
+    # Path B: BidiAppend extract -> DecideLocal -> RunSSE text fulfill (experimental).
+    # Tool-loop child RunSSE still origin. Fail-soft -> origin when wait/encode fails.
+    # Also: GLIDER_MITM_AGENT_RPC_FULFILL=1
+    agent_rpc_fulfill: true
+    # Opt-in R&D only: on CompleteLocal failure write canned RunSSE text instead of
+    # origin. Codec is proven -- leave false so Path B returns real Ollama text (or
+    # origin on error). Enable with GLIDER_MITM_AGENT_RPC_CANNED=1 when needed.
+    # Production local: keep false (never ship canned as "the model").
+    agent_rpc_canned_on_error: false
+    agent_rpc_canned_text: "pong from glider (canned Path B)"
+    # Opt-in Path B child/tool-loop RunSSE fulfill — PARTIAL (remaining_gaps §1.9):
+    # TruncatedToolCall + common OpenAI→Cursor ToolCall map ship; full Cursor builtin
+    # catalog still open. Default off — prefer Path A for Agent+tools demos.
+    # Also: GLIDER_MITM_AGENT_RPC_TOOL_CODEC=1
+    agent_rpc_tool_codec: false
+    # Hybrid default: omit / true (origin fail-soft). Pure-local: false (clear error).
+    # origin_on_local_error: true
+    # require_local_healthy: false
+    # debug_dump_dir: ~/.glider/mitm-debug
+
+context:
+    max_events: 4096
+    retain_days: 14
+    warm_load_days: 2
+
+# Fan-out (off by default).
+# orchestration:
+#   fan_out:
+#     enabled: false
+#     max_workers: 2
+#   concurrency:
+#     worker_queue_size: 16
+#     result_chan_size: 32
+#     max_inflight: 4
+
+orchestration:
+  tools:
+    # Sandbox for fs_*, git_*, shell_exec. Clones land here under runs/<id>/work/ (ScopeRel).
+    # Empty / omitted → ~/.glider/workspace. Do NOT set to "." unless you want tools to see the Glider source tree.
+    # workspace: ~/.glider/workspace
+    allow_shell: false
+    # Optional host allowlist for http_fetch / web_fetch (empty = any host).
+    # allow_hosts: ["github.com", "raw.githubusercontent.com"]
+    web_search:
+      # auto → Brave → Tavily → SerpAPI → SearXNG → DuckDuckGo (no key); failures fall through.
+      provider: auto
+      max_results: 5
+      # searxng_url: http://127.0.0.1:8080
+      # fetch_max_bytes: 65536
+  fan_out:
+    enabled: true
+    max_workers: 2
+  concurrency:
+    worker_queue_size: 16
+    result_chan_size: 32
+    max_inflight: 4

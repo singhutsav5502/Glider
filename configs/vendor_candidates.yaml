@@ -1,0 +1,100 @@
+# Candidate agent CLIs Glider's vendor discovery probes for on this host.
+# This is data, not Go code (see planning/agent_cli_interop.md §1 "vendor packs,
+# not Go switch statements") — adding a fourth CLI is a new entry here, never a
+# recompile. `glider discover` (or the dashboard's Rescan button) walks this
+# list, resolves each `binary` via PATH, and runs `probe_args` to confirm it
+# actually executes before registering it.
+#
+# `templates` are named command-line shapes for headless delegation
+# (planning/permission_relay_design.md §1) — {{prompt}} and {{session_id}}
+# are substituted at exec time. "default" is used when a delegate flag has
+# no ":template" suffix (e.g. plain "/agy ..."); any other name is reached
+# via "/vendor:template ..." (e.g. "/agy:resume ..."). These are editable
+# per-installation from the dashboard's Vendors page — the values below are
+# just the confirmed-working starting point from live research, not a fixed
+# contract.
+candidates:
+  - name: claude
+    binary: claude
+    probe_args: ["--version"]
+    print_flag: "-p"
+    templates:
+      - name: default
+        mode: headless
+        # --verbose is required by Claude Code alongside --output-format
+        # stream-json in print mode (a known CLI requirement, not optional).
+        args: ["-p", "--output-format", "stream-json", "--verbose", "{{prompt}}"]
+      - name: resume
+        mode: headless
+        # --allowedTools isn't templated per-denial here (it would need the
+        # specific denied tool name substituted in, not just {{prompt}}) —
+        # this resume template alone re-attempts the same prompt against
+        # the same session; a caller that wants to scope the resume to one
+        # specific tool needs to build that arg list itself for now.
+        args: ["-p", "--output-format", "stream-json", "--verbose", "--resume", "{{session_id}}", "{{prompt}}"]
+  - name: cursor-agent
+    binary: cursor-agent
+    probe_args: ["--version"]
+    print_flag: "-p"
+    templates:
+      - name: default
+        mode: headless
+        # --trust is required for -p to even reach the model (confirmed
+        # live 2026-07-26): bare -p fails closed on a workspace-trust wall
+        # before any permission check happens at all. This means Glider
+        # auto-trusts whatever directory it delegates into — a real,
+        # disclosed tradeoff (planning/permission_relay_design.md §2.1),
+        # not an oversight.
+        args: ["-p", "--output-format", "stream-json", "--trust", "{{prompt}}"]
+      - name: resume
+        mode: headless
+        args: ["-p", "--output-format", "stream-json", "--trust", "--resume", "{{session_id}}", "{{prompt}}"]
+  - name: agy
+    binary: agy
+    probe_args: ["--version"]
+    print_flag: "-p"
+    templates:
+      - name: default
+        mode: headless
+        # --add-dir={{cwd}} is REQUIRED — confirmed live 2026-07-26 by
+        # actually running this without it: agy's -p mode silently ignores
+        # the process's real working directory and operates in a generic
+        # internal fallback (~/.gemini/antigravity-cli/scratch) instead,
+        # meaning it would never touch the user's real files at all. Must
+        # be the "=" form (--add-dir=<path>), NOT "--add-dir <path>" as two
+        # separate argv entries — the space-separated form was tested live
+        # and silently failed to parse as a flag at all (the CLI treated it
+        # as part of the prompt text instead).
+        #
+        # Deliberately NO --dangerously-skip-permissions here: Path A's
+        # whole premise is catching the denial, not bypassing it. agy has
+        # no --output-format flag at all (confirmed: headless output is
+        # plain text; structured detail lives in local SQLite/log
+        # artifacts, not stdout) — denial detection for this vendor parses
+        # stderr text instead (see internal/vendors/denial.go).
+        args: ["-p", "--add-dir={{cwd}}", "{{prompt}}"]
+      - name: resume
+        mode: headless
+        # FIXED 2026-07-26 (was broken — see planning/permission_relay_design.md
+        # §8 for the full history of what didn't work and why). Neither
+        # --continue/--conversation<id> (both resume an unrelated "most
+        # recent" conversation, not the denied one — reproduced 4+ times)
+        # nor --dangerously-skip-permissions (made the model explain the
+        # flag instead of acting — reproduced across 4 flag positions/
+        # prompt phrasings) turned out to be reliable. agy's own changelog
+        # settled it: settings.json's permissions.allow is the OFFICIALLY
+        # SUPPORTED headless-permission mechanism (1.1.3/1.1.6 changelog
+        # entries), not a workaround — so this template is deliberately
+        # identical in shape to "default"; the only difference on a resume
+        # call is that internal/vendors' agyAdapter.GrantResumePermission
+        # has already added a scoped allow-rule to the real
+        # ~/.gemini/antigravity-cli/settings.json immediately before this
+        # runs, and removes it immediately after. Confirmed live: this
+        # suppresses agy's hard "command" denial. One residual, accepted
+        # behavior: the model sometimes still asks a clarifying question
+        # instead of acting on the first resumed call (observed
+        # non-deterministically live) — that's normal agent caution on a
+        # destructive one-shot request, not a bug; it surfaces as ordinary
+        # output text via ResolveDelegate's normal path, answerable with a
+        # further plain "/agy ..." reply.
+        args: ["-p", "--add-dir={{cwd}}", "{{prompt}}"]

@@ -711,6 +711,8 @@ a.linkish {
   border-radius: var(--radius-xs);
   background: var(--bg);
 }
+.tag.ok { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+.tag.fail { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 
 /* ── Rules ── */
 .rules-toolbar {

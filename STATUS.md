@@ -8,7 +8,7 @@ Implemented Phases 1–4 (core), Phase 5/6 coverage, and post-6 Path B / classif
 |------|------------|--------|
 | API gateway + SSE | `internal/api` | Green — Path A **tool_calls** SSE + Anthropic normalize |
 | Backends + registry | `internal/backend/...` | Green — stream tool_calls + `ToolsUnsupportedError` |
-| Config hot-reload | `internal/config` | Green — `tool_followup`, `task_classifier`, `orchestration.fan_out` |
+| Config hot-reload | `internal/config` + `backend.Reloader` | Green — rules/aliases/threshold/log/GPU + **backends/models** (MITM/ports still restart) |
 | Router + Starlark | `internal/router` | Green — classifier + role hints + tool-followup MVP |
 | Tokenizer + transforms | `internal/transform` | Green |
 | VRAM | `internal/vram` | Green (nvidia-smi) |
@@ -66,7 +66,7 @@ go build -o glider.exe ./cmd/glider
 |-----|------|
 | **P0** | None open (matrix). Manual Cursor checklist still useful for Path B text + `/cloud` wrap-up. |
 | **P1** | Classifier Rules UI polish; Path B codec UI harden; optional Manager SRP call-site migration |
-| **P2** | Path B full ToolCall catalog / live PAT verify (**DEFERRED**); Dashboard DIP; `contextgraph.Default()`; enterprise chargeback/SIEM (**DEFERRED**) |
+| **P2** | Path B full ToolCall catalog / live PAT verify (**DEFERRED**); swarm governance extract; enterprise chargeback/SIEM (**DEFERRED**) |
 
 Also: dashboard not pixel-perfect vs mock; `go test -race` not signed off on Windows (CGO).
 

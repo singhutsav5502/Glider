@@ -14,61 +14,30 @@
 | **Overview tab** â€” session list, CLASS rates, spend chips, episode chips | SHIPPED | `api.go`, `app.js` `loadEpisodes`/`spendChipHTML`/`live-spend` | â€” |
 | **VRAM & Models tab** â€” GPU assignment, model pull/list | SHIPPED | `api_config.go`, `handleGetVRAM`, `handlePatchGPUAssignments` | â€” |
 | **Rules Engine tab** â€” routing rules editor | SHIPPED | `api_config.go`, `handleGetConfig`/`handlePutConfig`; `panel-rules` in HTML | â€” |
-| **Hoops & Swarm tab** â€” create/run/stop hoops, swarm run, stage graph, thread list | SHIPPED | `api_loop.go`, `swarm_api.go`, `index.html` `panel-hoops` | â€” |
+| **Hoops & Swarm tab** â€” swarm run, stage graph, thread list | **PARTIAL (regressed 2026-07-25)** | `swarm_api.go` still wired; `api_loop.go` deleted with `internal/loop` (v1 strip-down) but `index.html` `panel-hoops` / `app.js` hoop UI (~420 lines) were **not** yet updated â€” hoop-side controls in that tab now call a 404'd API | Split the panel: remove hoop DOM/JS, keep swarm, rename tab; verify swarm still works live in-browser |
 | **Graph Editor tab** â€” Cytoscape canvas, undo/redo, stage/swarm nodes, wave timeline | SHIPPED | `app.js` history stacks (Ctrl+Z/Y), `panel-graphs`; edge-kind modal; live stage highlight | â€” |
 | **MCP tab** â€” server list, connect/disconnect, GitHub PAT/device flow | SHIPPED | `mcp_api.go`, `panel-mcp` HTML, device flow UI | â€” |
 | **Workspace tab** â€” run file tree | SHIPPED | `workspace_api.go`, `panel-workspace` HTML | â€” |
 | **Config/Settings tab** â€” live config edit + validate | SHIPPED | `api_config.go`, `handleValidate` | â€” |
 | **Docs tab** | SHIPPED | `/docs/` served from `DocsDir`; all `docs/site/*.html` linked | â€” |
 | **WebSocket live push** | SHIPPED | `/ws`, `metrics.Bus` subscribe, `handleWS` | â€” |
-| **Dashboard DIP** â€” concrete `*loop.Manager` / `*swarm.Runner` vs narrow interfaces | PARTIAL | File splits done (`api_config/context/loop.go`). `Server` struct still holds concrete types. | Replace fields with handler-group-scoped interfaces (P2, `solid_refactor.md`) |
+| **Dashboard DIP** â€” concrete `*swarm.Runner` vs narrow interfaces | PARTIAL | File splits done (`api_config/context/loop.go`; `Loops`/`LoopAPI` removed 2026-07-25). `Server` struct still holds concrete `*swarm.Runner`. | Replace fields with handler-group-scoped interfaces (P2, `planning/Depreceated/solid_refactor.md`) |
 
 ---
 
-### 1.2 Hoops / Loop Engine
+### 1.2 Hoops / Loop Engine — **REMOVED 2026-07-25**
 
-| Area | Status | Evidence | What's missing |
-|------|--------|----------|----------------|
-| Hoop CRUD + lifecycle | SHIPPED | `runner.go` `CreateLoop`, `Start/Stop/Delete`, `LoopState` persist | â€” |
-| Multi-stage cycle execution | SHIPPED | `cycle.go` `runCycle`, `WalkOrder`, stage kinds: planner/actor/critic/memory/context/free | â€” |
-| Parallel actor fan-out + CritiqueMerge | SHIPPED | `cycle.go` `completeParallel`, `fanout.go` | â€” |
-| `parallel_mode: swarm` | SHIPPED | `stages.go`, `context_seed.go`, nested `Runner.Run`/`RunWaves` | â€” |
-| Context seed stage | SHIPPED | `context_seed.go`, `RecordHoopContext` | â€” |
-| StagePrefs (hoop learning L5) | SHIPPED | `hoop.go:103`, `loop_test.go:727` | â€” |
-| Governance â€” soft/hard token/latency/cost/RPM + tool denylist | SHIPPED | `governance.go` `CheckGovernance` + structs; cycle calls wrapper | â€” |
-| HITL `ask` + `on_fail_n` safety valve | SHIPPED | `cycle.go`, `hitl_test.go` | â€” |
-| MachineCursor mid-cycle resume | SHIPPED | `governance.go` `MachineCursor`, `cycle.go` resume path, tests | â€” |
-| L3 per-stage autonomy gating (`human_gate` / `autonomy`) | SHIPPED | `stages.go` `StageSpec.HumanGate`, `cycle.go` | â€” |
-| MaxLatencyMS stop | SHIPPED | `cycle.go:689`, `loop_test.go:363` | â€” |
-| Schedule (interval + cron) | SHIPPED | `schedule.go` full cron parser | â€” |
-| SKILL.md file resolution | SHIPPED | `skill.go` `ResolveSkillContent`, path/id/absolute, string fallback | â€” |
-| Feeds edges MVP (`kind=feeds`) | SHIPPED | `feeds.go`, `RelFeeds`, `feedsPromptBlock`, WalkOrder skip, `feeds-edge-mvp.yaml` | â€” |
-| Graph edges persisted + Cytoscape live-stage paint | SHIPPED | `spec.go`, `app.js` `stageLiveCurrent`/`stageLiveEdges` | â€” |
-| CycleProgress + mid-cycle stage highlight | SHIPPED | `spec.go`, `runner.go`, dashboard poll | â€” |
-| **`CycleExecutor` body migration** | SHIPPED | `cycle_executor.go` (~444 lines) owns `CompleteOnce` / `CompleteWithTools` / `CompleteParallel*` bodies; Manager keeps thin wrappers | â€” |
-| **Stage prompt builder extraction** | SHIPPED | `prompt.go` â€” `stagePrompt` + `StagePrompt` | â€” |
-| **GovernanceChecker / CheckGovernance** | SHIPPED | `governance.go` `CheckGovernance` standalone; Manager `checkGovernance` wraps it | Full interface type not needed |
-| Feeds Phase 3 (cross-hoop/swarm + Temporal canvas) | DEFERRED | In-hoop MVP ships; `feeds.go` + `RelFeeds` work today | Full hoopâ†”swarm bidirectional / Temporal topology |
+`internal/loop` (CycleExecutor, stages, governance, feeds, schedule, SKILL.md resolution — everything previously tracked in this section) was deleted whole as part of the v1 CLI-interop strip-down (out of scope for that focus; not merged elsewhere). See `planning/native_glider_orchestration.md` and `planning/agent_cli_interop.md` for the current product direction. Cascading cleanup done: `internal/dashboard/api_loop.go`, `LoopConfig`/`HoopLearningConfig` in `internal/config`, `scripts/loadhoop`, `samples/hoops/`. **Not yet done:** the dashboard's `panel-hoops` frontend (see row above) and `docs/site` residual terminology.
 
 ---
 
-### 1.3 Swarm
+### 1.3 Swarm — **REMOVED 2026-07-25**
 
-| Area | Status | Evidence | What's missing |
-|------|--------|----------|----------------|
-| Swarm FanOut + DecisionRoute | SHIPPED | `fanout.go`, `run.go`, `swarm.go` | â€” |
-| Multi-wave sequencing | SHIPPED | `waves.go` `RunWaves`/`ResumeThread` | â€” |
-| Weave policies (concatenate / role_weighted / critic / conflict_callouts) | SHIPPED | `merge.go`, tests | â€” |
-| LLM critic weave (`llm_critic`) | SHIPPED | `merge.go`, `loop_test` | â€” |
-| Free/dynamic subagent spawn (`free_spawn`, â‰¤4) | SHIPPED | `swarm.go` `FreeSpawn`, capped | â€” |
-| Durable threads + `~/.glider/swarm/threads/` | SHIPPED | `thread.go`, `thread_test.go` | â€” |
-| Planner â†’ SubTasks decompose + template waves | SHIPPED | `decompose.go`, `multi-wave-weave.yaml` | â€” |
-| Thread List / Resume APIs + dashboard panel | SHIPPED | `swarm_api.go` `/api/swarm/threads` | â€” |
-| Live progress snapshots | SHIPPED | `live.go` `LiveProgressStore` | â€” |
-| Hotswap module registry + `/api/hotswap/modules` | SHIPPED | `hotswap.go`, `swarm.Registry` | â€” |
-| Weave: `group.go` + `weave.go` decompose | SHIPPED | `group.go`, `weave.go` | â€” |
-| **`swarm.Registry` naming collision** | **PARTIAL** | `swarm.Registry` (hotswap) clashes conceptually with `backend.Registry` + `tools.Registry` | Rename to `swarm.ModuleRegistry`; deferred as P3 |
-| **`swarm.Runner` SRP** | **PARTIAL** | `Runner` owns FanOut + governance + wave-seq + live progress. `LiveProgressStore` already in `live.go`; templates in `templates.go`. | Extract remaining governance check (~20 lines) to `governance.go` (P2 SOLID) |
+`internal/swarm` (multi-agent fan-out, multi-wave sequencing, weave policies, durable threads, templates, dashboard Swarm tab) was deleted whole, same day as Â§1.2, when v1 scope narrowed to CLI interop + routing/rulesets/analytics only. Two pieces were extracted rather than deleted, since they're routing/rulesets concerns, not swarm-the-product:
+- **Fan-out as a routing strategy** (`StrategyFanOut`, `FanOutExecutor`) survives, relocated into `internal/orchestrator/fanout.go` + `fanout_worker.go` — no more `internal/swarm` import.
+- **The hot-swap module registry** (`swarm.Registry`/`swarm.Module`, previously mis-homed in the swarm package despite being generic config-reload infra) survives as a new standalone `internal/hotswap` package; the naming-collision note below is now moot since it's no longer `swarm.Registry`.
+
+Multi-wave sequencing, weave policies, durable threads, templates, and the dashboard Swarm/Graph-editor tabs have **no replacement** — they were the product feature being cut, not relocated.
 
 ---
 
@@ -93,9 +62,9 @@
 | MCP streamable HTTP JSON-RPC transport | SHIPPED | `mcp/http_transport.go`, `mcp/jsonrpc.go` | â€” |
 | GitHub MCP device flow + PAT UI | SHIPPED | `github_device.go`, `credentials.go`, credential file | â€” |
 | GitHub OAuth web flow | SHIPPED | `github_oauth_web.go`, `/oauth/callback` | â€” |
-| Hosted Copilot MCP session hardening | SHIPPED | `http_transport.go` â€” session persist/retry + `X-MCP-Toolsets` | â€” |
-| MCP validate / status | SHIPPED | `mcp/validate.go`, `mcp/status.go` | â€” |
-| **Hosted Copilot MCP live PAT verify** | **PARTIAL** | Code hardened (retry, headers); production quirks still unverified without live PAT | Requires live Copilot PAT test â€” ops/infra step, not code |
+| Hosted Copilot MCP session hardening | SHIPPED | `http_transport.go` — session persist/retry + `X-MCP-Toolsets` + initialize auth refresh + classified 401/403/timeout | — |
+| MCP validate / status | SHIPPED | `mcp/validate.go`, `mcp/status.go` | — |
+| **Hosted Copilot MCP live PAT verify** | **PARTIAL** | Code hardened; ops checklist in `tools_mcp.md` — **not** production-verified | Requires live Copilot PAT test — ops/infra step, not code |
 
 ---
 
@@ -112,7 +81,7 @@
 | Thread facts (`hoop_context.go`) | SHIPPED | `hoop_context.go`, `thread_facts.go` | â€” |
 | Persist to `~/.glider/context/entities.jsonl` | SHIPPED | `entity_index.go` | â€” |
 | Dashboard context tab (episodes, turns, export, prune) | SHIPPED | `api_context.go` | â€” |
-| **Store global singleton (`Default()`/`SetDefault()`)** | **PARTIAL** | Global still exists; mostly injected via interfaces but not fully removed | Replace package-level global with explicit injection everywhere (P2 SOLID) |
+| **Store global singleton (`Default()`/`SetDefault()`)** | **SHIPPED** | Removed; `cmd/glider` injects `*Store` into hub/pipeline/loop/swarm/dashboard | â€” |
 | **Full Leiden communities at repo scale** | **DEFERRED** | Connected-component + god-nodes MVP works; Leiden needs denser graph | Denser EXTRACTED graph + Go dependency ingest |
 | **Live tree-sitter grammars on Windows** | **DEFERRED** | `SymbolIndexer` is pragmatic floor (Go/JS/TS/Python work today) | Live tree-sitter deferred |
 
@@ -167,7 +136,7 @@
 | RunSSE text codec fulfill | SHIPPED | `cursorrpc/runsse_codec.go` `HasRunSSETextCodec` | â€” |
 | `CannedOnError` / `SurfaceLocalError` for RunSSE | SHIPPED | `intercept.go` `tryRunSSEFulfill` | â€” |
 | Tool-loop child RunSSE re-decide (`tool_followup`) | SHIPPED | `intercept.go` `evaluateToolFollowupRunSSE`, `router/tool_followup.go` | â€” |
-| **Path B tool codec (common Cursor ToolCall map)** | SHIPPED | Opt-in `mitm.agent_rpc_tool_codec`; `toolcall_map.go` maps Read/Grep/Edit/Shell/Glob/Ls/Web* â†’ Cursor oneofs (+ Truncated fallback); tests | Full Cursor catalog / live UI chrome still prefer Path A |
+| **Path B tool codec (extended Cursor ToolCall map)** | SHIPPED | Opt-in `mitm.agent_rpc_tool_codec`; `toolcall_map.go` maps FS/web + Todos/Lints/MCP/SemSearch/Task/Plan/Mode/Exa/… → Cursor oneofs (+ Truncated fallback); inventory in `tools_mcp.md` | Live UI chrome sign-off + grind/VM/computer_use still Truncated; prefer Path A for demos |
 
 ---
 
@@ -182,7 +151,7 @@
 | Backend registry + hot-swap | SHIPPED | `backend/registry.go`, `swarm/hotswap.go` | â€” |
 | VRAM allocator + nvidia-smi monitor | SHIPPED | `vram/` package | â€” |
 | Orchestrator pipeline (fallback, circuit breaker, rate limit, queue) | SHIPPED | `orchestrator/` package | â€” |
-| **Backend live hot-reload without restart** | **DEFERRED** | Only router/aliases/threshold/log/GPU hot-swap today; backend/MITM/ports need restart | Design decision; out of current scope |
+| **Backend live hot-reload without restart** | **SHIPPED (MVP)** | `backend.Reloader` + `Registry.ReplaceAll`; hot-swap `backends` module; in-flight keeps old client; MITM/ports still restart | Full drain/quiesce; MITM/port live reload |
 
 ---
 
@@ -223,19 +192,11 @@
 
 ---
 
-### 1.14 Feeds Edges
+### 1.14 Feeds Edges — REMOVED 2026-07-25
 
-| Area | Status | Evidence | What's missing |
-|------|--------|----------|----------------|
-| `kind: feeds` edge schema + `edgeKindFeeds` | SHIPPED | `feeds.go` | â€” |
-| `RelFeeds` contextgraph edge record | SHIPPED | `feeds.go`, `contextgraph` | â€” |
-| `feedSources` â†’ `feedsPromptBlock` consumer injection | SHIPPED | `feeds.go` | â€” |
-| WalkOrder skip control (feeds â‰  control-flow) | SHIPPED | `feeds.go` SM skip | â€” |
-| Sample YAML (`feeds-edge-mvp.yaml`) | SHIPPED | `samples/hoops/` | â€” |
-| **Phase 3: cross-hoop / swarm bidirectional feeds** | **DEFERRED** | In-hoop stageâ†’stage MVP works | Full Temporal canvas topology |
+`feeds.go` lived in `internal/loop`; deleted with it (see §1.2). `RelFeeds` was a `contextgraph` edge kind produced only by the loop stage runner — `contextgraph` itself is unaffected, but nothing currently writes `RelFeeds` edges.
 
 ---
-
 ### 1.15 AgentLog
 
 | Area | Status | Evidence | What's missing |
@@ -265,8 +226,8 @@
 | **`loop.Manager` god object** â€” `CycleExecutor` bodies | SHIPPED | Bodies on `CycleExecutor`; Manager thin wrappers; `runCycle` still on Manager | Further call-site migration optional |
 | **`buildStagePrompt` extraction** | SHIPPED | `loop/prompt.go` | â€” |
 | **`CheckGovernance` standalone** | SHIPPED | `governance.go` `CheckGovernance`; thin Manager wrapper | Interface type optional / not required |
-| **Dashboard `Server` DIP** | **PARTIAL** | File split done; `*loop.Manager` + `*swarm.Runner` still concrete fields | Replace with narrow handler-group interfaces (P2) |
-| **`contextgraph.Default()` global** | **PARTIAL** | Global singleton still present; mostly injected via interfaces | Remove global; explicit injection everywhere (P2) |
+| **Dashboard `Server` DIP** | **SHIPPED** | `Loops LoopAPI` + `Swarm SwarmAPI` in `dashboard/deps.go`; concretes at composition root | â€” |
+| **`contextgraph.Default()` global** | **SHIPPED** | `Default`/`SetDefault` removed; explicit `*Store` injection only | â€” |
 | **`swarm.Registry` â†’ `ModuleRegistry` rename** | **PARTIAL** | Naming collision documented; not renamed (risky refactor) | P3 rename |
 
 ---
@@ -292,9 +253,9 @@ All P0 blockers closed.
 
 | # | Item | Effort |
 |---|------|--------|
-| P2-1 | Dashboard `Server` â€” replace `*loop.Manager` / `*swarm.Runner` with narrow handler-group interfaces | Med (DIP, no logic change) |
-| P2-2 | `contextgraph.Default()` global removal â€” explicit injection everywhere | Low (search-replace + test) |
-| P2-3 | Extract `swarm.Runner` inline governance check (~20 lines) â†’ `governance.go` | Low |
+| P2-1 | ~~Dashboard `Server` — narrow `LoopAPI` / `SwarmAPI`~~ | **SHIPPED** |
+| P2-2 | ~~`contextgraph.Default()` global removal~~ | **SHIPPED** |
+| P2-3 | Extract `swarm.Runner` inline governance check (~20 lines) → `governance.go` | Low |
 | P2-4 | Agentlog dashboard empty-state polish | Low (UI-only) |
 | P2-5 | Hosted Copilot MCP live PAT verify in prod | Ops: need live PAT |
 
@@ -324,8 +285,8 @@ All P0 blockers closed.
 | Live tree-sitter grammars on Windows | Deferred behind pragmatic `SymbolIndexer` |
 | Chargeback UI for budgets | No billing product decision |
 | Phase 3 feeds edges (cross-hoop / Temporal canvas) | In-hoop MVP ships; full topology deferred |
-| Backend live hot-reload without restart | Only router/aliases/threshold/GPU swap today |
-| Full Path B Cursor ToolCall catalog beyond common map | Common Read/Grep/Edit/Shell/Glob/Ls/Web map ships; full catalog / live UI chrome prefer Path A |
+| MITM / listen-port live reload | Backend clients/models hot-reload shipped; listeners still process-bound |
+| Full Path B Cursor ToolCall catalog beyond mapped set / live UI | Extended map ships (see `tools_mcp.md`); live UI + grind/VM/computer_use still Truncated; prefer Path A |
 | Native Cursor IDE plugin | Operates as BYOK gateway + MITM proxy only |
 | Full Cursor protocol RE beyond Path B text RunSSE | Non-goal |
 | Multi-tenant SaaS control plane | Non-goal |
@@ -336,7 +297,7 @@ All P0 blockers closed.
 ## 3. How to verify current state
 
 ```powershell
-go test ./internal/agentlog/ ./internal/tools/ ./internal/mcp/ ./internal/cursorrpc/ ./internal/mitm/ ./internal/contextgraph/ ./internal/loop/ ./internal/swarm/ ./internal/dashboard/ ./internal/plugin/ ./internal/router/ ./internal/orchestrator/ ./internal/backend/... ./internal/vram/ -count=1
+go test ./internal/agentlog/ ./internal/tools/ ./internal/mcp/ ./internal/cursorrpc/ ./internal/mitm/ ./internal/contextgraph/ ./internal/swarm/ ./internal/dashboard/ ./internal/plugin/ ./internal/router/ ./internal/orchestrator/ ./internal/backend/... ./internal/vram/ -count=1
 
 # Run Glider
 go run ./cmd/glider -config configs/glider.local.yaml
@@ -359,5 +320,5 @@ go run ./cmd/glider -config configs/glider.local.yaml
 
 ## 4. Changelog
 
-- **2026-07-24 (lock-in):** `CycleExecutor` body migration SHIPPED; `prompt.go` + `CheckGovernance` SHIPPED; Path B common ToolCall map SHIPPED (`toolcall_map.go`); worktrees/CapHooks/SKILL/L3/feeds verified
+- **2026-07-24 (lock-in):** `CycleExecutor` body migration SHIPPED; `prompt.go` + `CheckGovernance` SHIPPED; Path B ToolCall map **extended** (`toolcall_map.go`); Copilot MCP ops checklist + auth refresh harden (live PAT still unverified); worktrees/CapHooks/SKILL/L3/feeds verified
 - Prior audit: code-truth feature matrix; promoted CapHooks/worktrees/SKILL/L3/feeds MVP to SHIPPED

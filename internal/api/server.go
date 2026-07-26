@@ -24,6 +24,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/chat/completions", s.handlers.ChatCompletions)
 	mux.HandleFunc("/v1/responses", s.handlers.Responses)
 	mux.HandleFunc("/v1/models", s.handlers.ListModels)
+	mux.HandleFunc("/v1/messages", s.handlers.Messages)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

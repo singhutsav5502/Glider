@@ -10,15 +10,8 @@ import (
 )
 
 func (s *Server) workspaceRoot() string {
-	if s.Loops != nil && s.Loops.Tools != nil {
-		if w := s.Loops.Tools.Workspace(); w != "" {
-			return w
-		}
-	}
-	if s.Swarm != nil && s.Swarm.Tools != nil {
-		if w := s.Swarm.Tools.Workspace(); w != "" {
-			return w
-		}
+	if s.Workspace != "" {
+		return s.Workspace
 	}
 	return tools.DefaultWorkspaceDir()
 }
@@ -66,8 +59,18 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 			"run":       lay.RunID,
 			"work_dir":  lay.RelWork,
 			"out_dir":   lay.RelOut,
-			"work":      work,
-			"out":       out,
+			"mode":      lay.Mode,
+			"binding": map[string]any{
+				"workspace_root": lay.RootAbs,
+				"work_rel":       lay.RelWork,
+				"out_rel":        lay.RelOut,
+				"work_dir":       lay.WorkAbs,
+				"out_dir":        lay.OutAbs,
+				"mode":           lay.Mode,
+				"run_id":         lay.RunID,
+			},
+			"work": work,
+			"out":  out,
 		})
 		return
 	}

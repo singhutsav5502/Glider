@@ -25,16 +25,24 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">Core</div>
       <h1>Architecture</h1>
-      <p>Glider is a <strong>shared harness</strong>: every completion (gateway or MITM) goes through alias → tokenize → route → transform → execute.</p>
+      <p>
+        Glider is a <strong>shared harness</strong>: every completion (gateway or MITM) goes through
+        <strong>resolve model alias → tokenize → route → transform → execute</strong>.
+      </p>
+      <p class="note">
+        <strong>Model alias</strong> — rewrite the client’s model ID via <code>model_aliases</code>
+        (e.g. Cursor’s <code>gpt-4o</code> → <code>qwen2.5-coder:14b</code>) before the router runs.
+        Routing picks <em>which model/backend</em> answers one request. Swarm templates define the
+        <em>mission shape</em>: worker roles, waves, weave policy, and stop conditions.
+      </p>
       <p class="note">
         For Path A/B lifecycles, sticky cloud, fulfill hub, and failure modes, see the
         <a href="architecture-deep.html">architecture deep dive</a>,
@@ -67,7 +75,6 @@
         <tr><td><code>internal/router</code></td><td>Priority rules, classifier, wrap-up, complexity</td></tr>
         <tr><td><code>internal/mitm</code></td><td>CONNECT decrypt, Agent RPC fulfill hub</td></tr>
         <tr><td><code>internal/contextgraph</code></td><td>Event log + turn family index</td></tr>
-        <tr><td><code>internal/loop</code></td><td>Loop Engineering hoops (stages + eval)</td></tr>
         <tr><td><code>internal/swarm</code></td><td>Fan-out workers + hot-swap registry</td></tr>
       </table>
 

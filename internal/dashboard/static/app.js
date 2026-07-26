@@ -6,6 +6,7 @@
     hoops: document.getElementById("panel-hoops"),
     graphs: document.getElementById("panel-graphs"),
     mcp: document.getElementById("panel-mcp"),
+    vendors: document.getElementById("panel-vendors"),
     workspace: document.getElementById("panel-workspace"),
     settings: document.getElementById("panel-settings"),
   };
@@ -31,37 +32,14 @@
     Object.entries(panels).forEach(([key, p]) => {
       if (p) p.classList.toggle("active", key === name);
     });
-    document.body.classList.toggle("graphs-tab-active", name === "graphs");
     if (name === "vram") loadVRAM();
-    if (name === "rules") renderRulesEditor(currentCfg);
-    if (name === "hoops") {
-      refreshHoopsPanel();
-      startLiveBoardPoll();
-    } else     if (name === "graphs") {
-      refreshStageLiveThenRender();
-      startLiveBoardPoll();
-      const focusGraphs = () => {
-        renderStageGraph();
-        renderSwarmGraph();
-        resizeCyInstances({ fit: true });
-        const focus = opts && opts.focus;
-        if (focus === "swarm") {
-          document.getElementById("graphs-swarm-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        } else if (focus === "stage") {
-          document.getElementById("graphs-stage-section")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      };
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
-          focusGraphs();
-          setTimeout(() => resizeCyInstances({ fit: true }), 60);
-        })
-      );
-    } else if (prev === "hoops" || prev === "graphs") {
-      if (name !== "hoops" && name !== "graphs") stopLiveBoardPoll();
+    if (name === "rules") {
+      renderRulesEditor(currentCfg);
+      loadHotSwap();
     }
     if (name === "overview") loadSessions();
     if (name === "mcp") refreshMCPPanel();
+    if (name === "vendors") refreshVendorsPanel();
     if (name === "workspace") refreshWorkspacePanel();
   }
 
@@ -187,13 +165,35 @@
       title: "Stage kind",
       body: "Loop Engineering stage type.",
       values: [
+        { v: "workspace", d: "Bind work/out folders (fresh run or existing path)" },
         { v: "planner", d: "Produce a plan for the cycle" },
         { v: "actor", d: "Implement / execute against the plan" },
         { v: "critic", d: "Score / gate success (maker ≠ checker)" },
         { v: "memory", d: "Load / write shared memory" },
+        { v: "context", d: "Seed shared contextgraph for later stages" },
         { v: "router", d: "Update local/cloud bias for following stages" },
         { v: "human_gate", d: "Pause for human approve / reject" },
       ],
+    },
+    "stage-edit-workspace-mode": {
+      title: "Workspace mode",
+      body: "run = fresh runs/<hoop>/{work,out}. existing = reuse a folder under ~/.glider/workspace.",
+    },
+    "stage-edit-workspace-path": {
+      title: "Workspace path",
+      body: "Required when mode=existing. Relative to the tools sandbox (e.g. projects/demo).",
+    },
+    "stage-edit-out-path": {
+      title: "Out path",
+      body: "Optional deliverables folder when mode=existing (default: <workspace_path>/out).",
+    },
+    "stage-chip-workspace": {
+      title: "workspace",
+      body: "Bind action (work) + output (out) for this run — fresh or existing.",
+    },
+    "stage-chip-context": {
+      title: "context",
+      body: "Seed shared contextgraph keys for later actors / swarm.",
     },
     "stage-edit-id": { title: "Stage id", body: "Stable id used in graph_edges and runtime state (slug-safe)." },
     "stage-edit-name": { title: "Stage name", body: "Display name for this stage." },
@@ -282,7 +282,7 @@
     "cfg-aliases": { title: "Aliases JSON", body: "JSON object: client model → local model name." },
     "cfg-rules": { title: "Rules JSON", body: "JSON array of rules. Prefer the Rules Engine tab." },
     "cfg-models": { title: "Models JSON", body: "JSON array of model objects (name, backend, vram_estimate_mb, …)." },
-    "cfg-backends": { title: "Backends JSON", body: "JSON array: ollama / vllm entries with url and health_check_interval." },
+    "cfg-backends": { title: "Backends JSON", body: "JSON array: ollama / vllm entries with url and health_check_interval. Hot-reloaded into the live registry (in-flight Complete keeps the old client)." },
     "cfg-budget": { title: "Budget cap (USD)", body: "Optional USD budget cap for cloud spend tracking." },
     "cfg-rpm": { title: "Requests / min", body: "Rate limit across cloud providers." },
     "cfg-tpm": { title: "Tokens / min", body: "Token rate limit across cloud providers." },
@@ -902,6 +902,13 @@
     }
     const warn = res.headers.get("X-Glider-Warnings");
     if (warn) showWarn("Warnings: " + warn);
+    const br = res.headers.get("X-Glider-Backend-Reload");
+    if (br === "error") {
+      showWarn("Backend reload failed (previous clients kept): " + (res.headers.get("X-Glider-Backend-Reload-Error") || "unknown"));
+    } else if (br === "ok") {
+      const bw = res.headers.get("X-Glider-Backend-Reload-Warnings");
+      if (bw) showWarn("Backends reloaded with warnings: " + bw);
+    }
     try {
       return JSON.parse(text);
     } catch (_) {
@@ -921,6 +928,13 @@
     if (!res.ok) {
       showError(text.trim() || `Save failed (${res.status})`);
       return null;
+    }
+    const br = res.headers.get("X-Glider-Backend-Reload");
+    if (br === "error") {
+      showWarn("Backend reload failed (previous clients kept): " + (res.headers.get("X-Glider-Backend-Reload-Error") || "unknown"));
+    } else if (br === "ok") {
+      const bw = res.headers.get("X-Glider-Backend-Reload-Warnings");
+      if (bw) showWarn("Backends reloaded with warnings: " + bw);
     }
     try {
       return JSON.parse(text);
@@ -1343,7 +1357,7 @@
   const DEFAULT_STAGES = ["router", "planner", "actor", "critic", "memory"];
   const SAMPLE_STAGES = ["router", "planner", "actor", "critic", "memory"];
   /** Loop API StageKind values only (see internal/loop/stages.go). */
-  const STAGE_KINDS = ["router", "planner", "actor", "critic", "memory", "human_gate"];
+	const STAGE_KINDS = ["workspace", "router", "planner", "actor", "critic", "memory", "context", "human_gate"];
   let liveBoardTimer = null;
   let liveWsConnected = false;
   let hotswapGenCache = {};
@@ -2361,6 +2375,9 @@
       roles: Array.isArray(raw.roles) ? raw.roles : [],
       tools: Array.isArray(raw.tools) ? raw.tools : [],
       mcp: Array.isArray(raw.mcp) ? raw.mcp : (raw.mcp_servers || []),
+      workspace_mode: raw.workspace_mode === "existing" ? "existing" : (kind === "workspace" ? "run" : ""),
+      workspace_path: raw.workspace_path || "",
+      out_path: raw.out_path || "",
       x: typeof raw.x === "number" ? raw.x : null,
       y: typeof raw.y === "number" ? raw.y : null,
     };
@@ -2480,28 +2497,22 @@
   async function tickLiveBoard() {
     await refreshLiveBoard();
     if (isHoopsTabActive()) {
-      await Promise.all([loadHoops(), loadHotSwap()]);
+      await loadHotSwap();
     }
   }
 
   async function refreshLiveBoard() {
     setLiveWs(liveWsConnected ? "Connected" : "Disconnected", liveWsConnected);
-    const [loopsRes, modsRes, metricsRes, ctxRes] = await Promise.allSettled([
-      fetch("/api/loops").then((r) => (r.ok ? r.json() : [])),
+    const [modsRes, metricsRes, ctxRes] = await Promise.allSettled([
       fetch("/api/hotswap/modules").then((r) => (r.ok ? r.json() : {})),
       fetch("/api/metrics").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/context/recent?limit=1").then((r) => (r.ok ? r.json() : null)),
     ]);
 
-    const loops = loopsRes.status === "fulfilled" && Array.isArray(loopsRes.value) ? loopsRes.value : [];
-    refreshStageLiveFromLoops(loops);
     const set = (id, v) => {
       const el = document.getElementById(id);
       if (el) el.textContent = v;
     };
-    set("live-hoops", String(loops.length));
-    const running = loops.filter((st) => String(st.status || "").toLowerCase() === "running").length;
-    set("live-running", String(running));
 
     if (metricsRes.status === "fulfilled" && metricsRes.value) {
       const dist = metricsRes.value.distribution || {};
@@ -2534,21 +2545,6 @@
       set("live-ctx", String(ctxRes.value.turns.length));
     } else {
       set("live-ctx", "--");
-    }
-
-    const spendEl = document.getElementById("live-spend");
-    const spendCard = spendEl?.closest(".live-card");
-    const agg = aggregateHoopSpend(loops);
-    const fmt = formatSpend(agg);
-    if (spendEl) {
-      spendEl.textContent = fmt ? fmt.text : "--";
-      spendEl.title = fmt
-        ? (fmt.hard ? "Hard budget hit on a hoop" : fmt.soft ? "Soft budget hit on a hoop" : "Aggregate hoop BudgetSpend")
-        : "No hoop spend yet";
-    }
-    if (spendCard) {
-      spendCard.classList.toggle("soft", !!(fmt && fmt.soft && !fmt.hard));
-      spendCard.classList.toggle("hard", !!(fmt && fmt.hard));
     }
   }
 
@@ -3064,6 +3060,184 @@
     o.textContent = msg || "OK";
   }
 
+  function showVendorsError(msg) {
+    const e = document.getElementById("vendors-error");
+    const o = document.getElementById("vendors-ok");
+    if (o) o.hidden = true;
+    if (!e) return;
+    if (!msg) { e.hidden = true; return; }
+    e.hidden = false;
+    e.textContent = msg;
+  }
+
+  function showVendorsOk(msg) {
+    const e = document.getElementById("vendors-error");
+    const o = document.getElementById("vendors-ok");
+    if (e) e.hidden = true;
+    if (!o) return;
+    o.hidden = false;
+    o.textContent = msg || "OK";
+  }
+
+  function renderVendorsTable(vendorsList) {
+    const body = document.getElementById("vendors-body");
+    if (!body) return;
+    if (!vendorsList.length) {
+      body.innerHTML = `<tr><td colspan="7" class="hint">No CLIs discovered yet. Click Discover to probe configs/vendor_candidates.yaml.</td></tr>`;
+      return;
+    }
+    body.innerHTML = vendorsList.map((v) => {
+      const toggleLabel = v.enabled ? "Disable" : "Enable";
+      const toggleAction = v.enabled ? "disable" : "enable";
+      const templateCount = (v.templates || []).length;
+      return `<tr data-vendor-name="${escapeAttr(v.name)}">
+        <td>${escapeHtml(v.name)}</td>
+        <td><code>${escapeHtml(v.binary)}</code></td>
+        <td><code>${escapeHtml(v.path)}</code></td>
+        <td>${escapeHtml(v.version || "")}</td>
+        <td>${v.enabled ? '<span class="live-value ok">enabled</span>' : '<span class="live-value">disabled</span>'}</td>
+        <td>${templateCount} <button type="button" class="linkish" data-vendor-action="edit-templates">Edit</button></td>
+        <td><button type="button" class="linkish" data-vendor-action="${toggleAction}">${toggleLabel}</button></td>
+      </tr>
+      <tr class="vendor-templates-row" data-vendor-templates-row="${escapeAttr(v.name)}" hidden>
+        <td colspan="7">
+          <p class="hint" style="margin:0 0 6px">
+            Command-line shape for headless delegation. <code>{{prompt}}</code>, <code>{{session_id}}</code>
+            (for a "resume" template — see below), and <code>{{cwd}}</code> are substituted at run time.
+            The template named <code>default</code> is used for a plain <code>/${escapeHtml(v.name)} &lt;prompt&gt;</code>
+            flag; any other name is reached via <code>/${escapeHtml(v.name)}:&lt;template&gt; &lt;prompt&gt;</code>
+            (e.g. <code>/${escapeHtml(v.name)}:resume &lt;prompt&gt;</code>). JSON array of
+            <code>{name, args, mode}</code>, where <code>mode</code> is <code>"headless"</code> or <code>"interactive"</code>
+            (interactive/Path B launches aren't executed yet — see planning/permission_relay_design.md).
+          </p>
+          <textarea class="vendor-templates-editor" data-vendor-templates-editor="${escapeAttr(v.name)}"
+            rows="8" style="width:100%;font-family:monospace;font-size:12px"
+          >${escapeHtml(JSON.stringify(v.templates || [], null, 2))}</textarea>
+          <p class="cfg-error vendor-templates-error" data-vendor-templates-error="${escapeAttr(v.name)}" hidden></p>
+          <div style="margin-top:6px">
+            <button type="button" class="linkish" data-vendor-action="save-templates">Save</button>
+            <button type="button" class="linkish" data-vendor-action="cancel-templates">Cancel</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function refreshVendorsPanel() {
+    showVendorsError("");
+    try {
+      const res = await fetch("/api/vendors");
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+      const workspaceInput = document.getElementById("vendors-default-workspace");
+      if (workspaceInput) workspaceInput.value = data.defaultWorkspace || "";
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  async function saveDefaultWorkspace() {
+    showVendorsError("");
+    const input = document.getElementById("vendors-default-workspace");
+    if (!input) return;
+    try {
+      const res = await fetch("/api/vendors/workspace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: input.value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showVendorsOk("Default workspace saved.");
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  document.getElementById("vendors-default-workspace-save")?.addEventListener("click", () => saveDefaultWorkspace());
+
+  async function vendorsDiscover() {
+    showVendorsError("");
+    try {
+      const res = await fetch("/api/vendors/discover", { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+      showVendorsOk(`Discovered ${(data.vendors || []).length} CLI(s).`);
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  async function vendorAction(name, action) {
+    showVendorsError("");
+    try {
+      const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/${action}`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  function toggleVendorTemplatesRow(name) {
+    const row = document.querySelector(`[data-vendor-templates-row="${CSS.escape(name)}"]`);
+    if (row) row.hidden = !row.hidden;
+  }
+
+  async function saveVendorTemplates(name) {
+    const editor = document.querySelector(`[data-vendor-templates-editor="${CSS.escape(name)}"]`);
+    const errEl = document.querySelector(`[data-vendor-templates-error="${CSS.escape(name)}"]`);
+    if (errEl) errEl.hidden = true;
+    if (!editor) return;
+
+    let templates;
+    try {
+      templates = JSON.parse(editor.value);
+    } catch (e) {
+      if (errEl) { errEl.hidden = false; errEl.textContent = "Invalid JSON: " + e.message; }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/templates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templates }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+      showVendorsOk(`Saved templates for ${name}.`);
+    } catch (err) {
+      if (errEl) { errEl.hidden = false; errEl.textContent = String(err.message || err); }
+    }
+  }
+
+  document.getElementById("vendors-discover")?.addEventListener("click", () => vendorsDiscover());
+  document.getElementById("vendors-body")?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-vendor-action]");
+    if (!btn) return;
+    const action = btn.getAttribute("data-vendor-action");
+
+    if (action === "edit-templates" || action === "cancel-templates") {
+      const row = ev.target.closest("[data-vendor-name]");
+      if (!row) return;
+      toggleVendorTemplatesRow(row.getAttribute("data-vendor-name"));
+      return;
+    }
+    if (action === "save-templates") {
+      const row = ev.target.closest("[data-vendor-templates-row]");
+      if (!row) return;
+      saveVendorTemplates(row.getAttribute("data-vendor-templates-row"));
+      return;
+    }
+    const row = ev.target.closest("[data-vendor-name]");
+    if (!row) return;
+    vendorAction(row.getAttribute("data-vendor-name"), action);
+  });
+
   async function refreshMCPPanel() {
     showMCPError("");
     try {
@@ -3506,6 +3680,12 @@
     if (promptEl) promptEl.value = node?.prompt || "";
     if (routeEl) routeEl.value = node?.route || "";
     if (evalEl) evalEl.value = node?.eval_min > 0 ? String(node.eval_min) : "";
+    const wsModeEl = document.getElementById("stage-edit-workspace-mode");
+    const wsPathEl = document.getElementById("stage-edit-workspace-path");
+    const outPathEl = document.getElementById("stage-edit-out-path");
+    if (wsModeEl) wsModeEl.value = node?.workspace_mode === "existing" ? "existing" : "run";
+    if (wsPathEl) wsPathEl.value = node?.workspace_path || "";
+    if (outPathEl) outPathEl.value = node?.out_path || "";
     if (toolsEl) {
       // Show builtins + any non-picker MCP tools in advanced JSON.
       const builtins = (Array.isArray(node?.tools) ? node.tools : []).filter((t) => t && t.kind !== "mcp");
@@ -3527,6 +3707,9 @@
     const route = String(document.getElementById("stage-edit-route")?.value || "");
     const evalRaw = Number(document.getElementById("stage-edit-eval-min")?.value);
     const eval_min = Number.isFinite(evalRaw) && evalRaw > 0 ? evalRaw : 0;
+    const workspace_mode = String(document.getElementById("stage-edit-workspace-mode")?.value || "run");
+    const workspace_path = String(document.getElementById("stage-edit-workspace-path")?.value || "").trim();
+    const out_path = String(document.getElementById("stage-edit-out-path")?.value || "").trim();
     let tools = [];
     const toolsRaw = String(document.getElementById("stage-edit-tools")?.value || "").trim();
     if (toolsRaw) {
@@ -3578,6 +3761,9 @@
       node.eval_min = eval_min;
       node.tools = tools;
       node.mcp = mcp;
+      node.workspace_mode = kind === "workspace" ? workspace_mode : "";
+      node.workspace_path = kind === "workspace" ? workspace_path : "";
+      node.out_path = kind === "workspace" ? out_path : "";
       selectStageNode(node.uid);
       renderStageGraph();
       showHoopsOk("Updated stage: " + node.id);
@@ -3594,6 +3780,9 @@
         eval_min,
         tools,
         mcp,
+        workspace_mode: kind === "workspace" ? workspace_mode : "",
+        workspace_path: kind === "workspace" ? workspace_path : "",
+        out_path: kind === "workspace" ? out_path : "",
       });
       stageNodes.push(node);
       selectStageNode(node.uid);
@@ -4998,9 +5187,8 @@
   }
 
   async function refreshHoopsPanel() {
-    lastHoopsSnap = "";
     lastHotswapSnap = "";
-    await Promise.all([loadHoops(), loadHotSwap(), loadSwarmTemplates(), refreshLiveBoard()]);
+    await Promise.all([loadHotSwap(), loadSwarmTemplates(), refreshLiveBoard()]);
     renderStageGraph();
     renderSwarmGraph();
   }
@@ -5537,6 +5725,11 @@
             if (t.server) row.tools.push({ name: "*", kind: "mcp", server: t.server });
           });
         }
+        if (row.kind === "workspace") {
+          row.workspace_mode = s.workspace_mode === "existing" ? "existing" : "run";
+          if (s.workspace_path) row.workspace_path = s.workspace_path;
+          if (s.out_path) row.out_path = s.out_path;
+        }
         return row;
       });
       const graph_edges = stageEdges.map((e) => ({
@@ -5654,7 +5847,7 @@
         if (as !== bs) return as - bs;
         return String(a.name).localeCompare(String(b.name));
       });
-      const snap = JSON.stringify(mods.map((m) => [m.name, m.enabled, m.generation]));
+      const snap = JSON.stringify(mods.map((m) => [m.name, m.enabled, m.generation, m.last_ok, m.last_error]));
       if (snap === lastHotswapSnap && el.querySelector(".hotswap-row, .hint, .cfg-error")) return;
       lastHotswapSnap = snap;
       el.innerHTML = mods.map((m) => {
@@ -5663,10 +5856,14 @@
         const prev = hotswapGenCache[m.name];
         const bumped = prev != null && gen > prev;
         hotswapGenCache[m.name] = gen;
+        let statusTag = "";
+        if (m.last_ok === true) statusTag = '<span class="tag ok" title="' + esc((m.last_warnings || []).join(" | ") || "last reload ok") + '">ok</span>';
+        else if (m.last_ok === false) statusTag = '<span class="tag fail" title="' + esc(m.last_error || "last reload failed") + '">fail</span>';
         return '<div class="hotswap-row ' + (m.stage ? "stage" : "") + (bumped ? " gen-bump" : "") + '">' +
           '<span class="hotswap-name">' + esc(m.name) + '</span>' +
           '<span class="tag">' + esc(m.kind || "") + '</span>' +
           '<span class="tag">' + esc(m.reload || (m.hot ? "hot" : "restart")) + '</span>' +
+          statusTag +
           '<span class="hotswap-gen ' + (bumped ? "live" : "") + '" title="' + esc(m.description || "") + '">gen ' + gen + '</span>' +
           '<label class="check" title="' + esc(m.description || (m.hot ? "Hot-toggle this module without restart" : "Requires restart; toggle is informational")) + '"><input type="checkbox" data-mod="' + esc(m.name) + '" ' + (en ? "checked" : "") + " " + (m.hot ? "" : "disabled") + ' title="' + esc(m.description || "Enable or disable this module") + '" /> enabled</label>' +
           '</div>';

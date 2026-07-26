@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,8 +78,14 @@ func (s *httpSession) Close(context.Context) error {
 
 func (s *httpSession) handshake(ctx context.Context) error {
 	_, err := s.callOnce(ctx, "initialize", defaultInitializeParams(), false)
+	if err != nil && isAuthFailureErr(err) {
+		// PAT paste / device flow may land after process start but before Connect.
+		s.clearSession()
+		s.refreshAuth()
+		_, err = s.callOnce(ctx, "initialize", defaultInitializeParams(), false)
+	}
 	if err != nil {
-		return fmt.Errorf("mcp http initialize: %w", err)
+		return fmt.Errorf("mcp http initialize: %w", classifyAuthErr(err))
 	}
 	// notifications/initialized — best-effort
 	_ = s.postNotification(ctx, "notifications/initialized", map[string]any{})
@@ -154,13 +161,22 @@ func (s *httpSession) clearSession() {
 
 // refreshAuth re-resolves token from env/credential file (PAT paste / device flow
 // may land after Connect). Hydrates ~/.glider/credentials/github_token into env
-// first so UI-pasted PATs are visible without restart. Best-effort; keeps prior
-// auth on failure.
+// first so UI-pasted PATs are visible without restart. For hosted github, prefer
+// the credential file over a stale process env (paste rotates the file).
+// Best-effort; keeps prior auth on failure.
 func (s *httpSession) refreshAuth() {
 	_, _ = HydrateGitHubTokenFromStore()
+	hostedGitHub := s.serverID == "github" || strings.Contains(strings.ToLower(s.url), "githubcopilot.com")
+	if hostedGitHub {
+		if tok, err := LoadGitHubTokenFile(); err == nil {
+			if tok = strings.TrimSpace(tok); tok != "" {
+				_ = os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", tok)
+			}
+		}
+	}
 	if s.auth.TokenEnv == "" && s.auth.Kind != AuthEnv {
 		// Still try GitHub env aliases when this is the hosted github session.
-		if s.serverID == "github" || strings.Contains(strings.ToLower(s.url), "githubcopilot.com") {
+		if hostedGitHub {
 			env := ResolveGitHubTokenEnv()
 			if env == "" {
 				return
@@ -193,7 +209,8 @@ func isSessionOrAuthRetryable(status int, body string) bool {
 		lower := strings.ToLower(body)
 		for _, needle := range []string{
 			"session", "mcp-session", "initialize", "not initialized",
-			"expired", "invalid token", "unauthorized",
+			"expired", "invalid token", "unauthorized", "forbidden",
+			"authentication", "access denied",
 		} {
 			if strings.Contains(lower, needle) {
 				return true
@@ -201,6 +218,41 @@ func isSessionOrAuthRetryable(status int, body string) bool {
 		}
 	}
 	return false
+}
+
+func isAuthFailureErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"mcp http 401", "mcp http 403",
+		"unauthorized", "forbidden", "invalid token", "authentication",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyAuthErr wraps HTTP auth failures so dashboard/status surfaces a clear signal.
+func classifyAuthErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "mcp http 401"), strings.Contains(lower, "unauthorized"):
+		return fmt.Errorf("authentication failed (401) — check PAT / Copilot entitlement: %w", err)
+	case strings.Contains(lower, "mcp http 403"), strings.Contains(lower, "forbidden"):
+		return fmt.Errorf("forbidden (403) — token may lack Copilot MCP access or toolset scope: %w", err)
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline exceeded"):
+		return fmt.Errorf("timeout talking to hosted MCP — check network / VPN: %w", err)
+	default:
+		return err
+	}
 }
 
 func (s *httpSession) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -249,7 +301,7 @@ func (s *httpSession) callOnce(ctx context.Context, method string, params any, a
 				return s.callOnce(ctx, method, params, false)
 			}
 		}
-		return nil, fmt.Errorf("mcp http %d: %s", resp.StatusCode, msg)
+		return nil, classifyAuthErr(fmt.Errorf("mcp http %d: %s", resp.StatusCode, msg))
 	}
 
 	if strings.Contains(ct, "text/event-stream") {
@@ -268,7 +320,7 @@ func (s *httpSession) callOnce(ctx context.Context, method string, params any, a
 				return s.callOnce(ctx, method, params, false)
 			}
 		}
-		return nil, rpc.Error
+		return nil, classifyAuthErr(rpc.Error)
 	}
 	return rpc.Result, nil
 }

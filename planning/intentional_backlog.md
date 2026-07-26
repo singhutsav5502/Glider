@@ -1,6 +1,6 @@
 # Intentional backlog — deferred by design
 
-> **Home for items left open on purpose.** Matrix status stays in [remaining_gaps.md](remaining_gaps.md); SOLID mechanics in [solid_refactor.md](solid_refactor.md).  
+> **Home for items left open on purpose.** Matrix status stays in [remaining_gaps.md](remaining_gaps.md); SOLID mechanics in [solid_refactor.md](Depreceated/solid_refactor.md).  
 > As of **2026-07-24** (post lock-in `08d1336`). Do not treat these as forgotten P0 bugs.
 
 ## How to use
@@ -13,12 +13,12 @@
 
 | Order | Item | Effort | Depends on |
 |------:|------|--------|------------|
-| 1 | Dashboard Server DIP | M | Handler file splits (done) |
-| 2 | `contextgraph.Default()` -> explicit injection | S–M | Mostly injected already |
+| ~~1~~ | ~~Dashboard Server DIP~~ | — | **SHIPPED** |
+| ~~2~~ | ~~`contextgraph.Default()` -> explicit injection~~ | — | **SHIPPED** |
 | 3 | Hosted Copilot MCP live PAT production verify | S (ops) | Session harden (done) + live PAT |
 | 4 | Full Cursor ToolCall catalog + live UI acceptance | L | Common map (done); Cursor build access |
-| 5 | Backend hot-reload (no restart) | L | Hot-swap router path (done); careful lifecycle |
-| 6 | Phase 3 cross-hoop / Temporal-class feeds | L | In-hoop feeds MVP (done) |
+| ~~5~~ | ~~Backend hot-reload (no restart)~~ | — | **SHIPPED** (MVP; MITM/ports still restart) |
+| 6 | ~~Phase 3 cross-hoop / Temporal-class feeds~~ | — | **Moot 2026-07-25** — prerequisite deleted, see Â§5g |
 | 7 | Leiden at scale | L | Denser EXTRACTED graph |
 | 8 | Tree-sitter on Windows | M–L | SymbolIndexer floor (done) |
 | 9 | Temporal-class multi-day HITL | L | Product + durable workflow choice |
@@ -33,24 +33,28 @@
 ### Why deferred
 - Scope/risk: Cursor Agent tool wire shapes and UI chrome churn across builds; full catalog is unbounded RE.
 - Platform: Path B is MITM/protocol; Path A already demos Agent+tools cleanly.
-- Common Read/Grep/Edit/Shell/Glob/Ls/Web map already ships opt-in (`agent_rpc_tool_codec` + `toolcall_map.go`).
+- Extended common map ships opt-in (`agent_rpc_tool_codec` + `toolcall_map.go`) covering FS/web + Todos/Lints/MCP/SemSearch/Task/Plan/Mode/Exa/…; grind/VM/computer_use remain Truncated.
 
 ### Prerequisites
 - Stable Cursor install for checklist runs ([docs/CURSOR_CHECKLIST.md](../docs/CURSOR_CHECKLIST.md)).
-- Capture corpus of live ToolCall / Truncated / tool-result frames for tools beyond the common set.
+- Capture corpus of live ToolCall / Truncated / tool-result frames for tools beyond the mapped set.
 - Keep fail-soft Truncated path green (`runsse_codec` + fulfill tests).
 
 ### Suggested approach / interfaces
-- Extend `internal/cursorrpc` map tables only from **observed** frames (no speculative protobuf).
+- Extend `internal/cursorrpc` map tables only from **observed** frames / `planning/vendor_ref/agent_v1.proto` (no speculative protobuf).
 - Keep codec opt-in; default Truncated for unknown tools.
 - Acceptance harness: fixture golden + one manual UI pass per Cursor major.
-- Prefer documenting “Path A for tools demos” until catalog coverage is measured.
+- Prefer documenting “Path A for tools demos” until live UI coverage is signed off.
 
 ### Acceptance criteria
-- [ ] Documented inventory of mapped vs Truncated-only tools for a pinned Cursor build.
+- [x] Documented inventory of mapped vs Truncated-only tools for a pinned schema (`planning/tools_mcp.md` § Path B; pin `vendor_ref/agent_v1.proto`).
 - [ ] Live UI: at least common tools round-trip without composer breakage; unknown tools Truncated without hang.
-- [ ] Regression tests for each newly mapped tool shape.
+- [x] Regression tests for each newly mapped tool shape (`toolcall_map_test.go`).
 - [ ] Checklist section signed off on a real install.
+
+### Progress (2026-07-24)
+- Extended map: UpdateTodos / ReadTodos / ReadLints / Mcp / SemSearch / CreatePlan / Task / List+Read MCP resources / AskQuestion / SwitchMode / ApplyAgentDiff / Exa* / GenerateImage / WriteShellStdin / Reflect (+ aliases).
+- Still open: live Cursor UI sign-off; Truncated-only grind/VM/computer_use/record_screen/bugbot.
 
 ### Effort
 **L** (ongoing with Cursor releases).
@@ -65,7 +69,7 @@
 ## 2. Hosted Copilot MCP live PAT production verify
 
 ### Why deferred
-- Ops/infra, not missing code: session persist/retry + `X-MCP-Toolsets` already hardened.
+- Ops/infra, not missing code: session persist/retry + `X-MCP-Toolsets` + initialize auth refresh already hardened.
 - Risk: production quirks (auth headers, rate limits, toolset gating) need a real PAT and network.
 
 ### Prerequisites
@@ -82,7 +86,12 @@
 - [ ] Live connect succeeds with PAT; status reports authenticated.
 - [ ] At least one successful tool call; retry path observed or N/A documented.
 - [ ] Failure modes (401/403/timeout) surface cleanly in dashboard/status.
-- [ ] No PAT committed; `.env.example` stays placeholder-only.
+- [x] No PAT committed; `.env.example` stays placeholder-only.
+- [x] Ops verification checklist documented (commands, success signals, failure modes) — see [tools_mcp.md](tools_mcp.md) § Hosted Copilot MCP — ops verification checklist. **Not marked verified.**
+
+### Progress (2026-07-24)
+- Code: handshake retries once on 401/403 after preferring credential-file token; classified auth/timeout errors for status; httptest coverage for session retry + initialize auth refresh.
+- Ops live PAT run: **not done** (no fake verified status).
 
 ### Effort
 **S** (ops half-day) once PAT available.
@@ -90,6 +99,7 @@
 ### What NOT to do
 - Do not bake production PATs into configs or tests.
 - Do not expand hosted MCP surface area before verify proves session harden sufficient.
+- Do not invent a “verified” claim without a real production run.
 
 ---
 
@@ -110,9 +120,9 @@
 - Tests: fake implementations for handler unit tests where useful.
 
 ### Acceptance criteria
-- [ ] `Server` no longer imports concrete Manager/Runner types as fields (ctors may still accept concretes).
-- [ ] `go test ./internal/dashboard/...` green; no API behavior change.
-- [ ] Documented in [solid_refactor.md](solid_refactor.md) as done.
+- [x] `Server` no longer imports concrete Manager/Runner types as fields (ctors may still accept concretes).
+- [x] `go test ./internal/dashboard/...` green; no API behavior change.
+- [x] Documented in [solid_refactor.md](Depreceated/solid_refactor.md) as done.
 
 ### Effort
 **M**.
@@ -140,9 +150,9 @@
 - Tests construct local stores; no package-level mutation.
 
 ### Acceptance criteria
-- [ ] Zero production callers of `Default()` / `SetDefault()`.
-- [ ] `go test` packages that touched wiring stay green.
-- [ ] Startup still seeds one process-wide store via explicit injection only.
+- [x] Zero production callers of `Default()` / `SetDefault()`.
+- [x] `go test` packages that touched wiring stay green.
+- [x] Startup still seeds one process-wide store via explicit injection only.
 
 ### Effort
 **S–M**.
@@ -221,27 +231,39 @@
 | **Effort** | **M** |
 | **Anti-goals** | Building a full billing system or payment gateway inside Glider. |
 
-### 5g. Phase 3 cross-hoop / Temporal feeds
+### 5g. ~~Phase 3 cross-hoop / Temporal feeds~~ — moot, 2026-07-25
 
-| | |
-|--|--|
-| **Why deferred** | In-hoop stage->stage feeds MVP shipped (`feeds.go`, `RelFeeds`); full topology is orchestrator product scope. |
-| **Prerequisites** | Stable in-hoop semantics; swarm↔hoop contract; optional Temporal/canvas decision. |
-| **Approach** | Explicit feed edges across hoop/swarm IDs; cycle detection; delivery guarantees documented. |
-| **Acceptance** | Sample hoop/swarm pair with cross feeds; failure/retry semantics tested. |
-| **Effort** | **L** |
-| **Anti-goals** | Silent global event bus; breaking in-hoop MVP semantics. |
+Its prerequisite (`internal/loop`'s in-hoop feeds MVP, `feeds.go`/`RelFeeds`) was deleted whole in the v1 CLI-interop strip-down. A cross-workflow feeds concept could resurface for `swarm` waves, but that would be a fresh design against swarm's actual data model, not a continuation of this item — not carried forward as-is.
 
 ### 5h. Backend live hot-reload without restart
 
 | | |
 |--|--|
-| **Why deferred** | Router/aliases/threshold/log/GPU hot-swap already works; live backend/MITM/port reload risks in-flight sessions. |
+| **Why deferred** | ~~Router/aliases/threshold/log/GPU hot-swap already works; live backend/MITM/port reload risks in-flight sessions.~~ **MVP SHIPPED 2026-07-24** for backend/model clients; MITM/ports remain restart. |
 | **Prerequisites** | Drain protocol for in-flight completions; config versioning; MITM cert/listener lifecycle design. |
 | **Approach** | Quiesce -> swap backend registry -> warm health checks -> resume; keep ports stable when possible. |
 | **Acceptance** | Swap Ollama↔vLLM (or model endpoint) without process exit; in-flight requests fail-soft or finish on old client. |
 | **Effort** | **L** |
 | **Anti-goals** | Killing MITM mid-handshake; pretending YAML edit auto-reloads listeners without drain. |
+
+#### Progress (2026-07-24) — MVP SHIPPED
+
+- `backend.Registry.ReplaceAll` + `backend.Reloader` build-then-swap; failure leaves previous clients.
+- Hot-swap module `backends` is **hot**; wired from `cmd/glider` via `buildBackendSnapshot` + `config.Provider.Watch/Swap`.
+- Warm ping soft-warns (`last_warnings`); hard fail on empty snapshot / unknown model backend / empty URL.
+- Signals: `GET /api/hotswap/modules` (`last_ok`, `last_error`, `generation`); Config save headers `X-Glider-Backend-Reload` (+ Error/Warnings).
+- In-flight: holders of the old `InferenceBackend` finish on that client; new requests use the swapped map.
+- **Still restart:** MITM CA/hosts/listeners, server listen ports (anti-goals respected).
+
+#### Acceptance checklist
+
+- [x] Swap Ollama↔vLLM (or model endpoint URL) without process exit.
+- [x] Clear API/dashboard signal for reload success/failure.
+- [x] Thread-safe registry swap; orchestrator bindings (`*Registry` pointer + atomic cloud-fallback flag).
+- [x] Tests: success swap + failure leaves previous config working (`reload_test.go`, `hotswap_reload_test.go`).
+- [x] Documented (README, Config UI hint, `configs/glider.yaml` comment, this section).
+- [ ] Full drain / quiesce before drop (MVP: old client retained by in-flight refs only).
+- [ ] MITM / listen-port live reload (explicitly out of MVP).
 
 ---
 
@@ -254,6 +276,6 @@
 ## Related
 
 - Matrix: [remaining_gaps.md](remaining_gaps.md) § DEFERRED  
-- SOLID: [solid_refactor.md](solid_refactor.md)  
+- SOLID: [solid_refactor.md](Depreceated/solid_refactor.md)  
 - Tools/MCP: [tools_mcp.md](tools_mcp.md)  
 - Loop: [loop_engineering.md](loop_engineering.md)

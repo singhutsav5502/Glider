@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -40,7 +39,10 @@
         replacement IDE. It sits beside Cursor as a dual-mode proxy: an OpenAI-compatible
         gateway (Path A) and an HTTPS MITM forward proxy (Path B), both feeding one shared
         harness — <code>orchestrator.PipelineCompleter</code> — that runs
-        <strong>alias → tokenize → route → transform → execute</strong>.
+        <strong>resolve model alias → tokenize → route → transform → execute</strong>
+        (<code>model_aliases</code> rewrites the client model ID before routing).
+        Routing chooses the backend for one request; swarm templates define the
+        mission shape (worker roles, waves, weave policy, stop conditions).
       </p>
       <p>
         This page is the long-form companion to <a href="architecture.html">Architecture</a>
@@ -60,7 +62,6 @@
         <li><a href="#hub">Fulfill hub</a></li>
         <li><a href="#routing">Routing stack</a></li>
         <li><a href="#contextgraph">Context graph</a></li>
-        <li><a href="#loop">Loop Engineering</a></li>
         <li><a href="#hotswap">Hot-swap &amp; swarm</a></li>
         <li><a href="#failures">Failure modes</a></li>
       </ol>
@@ -330,26 +331,13 @@ InheritTurnFollowOn
         <a href="context.html">Context</a>.
       </p>
 
-      <h2 id="loop">Loop Engineering</h2>
-      <p>
-        Not Cursor IDE <code>/loop</code> cron. Glider-owned hoops
-        (<code>internal/loop</code>): observe → plan → act → evaluate → learn. Stages
-        <code>planner</code>, <code>actor</code>, <code>critic</code> (+ optional
-        <code>memory</code>, <code>router</code>). Critic expects
-        <code>SCORE: &lt;0.0–1.0&gt;</code>; default <code>EvalMin</code> 0.7.
-        <code>loop.Manager</code> persists under <code>~/.glider/loops/</code>, runs cycles via
-        the same Completer with <code>RoutePref</code> local|cloud|auto, and emits graph loop
-        events. Default yaml <code>orchestration.loops.default_route: local</code>.
-        Operator overview: <a href="loop-engineering.html">Loop Engineering</a>.
-      </p>
-
       <h2 id="hotswap">Hot-swap &amp; swarm</h2>
       <p>
         <code>internal/swarm</code> provides bounded fan-out workers (<code>FanOut</code>,
         semaphore <code>MaxInflight</code> default 4), merge helpers, dashboard
         <code>POST /api/swarm/run</code>, and a <strong>hot-swap Registry</strong> of named
         modules. Hot Apply on config Watch: router stages, fan_out, swarm, swarm_templates,
-        classifier, loop. Restart-required: backends, MITM CA/hosts, listen ports. Module
+        classifier. Restart-required: backends, MITM CA/hosts, listen ports. Module
         <code>Generation</code> increments on successful Apply. Status: foundation /
         flag-gated; fan-out productization is partial per project summary.
       </p>

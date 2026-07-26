@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a class="active" href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
     <main class="prose">
       <div class="badge">HTTP</div>
@@ -56,20 +55,6 @@
         <tr><td>GET</td><td><code>/api/context/communities</code></td><td><code>?turn_id=</code></td></tr>
         <tr><td>GET</td><td><code>/api/context/explain</code></td><td><code>?turn_id=&amp;id=</code></td></tr>
       </table>
-
-      <h2>Loops / hoops</h2>
-      <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET/POST</td><td><code>/api/loops</code></td><td>List / create hoop</td></tr>
-        <tr><td>GET</td><td><code>/api/loops/modules</code></td><td>Hot-swap modules</td></tr>
-        <tr><td>GET/PUT/DELETE</td><td><code>/api/loops/{id}</code></td><td>CRUD</td></tr>
-        <tr><td>POST</td><td><code>/api/loops/{id}/start</code> · <code>.../stop</code></td><td>Lifecycle</td></tr>
-        <tr><td>POST</td><td><code>/api/loops/{id}/approve</code> · <code>.../reject</code></td><td>HITL human gate decision</td></tr>
-        <tr><td>POST</td><td><code>/api/loops/{id}/resume</code></td><td>Continue after pause / mid-cycle gate</td></tr>
-      </table>
-      <pre>POST /api/loops/clone-repo-security-audit/approve
-{}
-POST /api/loops/clone-repo-security-audit/resume</pre>
 
       <h2 id="workspace">Workspace</h2>
       <p>Browse the tools sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>. Guide: <a href="mcp.html#workspace">Tools &amp; MCP</a>.</p>

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/glider-ai/glider/internal/config"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/dashboard"
-	"github.com/glider-ai/glider/internal/loop"
 	"github.com/glider-ai/glider/internal/mcp"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/mitm"
@@ -774,144 +772,6 @@ func TestContextAPIRecentAndTurn(t *testing.T) {
 	}
 }
 
-func TestLoopsAPICRUDAndStartStop(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "glider.yaml")
-	if err := os.WriteFile(path, []byte("server:\n  proxy_port: 8080\nthresholds:\n  max_local_context_tokens: 8000\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := config.LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := config.NewProvider(loaded, path)
-	reg := backend.NewRegistry()
-	bus := metrics.NewBus()
-	store := &dashboard.FileConfigStore{Provider: p, Path: path}
-	models := &dashboard.RegistryModelController{Registry: reg}
-	srv := dashboard.New(":0", bus, store, models)
-
-	var calls atomic.Int32
-	mc := &mockLoopCompleter{fn: func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
-		calls.Add(1)
-		ch := make(chan backend.CompletionChunk, 1)
-		ch <- backend.CompletionChunk{Content: "SCORE: 1.0\nREASON: ok pong", FinishReason: "stop"}
-		close(ch)
-		return ch, nil
-	}}
-	mgr := loop.NewManager(loop.NewStore(filepath.Join(dir, "loops")), mc, nil, loop.RunnerConfig{
-		DefaultRoute: loop.RouteLocal,
-	})
-	srv.Loops = mgr
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(func() {
-		mgr.Shutdown()
-		ts.Close()
-	})
-
-	body := `{"id":"api-loop","goal":"ping","prompt":"ping","interval":"30ms","max_iterations":1,"route":"local","autonomy":"L2"}`
-	resp, err := http.Post(ts.URL+"/api/loops", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("create status=%d body=%s", resp.StatusCode, b)
-	}
-	var created map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&created)
-	if spec, _ := created["spec"].(map[string]any); spec != nil {
-		if stages, _ := spec["stages"].([]any); len(stages) < 3 {
-			t.Fatalf("expected composed stages, got %v", created)
-		}
-	}
-
-	resp2, err := http.Get(ts.URL + "/api/loops")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp2.Body.Close()
-	var list []map[string]any
-	if err := json.NewDecoder(resp2.Body).Decode(&list); err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("list=%v", list)
-	}
-
-	// Stage catalog for compose UI.
-	respMod, err := http.Get(ts.URL + "/api/loops/modules")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer respMod.Body.Close()
-	if respMod.StatusCode != 200 {
-		t.Fatalf("modules status=%d", respMod.StatusCode)
-	}
-
-	resp3, err := http.Post(ts.URL+"/api/loops/api-loop/start", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp3.Body.Close()
-	if resp3.StatusCode != 200 {
-		b, _ := io.ReadAll(resp3.Body)
-		t.Fatalf("start status=%d body=%s", resp3.StatusCode, b)
-	}
-
-	deadline := time.After(3 * time.Second)
-	for {
-		resp4, err := http.Get(ts.URL + "/api/loops/api-loop")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var st struct {
-			Status    string `json:"status"`
-			Iteration int    `json:"iteration"`
-		}
-		_ = json.NewDecoder(resp4.Body).Decode(&st)
-		resp4.Body.Close()
-		if st.Status == "completed" || st.Status == "failed" || st.Status == "stopped" {
-			if st.Iteration < 1 {
-				t.Fatalf("st=%+v calls=%d", st, calls.Load())
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("timeout status=%s calls=%d", st.Status, calls.Load())
-		default:
-			time.Sleep(15 * time.Millisecond)
-		}
-	}
-	if calls.Load() < 1 {
-		t.Fatalf("calls=%d (expected planner/actor/critic Completes)", calls.Load())
-	}
-
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/loops/api-loop", nil)
-	resp5, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp5.Body.Close()
-	if resp5.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete status=%d", resp5.StatusCode)
-	}
-}
-
-type mockLoopCompleter struct {
-	fn func(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error)
-}
-
-func (m *mockLoopCompleter) Complete(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
-	return m.fn(r, req)
-}
-
-func (m *mockLoopCompleter) CompleteLocal(r *http.Request, req *backend.CompletionRequest) (<-chan backend.CompletionChunk, error) {
-	return m.fn(r, req)
-}
-
 func TestMCPAPI(t *testing.T) {
 	ts, _, _, _ := setupDash(t)
 	// Without MCP manager: empty servers + github snapshot.
@@ -1027,9 +887,7 @@ func TestWorkspaceAPI(t *testing.T) {
 	store := &dashboard.FileConfigStore{Provider: config.NewProvider(config.DefaultConfig(), cfgPath), Path: cfgPath}
 	models := &dashboard.RegistryModelController{Registry: backend.NewRegistry()}
 	srv := dashboard.New(":0", bus, store, models)
-	mgr := loop.NewManager(loop.NewStore(filepath.Join(dir, "loops")), nil, nil, loop.RunnerConfig{})
-	mgr.Tools = tools.NewRegistry(tools.Options{Workspace: dir})
-	srv.Loops = mgr
+	srv.Workspace = dir
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

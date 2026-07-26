@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,13 +28,40 @@ func SanitizeRunID(id string) string {
 // RunLayout is the per-hoop / per-swarm scratch + output tree under the tools workspace.
 type RunLayout struct {
 	RunID   string // sanitized id
-	RootAbs string // workspace absolute
+	Mode    string // run | existing
+	RootAbs string // workspace absolute (JSON: workspace_root)
 	WorkAbs string
 	OutAbs  string
-	RelRoot string // runs/<id>
-	RelWork string // runs/<id>/work
-	RelOut  string // runs/<id>/out
+	RelRoot string // runs/<id> (empty when mode=existing)
+	RelWork string // runs/<id>/work or existing work rel
+	RelOut  string // runs/<id>/out or existing out rel
 }
+
+type layoutCtxKey struct{}
+
+// WithRunLayout attaches a layout to ctx for concurrent-safe path resolution.
+func WithRunLayout(ctx context.Context, layout RunLayout) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, layoutCtxKey{}, layout)
+}
+
+// RunLayoutFrom returns the layout bound on ctx, if any.
+func RunLayoutFrom(ctx context.Context) (RunLayout, bool) {
+	if ctx == nil {
+		return RunLayout{}, false
+	}
+	l, ok := ctx.Value(layoutCtxKey{}).(RunLayout)
+	return l, ok
+}
+
+// WorkspaceRoot is an alias used by status APIs.
+func (l RunLayout) WorkspaceRoot() string { return l.RootAbs }
+
+// WorkDir / OutDir absolute aliases for status APIs.
+func (l RunLayout) WorkDir() string { return l.WorkAbs }
+func (l RunLayout) OutDir() string  { return l.OutAbs }
 
 // LayoutForRun builds paths (does not create dirs).
 func LayoutForRun(workspace, runID string) RunLayout {
@@ -41,10 +69,14 @@ func LayoutForRun(workspace, runID string) RunLayout {
 	if root == "" {
 		root = DefaultWorkspaceDir()
 	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	id := SanitizeRunID(runID)
 	relRoot := filepath.ToSlash(filepath.Join("runs", id))
 	return RunLayout{
 		RunID:   id,
+		Mode:    "run",
 		RootAbs: root,
 		WorkAbs: filepath.Join(root, "runs", id, "work"),
 		OutAbs:  filepath.Join(root, "runs", id, "out"),
@@ -54,10 +86,79 @@ func LayoutForRun(workspace, runID string) RunLayout {
 	}
 }
 
+// LayoutExisting binds an existing path under the tools sandbox as work,
+// with out at outPath (or <work>/out when outPath empty).
+func LayoutExisting(workspaceRoot, runID, workPath, outPath string) (RunLayout, error) {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" {
+		workspaceRoot = DefaultWorkspaceDir()
+	}
+	absRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return RunLayout{}, err
+	}
+	workAbs, workRel, err := resolveUnderRoot(absRoot, workPath)
+	if err != nil {
+		return RunLayout{}, fmt.Errorf("workspace_path: %w", err)
+	}
+	var outAbs, outRel string
+	if strings.TrimSpace(outPath) == "" {
+		outAbs = filepath.Join(workAbs, "out")
+		outRel, err = filepath.Rel(absRoot, outAbs)
+		if err != nil || strings.HasPrefix(outRel, "..") {
+			return RunLayout{}, fmt.Errorf("out_path escapes workspace")
+		}
+		outRel = filepath.ToSlash(outRel)
+	} else {
+		outAbs, outRel, err = resolveUnderRoot(absRoot, outPath)
+		if err != nil {
+			return RunLayout{}, fmt.Errorf("out_path: %w", err)
+		}
+	}
+	return RunLayout{
+		RunID:   SanitizeRunID(runID),
+		Mode:    "existing",
+		RootAbs: absRoot,
+		WorkAbs: workAbs,
+		OutAbs:  outAbs,
+		RelWork: workRel,
+		RelOut:  outRel,
+	}, nil
+}
+
+func resolveUnderRoot(absRoot, path string) (abs, rel string, err error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", fmt.Errorf("path required")
+	}
+	var candidate string
+	if filepath.IsAbs(path) {
+		candidate, err = filepath.Abs(path)
+		if err != nil {
+			return "", "", err
+		}
+	} else {
+		cleanRel := filepath.Clean(path)
+		if cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+			return "", "", fmt.Errorf("path escapes workspace")
+		}
+		candidate = filepath.Join(absRoot, cleanRel)
+		candidate, err = filepath.Abs(candidate)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	rel, err = filepath.Rel(absRoot, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("path escapes workspace")
+	}
+	return candidate, filepath.ToSlash(rel), nil
+}
+
 // ScopeRel maps a workspace-relative path into the active run's work/ folder when a
-// run id is set — matching git_clone. Bare "audit-target" becomes
-// runs/<id>/work/audit-target. Paths already under runs/ are unchanged.
-// Without a run id, rel is returned as-is (trimmed; empty → ".").
+// run id / layout is set — matching git_clone. Bare "audit-target" becomes
+// runs/<id>/work/audit-target (or existing RelWork). Paths already under runs/
+// or the bound RelWork/RelOut are unchanged.
 func (r *Registry) ScopeRel(rel string) string {
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
@@ -67,14 +168,26 @@ func (r *Registry) ScopeRel(rel string) string {
 	if r == nil {
 		return rel
 	}
-	id := r.RunID()
-	if id == "" {
+	lay, ok := r.CurrentLayout()
+	if !ok {
+		id := r.RunID()
+		if id == "" {
+			return rel
+		}
+		lay = LayoutForRun(r.Workspace(), id)
+	}
+	if lay.RelWork == "" && lay.RelOut == "" {
 		return rel
 	}
 	if rel == "runs" || strings.HasPrefix(rel, "runs/") {
 		return rel
 	}
-	lay := LayoutForRun(r.Workspace(), id)
+	if lay.RelWork != "" && (rel == lay.RelWork || strings.HasPrefix(rel, lay.RelWork+"/")) {
+		return rel
+	}
+	if lay.RelOut != "" && (rel == lay.RelOut || strings.HasPrefix(rel, lay.RelOut+"/")) {
+		return rel
+	}
 	if rel == "." {
 		return lay.RelWork
 	}
@@ -91,14 +204,18 @@ func (l RunLayout) Ensure() error {
 
 // PromptHint is injected into stage/swarm prompts so models know where to write.
 func (l RunLayout) PromptHint() string {
+	mode := l.Mode
+	if mode == "" {
+		mode = "run"
+	}
 	return fmt.Sprintf(
-		"ARTIFACTS (workspace-relative):\n"+
+		"ARTIFACTS (workspace-relative, mode=%s):\n"+
 			"- Intermediate / clones / scratch → %s/\n"+
 			"- Final deliverables (reports, packs) → %s/\n"+
 			"Bare paths like audit-target/ resolve under %s/ (same as git_clone).\n"+
 			"Use tools fs_write or artifact_write. Prefer artifact_write kind=work|out.\n"+
 			"Cite relative paths in your summary.",
-		l.RelWork, l.RelOut, l.RelWork,
+		mode, l.RelWork, l.RelOut, l.RelWork,
 	)
 }
 

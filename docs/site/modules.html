@@ -25,11 +25,10 @@
       <a href="routing.html">Routing</a>
       <a href="context.html">Context</a>
       <a href="path-a-b.html">Path A / B</a>
-      <a href="loop-engineering.html">Loop Engineering</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
-      <a href="samples.html">Sample hoops</a>
+      <a href="samples.html">Samples</a>
     </nav>
 
     <main class="prose deep">
@@ -90,12 +89,7 @@
         <tr>
           <td><code>dashboard</code></td>
           <td>Operator UI, REST, WebSocket metrics</td>
-          <td><code>Server</code>, discover, loops/swarm/context APIs</td>
-        </tr>
-        <tr>
-          <td><code>loop</code></td>
-          <td>Loop Engineering hoops (stages + eval)</td>
-          <td><code>Manager</code>, <code>LoopSpec</code>, <code>StageSpec</code>, <code>CycleResult</code></td>
+          <td><code>Server</code>, discover, swarm/context APIs</td>
         </tr>
         <tr>
           <td><code>metrics</code></td>
@@ -146,7 +140,6 @@
   │     ├─ api.Server (:8080)
   │     ├─ mitm.Proxy (:8082) → Interceptor → AgentFulfillHub
   │     │                         └─ cursorrpc
-  │     ├─ loop.Manager
   │     └─ swarm.Runner / FanOut
   ├─ vram.Manager (poller)
   └─ dashboard.Server (:8081)</pre>
@@ -162,7 +155,7 @@
       <h2 id="orchestrator">orchestrator</h2>
       <p>
         Heart of the harness. <code>PipelineCompleter</code> is the single completion entry
-        used by gateway, MITM, and loops. Surrounding pieces:
+        used by gateway, MITM, and swarm. Surrounding pieces:
       </p>
       <ul>
         <li><code>SimpleExecutor</code> / <code>FallbackChain</code> — health, breaker, warm, rate limit, cloud fallback</li>
@@ -208,13 +201,10 @@
         that contract (<a href="context.html">Context</a>).
       </p>
 
-      <h2 id="loop-swarm">loop &amp; swarm</h2>
+      <h2 id="loop-swarm">swarm</h2>
       <p>
-        <code>loop</code>: hoop CRUD, runner lifecycle, stage prompts, critic SCORE parse,
-        persistence under <code>~/.glider/loops/</code>.
         <code>swarm</code>: worker fan-out, merge, dashboard runner, and the hot-swap
-        <code>Registry</code> that applies config Watch to named modules (including loop
-        stages). Operator docs: <a href="loop-engineering.html">Loop Engineering</a>,
+        <code>Registry</code> that applies config Watch to named modules — see
         <a href="architecture-deep.html#hotswap">deep dive hot-swap</a>.
       </p>
 
