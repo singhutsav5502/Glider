@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/glider-ai/glider/internal/fileacl"
 )
 
 const githubCredFileName = "github_token"
@@ -62,6 +65,13 @@ func SaveGitHubToken(token string) error {
 	}
 	if err := os.WriteFile(p, []byte(token+"\n"), 0o600); err != nil {
 		return err
+	}
+	// Best-effort real ACL restriction beyond the 0o600 mode bits above —
+	// see internal/fileacl's own doc comment for why that mode alone
+	// isn't enforced on Windows. Logged, not fatal: the token is already
+	// safely written.
+	if err := fileacl.RestrictToCurrentUser(p); err != nil {
+		slog.Default().Warn("mcp: could not restrict GitHub token file ACL", "path", p, "err", err)
 	}
 	_ = os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", token)
 	return nil

@@ -9,12 +9,15 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/glider-ai/glider/internal/fileacl"
 )
 
 // Authority is a local MITM CA that mints per-host leaf certificates.
@@ -143,7 +146,23 @@ func (a *Authority) Save(certPath, keyPath string) error {
 	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(keyPath, keyPEM, 0o600)
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return err
+	}
+	// Best-effort: a compromised CA private key lets an attacker MITM
+	// every host this CA is trusted for, so this file gets real Windows
+	// ACL restriction (internal/fileacl), not just the 0o600 mode bits
+	// above — which Windows doesn't enforce as an access restriction the
+	// way Unix does. Logged, not returned as an error: the key is already
+	// safely written at this point, and failing CA setup entirely over an
+	// ACL step that couldn't run (e.g. icacls missing from PATH, which
+	// shouldn't happen on real Windows but isn't worth crashing over)
+	// would be a worse outcome than "the file exists with slightly wider
+	// access than intended."
+	if err := fileacl.RestrictToCurrentUser(keyPath); err != nil {
+		slog.Default().Warn("mitm: could not restrict CA key file ACL", "path", keyPath, "err", err)
+	}
+	return nil
 }
 
 // CertPEM returns the CA certificate in PEM form (for trust install / NODE_EXTRA_CA_CERTS).

@@ -119,6 +119,8 @@ Cloud keys via env: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Copy [`.env.example`]
 | `internal/cursorrpc` | Cursor's Connect-RPC wire format (protobuf helpers, RunSSE encode) |
 | `internal/procutil` | Suppresses console-window flashes from spawned subprocesses (Windows) |
 | `internal/atomicfile` | Crash-safe file overwrite (temp file + rename) for config/settings writes |
+| `internal/fileacl` | Windows ACL restriction for sensitive files (CA key, GitHub token) beyond what mode bits enforce |
+| `internal/safego` | Panic-recovering goroutine launcher for long-running background loops |
 
 ---
 
