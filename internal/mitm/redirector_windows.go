@@ -586,12 +586,40 @@ func (r *WinDivertRedirector) ownerPID(port uint16) (uint32, bool) {
 		}
 	}
 
-	// Cache miss or stale: refresh once synchronously. A just-opened
-	// connection's port should already be in the OS's own TCP table by the
-	// time WinDivert hands us its SYN (connect() populates it before any
-	// packet leaves), so a forced refresh here is the common "cold" path,
-	// not a race we expect to lose often.
-	newTable, err := procinfo.FetchTCPOwnerTable()
+	// Cache miss or stale: refresh, with a short bounded retry if the
+	// specific port still isn't in a fresh snapshot. A single synchronous
+	// refresh (the original version of this function, before 2026-07-28)
+	// was reasoned to be enough — "connect() populates the table before
+	// any packet leaves" — but live testing that day proved that
+	// reasoning wrong in practice: a real cursor-agent -p run's early
+	// connections (its account-plane calls, and the completion call
+	// itself) were consistently missed even with the single-refresh
+	// version, while a LATE connection from the same short-lived process
+	// (a telemetry call sent near exit) was reliably caught. That split
+	// — early connections miss, late ones don't — is exactly the
+	// signature of a genuine kernel-side propagation delay between
+	// connect() and GetExtendedTcpTable reflecting it, not a permanent
+	// mismatch or a config problem (hosts/process-name allowlisting were
+	// independently confirmed correct for the same test). A few retries a
+	// couple milliseconds apart costs nothing on the common/hot path
+	// (only ever runs after a miss already happened) and directly targets
+	// that propagation window.
+	const (
+		ownerPIDRetries    = 4
+		ownerPIDRetryDelay = 3 * time.Millisecond
+	)
+	var newTable map[uint16]uint32
+	var err error
+	for attempt := 0; attempt < ownerPIDRetries; attempt++ {
+		newTable, err = procinfo.FetchTCPOwnerTable()
+		if err != nil {
+			break
+		}
+		if _, ok := newTable[port]; ok {
+			break
+		}
+		time.Sleep(ownerPIDRetryDelay)
+	}
 	if err != nil {
 		r.Log.Debug("mitm transparent: GetExtendedTcpTable failed", "err", err)
 		if table != nil {
