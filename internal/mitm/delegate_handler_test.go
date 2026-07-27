@@ -91,7 +91,49 @@ func TestDelegateHandler_IgnoresNonMessagesPath(t *testing.T) {
 
 	handled, err := h.TryHandle(rw, req)
 	if err != nil || handled {
-		t.Fatalf("expected handled=false, nil err for a non-/v1/messages path; got handled=%v err=%v", handled, err)
+		t.Fatalf("expected handled=false, nil err for a path no OriginAdapter recognizes; got handled=%v err=%v", handled, err)
+	}
+}
+
+// TestDelegateHandler_RecognizesAgyShapedRequest is the direct regression
+// test for the real, live-reported bug (2026-07-27): typing a delegate flag
+// straight into agy's own interactive session did nothing, because
+// DelegateHandler used to hardcode `r.URL.Path != "/v1/messages"` as its
+// entry gate — a check that's only ever true for Claude Code's own
+// traffic. agy's real traffic (confirmed live via an isolated capture
+// proxy, tools/wirecapture) is a POST to
+// .../v1internal:streamGenerateContent, never that path, so the handler
+// always fell straight through to real origin passthrough before any
+// flag-parsing logic ran. This proves the fix: the same body shape now
+// gets recognized via ngl.ResolveOriginAdapter and a delegate flag inside
+// it is honored.
+func TestDelegateHandler_RecognizesAgyShapedRequest(t *testing.T) {
+	regPath, err := vendors.DefaultRegistryPath()
+	if err != nil {
+		t.Skip("vendor registry path unavailable in this environment")
+	}
+	reg, err := vendors.LoadRegistry(regPath)
+	if err != nil || len(reg.Enabled()) == 0 {
+		t.Skip("no enabled vendors in the local registry — nothing to delegate to")
+	}
+	flagName := reg.Enabled()[0].Name
+
+	h := &mitm.DelegateHandler{}
+	payload := `{"project":"p","requestId":"r","request":{"contents":[{"role":"user","parts":[` +
+		`{"text":"<USER_REQUEST>\nhi who are you /` + flagName + `\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nirrelevant\n</ADDITIONAL_METADATA>"}` +
+		`]}]},"model":"gemini-3.6-flash-high","userAgent":"antigravity","requestType":"agent"}`
+	req := httptest.NewRequest(http.MethodPost, "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent", strings.NewReader(payload))
+	rw := httptest.NewRecorder()
+
+	handled, err := h.TryHandle(rw, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !handled {
+		t.Fatalf("expected handled=true — a real delegate flag in agy's own request shape must be recognized, not silently dropped")
+	}
+	if ct := rw.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected a reply in agy's own wire shape (text/event-stream), got Content-Type=%q", ct)
 	}
 }
 

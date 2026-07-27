@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/glider-ai/glider/internal/procutil"
 )
 
 // stdioSession is a live MCP session over a subprocess stdin/stdout.
@@ -36,6 +38,7 @@ func startStdioSession(ctx context.Context, cfg ServerConfig, notify func(Notifi
 		return nil, fmt.Errorf("mcp stdio: command required")
 	}
 	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	procutil.HideWindow(cmd)
 	env := os.Environ()
 	// Inject resolved auth token into env for docker -e TOKEN patterns.
 	if auth, err := ResolveAuth(cfg.Auth); err == nil && auth.Token != "" && auth.TokenEnv != "" {

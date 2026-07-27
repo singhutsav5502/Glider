@@ -24,13 +24,14 @@ Or with Glider running from the repo root: [http://127.0.0.1:8081/docs/](http://
 | Page | Topic |
 |---|---|
 | [site/index.html](site/index.html) | Home / navigation hub |
-| [site/architecture.html](site/architecture.html) | Shared harness (model alias → route → execute) |
-| [site/routing.html](site/routing.html) | Routing rule priority + sticky logic |
+| [site/architecture.html](site/architecture.html) | Surfaces, shared pipeline, package map, failure modes |
+| [site/routing.html](site/routing.html) | Routing rule priority + Cursor sticky logic |
+| [site/delegation.html](site/delegation.html) | Cross-CLI delegation and permission relay |
+| [site/mitm.html](site/mitm.html) | Gateway vs MITM, transparent interception, Cursor's Agent RPC plane |
 | [site/context.html](site/context.html) | Context graph, event log, episode store |
-| [site/path-a-b.html](site/path-a-b.html) | Gateway (Mode A) vs MITM (Mode B) |
 | [site/pure-local.html](site/pure-local.html) | Ollama-only configuration |
 | [site/api.html](site/api.html) | Dashboard HTTP API reference |
-| [site/mcp.html](site/mcp.html) | MCP integration |
+| [site/mcp.html](site/mcp.html) | Tools registry + MCP integration |
 
 ## Configuration
 

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/glider-ai/glider/internal/ngl"
+	"github.com/glider-ai/glider/internal/procutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -112,6 +113,15 @@ type Registry struct {
 	// in-memory store at startup (cmd/glider/main.go) so it survives a
 	// restart. Discover() never touches this field.
 	DefaultWorkspace string `json:"defaultWorkspace,omitempty"`
+	// ResponseDetail is the persisted form of the response-detail setting
+	// (render.go) — same seed-at-startup / set-from-dashboard pattern as
+	// DefaultWorkspace. "" or "clean" means ResolveDelegate renders a
+	// delegate's raw captured output through ngl.DelegateRenderer before
+	// replying (falling back to raw, with a note, when no clean render is
+	// available); "raw" means always reply with the vendor's raw captured
+	// output, unformatted — useful for debugging a delegate run, not the
+	// day-to-day default.
+	ResponseDetail string `json:"responseDetail,omitempty"`
 }
 
 // Discover probes every candidate via exec.LookPath, and for each one found,
@@ -129,6 +139,7 @@ func Discover(ctx context.Context, candidates []Candidate) Registry {
 
 		probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeout)
 		cmd := exec.CommandContext(probeCtx, path, c.ProbeArgs...)
+		procutil.HideWindow(cmd)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -234,64 +245,77 @@ func (r Registry) Enabled() []Vendor {
 	return out
 }
 
-// ParseDelegateCommand looks for a "/<vendor-name> " flag anywhere in
-// userText — same convention as Glider's existing explicit /local /cloud
-// /fast /heavy routing commands, matched dynamically against the registry's
-// enabled vendors, never a hardcoded vendor name. Everything after the flag
-// is the delegate prompt. Returns ok=false if no enabled vendor's flag
-// appears.
+// ParseDelegateCommand looks for a "/<vendor-name>" or
+// "/<vendor-name>:<template>" flag at the very end of userText — not
+// anywhere in it, and specifically not as the first characters. That
+// constraint is load-bearing, not stylistic: a human typing directly into
+// a CLI whose own client treats a leading "/" as local slash-command
+// syntax (confirmed live for Claude Code — "Unknown command: /agy") never
+// gets that message onto the network at all if it starts with "/word";
+// the client intercepts and rejects it before Glider ever sees it. Putting
+// the flag at the end sidesteps that failure mode entirely, for every
+// front, not just the ones known to have this quirk today.
 //
-// Matching happens anywhere in the text, not just a HasPrefix at position 0,
-// for a real, confirmed reason: Claude Code always prepends a
-// "<system-reminder>...</system-reminder>" block ahead of the actual user
-// text (observed live, present even in --bare mode), so a flag typed as the
-// user's first characters is never actually at index 0 of the text this
-// function sees. A *separate* constraint applies only when a human is typing
-// directly into Claude Code's own interactive/print-mode input, not to this
-// function: Claude Code's own client intercepts "/word" as a local slash
-// command and never sends anything over the network at all if the leading
-// "/word" is unrecognized (confirmed live — "Unknown command: /agy"). That
-// means "/agy " must not be the very first characters of what a human types
-// into Claude Code specifically; anywhere else in the message is fine and
-// reaches this function normally. Other fronts (Cursor, raw API callers)
-// don't have that specific client-side quirk.
+// Everything before the flag, trimmed, is the prompt — kept intact, not
+// discarded, which an earlier "anywhere in the text" version of this
+// function used to do to whatever came before the first match. A bare
+// flag with nothing in front of it (no prompt to run) does not match.
+//
 // The optional ":<template>" suffix selects a named CommandTemplate other
 // than the vendor's "default" (see CommandTemplate, ResolveTemplate) — a
-// dashboard-defined variant, e.g. "/agy:interactive" to launch agy's
-// interactive-mode template instead of its headless default. No suffix (a
-// plain space right after the vendor name, exactly as before this
-// addition) means "default" — every pre-existing call matches unchanged.
-//
-// Matching walks forward past any false-positive prefix collision (e.g.
-// "/agycustom" embedded earlier in the text, which is not a real flag)
-// rather than stopping at the first occurrence of the vendor's name —
-// necessary once matching can no longer rely on searching for one fixed
-// "/name " string including its trailing space, since a "/name:template "
-// form has a colon in that position instead.
+// dashboard-defined variant, e.g. "fix the auth bug /agy:interactive".
 func ParseDelegateCommand(reg Registry, userText string) (vendor Vendor, templateName, prompt string, ok bool) {
+	trimmed := strings.TrimRight(userText, " \t\r\n")
 	for _, v := range reg.Enabled() {
-		prefix := "/" + v.Name
-		searchFrom := 0
-		for {
-			rel := strings.Index(userText[searchFrom:], prefix)
-			if rel < 0 {
-				break
-			}
-			idx := searchFrom + rel
-			rest := userText[idx+len(prefix):]
-			switch {
-			case strings.HasPrefix(rest, " "):
-				return v, "default", strings.TrimSpace(rest[1:]), true
-			case strings.HasPrefix(rest, ":"):
-				afterColon := rest[1:]
-				if sp := strings.IndexByte(afterColon, ' '); sp > 0 {
-					return v, afterColon[:sp], strings.TrimSpace(afterColon[sp+1:]), true
-				}
-			}
-			searchFrom = idx + len(prefix)
+		start, tmpl, matched := trailingFlag(trimmed, v.Name)
+		if !matched {
+			continue
 		}
+		promptPart := strings.TrimSpace(trimmed[:start])
+		if promptPart == "" {
+			continue // bare flag, nothing before it to act on
+		}
+		return v, tmpl, promptPart, true
 	}
 	return Vendor{}, "", "", false
+}
+
+// trailingFlag reports whether s ends with "/name" or "/name:template" as
+// a distinct trailing token — preceded by whitespace or the start of the
+// string, so "/agycustom" at the end of a message never matches vendor
+// "agy". Returns the byte offset the flag starts at and, for the
+// ":template" form, the template name; "default" for the bare form.
+func trailingFlag(s, name string) (start int, template string, ok bool) {
+	prefix := "/" + name
+	if strings.HasSuffix(s, prefix) && trailingFlagBoundaryOK(s, len(s)-len(prefix)) {
+		return len(s) - len(prefix), "default", true
+	}
+	marker := prefix + ":"
+	idx := strings.LastIndex(s, marker)
+	if idx < 0 || !trailingFlagBoundaryOK(s, idx) {
+		return 0, "", false
+	}
+	rest := s[idx+len(marker):]
+	if rest == "" || strings.ContainsAny(rest, " \t\r\n") {
+		return 0, "", false
+	}
+	return idx, rest, true
+}
+
+// trailingFlagBoundaryOK confirms the character immediately before a
+// matched flag (if any) is whitespace, not more identifier text — the
+// same role a HasPrefix(rest, " ") check played in the old leading-flag
+// matcher, just applied at the other end of the string.
+func trailingFlagBoundaryOK(s string, at int) bool {
+	if at == 0 {
+		return true
+	}
+	switch s[at-1] {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 // Run executes prompt against vendor's CLI in non-interactive print mode and
@@ -377,8 +401,17 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 		return RunResult{}, fmt.Errorf("vendors: %s has no %q command template", v.Name, opts.Template)
 	}
 	if tmpl.Mode == "interactive" {
-		return RunResult{}, fmt.Errorf("vendors: template %q on %s is interactive mode (Path B) — "+
-			"not implemented by RunWithOptions yet, see planning/permission_relay_design.md §3", tmpl.Name, v.Name)
+		// By design, not "not yet": an interactive template has no
+		// stdout to capture — RunResult's whole contract (Text, Denials,
+		// SessionID, EditViews) assumes a headless run that exits and
+		// leaves a buffer behind. ResolveDelegate checks Mode itself and
+		// dispatches to LaunchInteractiveFunc before ever reaching
+		// RunWithOptions (internal/vendors/resume.go's resolveInteractive)
+		// — a caller that ends up here anyway (bypassing ResolveDelegate)
+		// gets a clear error instead of a silent, wrong headless run.
+		return RunResult{}, fmt.Errorf("vendors: template %q on %s is interactive mode — "+
+			"RunWithOptions only runs headless templates; use ResolveDelegate (which dispatches "+
+			"interactive templates to LaunchInteractiveFunc instead) or vendors.LaunchInteractive directly", tmpl.Name, v.Name)
 	}
 	if opts.Resume == "" && templateNeedsSessionID(tmpl.Args) {
 		return RunResult{}, fmt.Errorf("vendors: template %q on %s requires a session id to resume ({{session_id}} in its args), but none was provided", tmpl.Name, v.Name)
@@ -398,6 +431,7 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, v.Path, args...)
+	procutil.HideWindow(cmd)
 	// Real bug, caught live 2026-07-26: {{cwd}} substitution alone only
 	// changes the ARGUMENT STRING (agy's --add-dir={{cwd}}) — it never
 	// changed the spawned process's actual OS working directory, so any

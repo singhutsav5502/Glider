@@ -23,7 +23,7 @@ import (
 // internal/procinfo, no memory read involved) — so PID becomes a stable
 // KEY for a small directory registry, and Glider asks the human once per
 // origin process ("I don't know your directory yet, reply with
-// /workspace <path>") rather than guessing or reading memory. A
+// <path> /workspace") rather than guessing or reading memory. A
 // dashboard-configured default covers the common single-project case
 // without ever having to ask.
 type WorkspaceStore struct {
@@ -107,19 +107,28 @@ func DefaultWorkspace() string {
 	return defaultWorkspaceStore.Default()
 }
 
-// ParseWorkspaceCommand looks for a "/workspace <path>" flag anywhere in
-// userText — same "search anywhere" convention as ParseDelegateCommand,
-// and for the same reason (Claude Code's system-reminder scaffolding
-// means a flag typed as the human's first characters is never actually at
-// index 0 of the text this function sees). Deliberately NOT vendor-scoped
-// like "/vendorname ..." — the workspace directory is a property of the
-// ORIGIN process, orthogonal to which vendor a later delegate call
-// targets, so there is exactly one "/workspace" flag, not one per vendor.
+// ParseWorkspaceCommand looks for a trailing "/workspace" flag — same
+// trailing-only convention as ParseDelegateCommand and for the same
+// reason: a leading "/" gets read as a local slash command by whatever
+// client the human is typing into, so the flag has to be the last thing
+// in the message, not the first. Everything before it, trimmed, is the
+// path. Deliberately NOT vendor-scoped like "/vendorname" — the workspace
+// directory is a property of the ORIGIN process, orthogonal to which
+// vendor a later delegate call targets, so there is exactly one
+// "/workspace" flag, not one per vendor.
 func ParseWorkspaceCommand(userText string) (path string, ok bool) {
-	const tag = "/workspace "
-	idx := strings.Index(userText, tag)
-	if idx < 0 {
+	trimmed := strings.TrimRight(userText, " \t\r\n")
+	const flag = "/workspace"
+	if !strings.HasSuffix(trimmed, flag) {
 		return "", false
 	}
-	return strings.TrimSpace(userText[idx+len(tag):]), true
+	start := len(trimmed) - len(flag)
+	if !trailingFlagBoundaryOK(trimmed, start) {
+		return "", false
+	}
+	path = strings.TrimSpace(trimmed[:start])
+	if path == "" {
+		return "", false
+	}
+	return path, true
 }

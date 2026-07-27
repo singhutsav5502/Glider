@@ -35,11 +35,11 @@ func TestParseDelegateCommand_MatchesEnabledVendorFlag(t *testing.T) {
 		{Name: "cursor-agent", Path: "cursor-agent.cmd", PrintFlag: "-p", Enabled: false},
 	}}
 
-	v, tmpl, prompt, ok := vendors.ParseDelegateCommand(reg, "please handle this: /agy reply with pong")
+	v, tmpl, prompt, ok := vendors.ParseDelegateCommand(reg, "please handle this: reply with pong /agy")
 	if !ok {
 		t.Fatalf("expected a match for an enabled vendor's flag")
 	}
-	if v.Name != "agy" || tmpl != "default" || prompt != "reply with pong" {
+	if v.Name != "agy" || tmpl != "default" || prompt != "please handle this: reply with pong" {
 		t.Fatalf("got vendor=%q template=%q prompt=%q", v.Name, tmpl, prompt)
 	}
 }
@@ -49,13 +49,13 @@ func TestParseDelegateCommand_IgnoresDisabledVendorFlag(t *testing.T) {
 		{Name: "cursor-agent", Path: "cursor-agent.cmd", PrintFlag: "-p", Enabled: false},
 	}}
 
-	_, _, _, ok := vendors.ParseDelegateCommand(reg, "/cursor-agent do something")
+	_, _, _, ok := vendors.ParseDelegateCommand(reg, "do something /cursor-agent")
 	if ok {
 		t.Fatalf("expected no match — the only vendor with this flag is disabled")
 	}
 }
 
-// TestParseDelegateCommand_TemplateSuffix matches the new ":<template>"
+// TestParseDelegateCommand_TemplateSuffix matches the ":<template>"
 // syntax — e.g. "/agy:interactive" selects a named CommandTemplate other
 // than "default" (planning/permission_relay_design.md §1).
 func TestParseDelegateCommand_TemplateSuffix(t *testing.T) {
@@ -63,12 +63,41 @@ func TestParseDelegateCommand_TemplateSuffix(t *testing.T) {
 		{Name: "agy", Path: "agy.exe", PrintFlag: "-p", Enabled: true},
 	}}
 
-	v, tmpl, prompt, ok := vendors.ParseDelegateCommand(reg, "/agy:interactive fix the auth bug")
+	v, tmpl, prompt, ok := vendors.ParseDelegateCommand(reg, "fix the auth bug /agy:interactive")
 	if !ok {
 		t.Fatalf("expected a match")
 	}
 	if v.Name != "agy" || tmpl != "interactive" || prompt != "fix the auth bug" {
 		t.Fatalf("got vendor=%q template=%q prompt=%q", v.Name, tmpl, prompt)
+	}
+}
+
+// TestParseDelegateCommand_RequiresTrailingPosition proves a leading flag
+// (the old, rejected convention) no longer matches — the flag must be the
+// last token in the message, not the first, so a human typing directly
+// into a CLI that reads a leading "/" as its own slash-command syntax
+// never has that message intercepted client-side before Glider sees it.
+func TestParseDelegateCommand_RequiresTrailingPosition(t *testing.T) {
+	reg := vendors.Registry{Vendors: []vendors.Vendor{
+		{Name: "agy", Path: "agy.exe", PrintFlag: "-p", Enabled: true},
+	}}
+
+	_, _, _, ok := vendors.ParseDelegateCommand(reg, "/agy do something")
+	if ok {
+		t.Fatalf("expected no match — a leading flag is not a trailing flag")
+	}
+}
+
+// TestParseDelegateCommand_BareFlagNoMatch proves a flag with nothing in
+// front of it (no prompt to run) does not match.
+func TestParseDelegateCommand_BareFlagNoMatch(t *testing.T) {
+	reg := vendors.Registry{Vendors: []vendors.Vendor{
+		{Name: "agy", Path: "agy.exe", PrintFlag: "-p", Enabled: true},
+	}}
+
+	_, _, _, ok := vendors.ParseDelegateCommand(reg, "/agy")
+	if ok {
+		t.Fatalf("expected no match — a bare flag has no prompt")
 	}
 }
 
@@ -250,22 +279,32 @@ func TestFormatDenialSummary_IncludesToolAndDetail(t *testing.T) {
 	}
 }
 
-// TestParseDelegateCommand_FalsePositivePrefixKeepsSearching guards the
-// loop rewrite this feature required: matching can no longer stop at the
-// first occurrence of "/<name>" (needed once a ":template" suffix is a
-// valid continuation too, not just a space) — so an earlier, unrelated
-// occurrence of the vendor's name as a substring of a longer word must not
-// swallow a genuine flag later in the same text.
-func TestParseDelegateCommand_FalsePositivePrefixKeepsSearching(t *testing.T) {
+// TestParseDelegateCommand_GluedFlagNoMatch guards the trailing-boundary
+// check: a flag glued directly onto preceding text with no whitespace
+// separating them (e.g. a word that just happens to end in the vendor's
+// name preceded by a slash used for something else) must not match — only
+// a flag preceded by whitespace or the start of the string counts.
+func TestParseDelegateCommand_GluedFlagNoMatch(t *testing.T) {
 	reg := vendors.Registry{Vendors: []vendors.Vendor{
 		{Name: "agy", Path: "agy.exe", PrintFlag: "-p", Enabled: true},
 	}}
 
-	v, tmpl, prompt, ok := vendors.ParseDelegateCommand(reg, "mentions /agycustom in passing, then the real flag: /agy hello")
-	if !ok {
-		t.Fatalf("expected the later, genuine flag to still match")
+	_, _, _, ok := vendors.ParseDelegateCommand(reg, "check the path something/agy")
+	if ok {
+		t.Fatalf("expected no match — the flag isn't a distinct trailing token")
 	}
-	if v.Name != "agy" || tmpl != "default" || prompt != "hello" {
-		t.Fatalf("got vendor=%q template=%q prompt=%q", v.Name, tmpl, prompt)
+}
+
+// TestParseDelegateCommand_UnrelatedSlashWordNoFalseMatch proves a
+// trailing word that merely contains the vendor name as a substring
+// (rather than being exactly "/<name>") does not match.
+func TestParseDelegateCommand_UnrelatedSlashWordNoFalseMatch(t *testing.T) {
+	reg := vendors.Registry{Vendors: []vendors.Vendor{
+		{Name: "agy", Path: "agy.exe", PrintFlag: "-p", Enabled: true},
+	}}
+
+	_, _, _, ok := vendors.ParseDelegateCommand(reg, "please run /agycustom")
+	if ok {
+		t.Fatalf("expected no match — \"/agycustom\" is not the vendor flag \"/agy\"")
 	}
 }

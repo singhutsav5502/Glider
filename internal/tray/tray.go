@@ -26,10 +26,13 @@ var Icon []byte
 // shutdown begins, after Run's blocking call returns control.
 func Run(onReady, onExit func()) { platformRun(onReady, onExit) }
 
-// SetupMenu installs the icon and an "Exit" menu item, calling onExitClick
-// when the user picks it — a no-op on platforms with no tray (tray_other.go),
-// since there's no menu to click there in the first place.
-func SetupMenu(onExitClick func()) { platformSetupMenu(onExitClick) }
+// SetupMenu installs the icon and two menu items: "Open Dashboard"
+// (calling onOpenDashboard) and "Exit" (calling onExitClick) — a no-op on
+// platforms with no tray (tray_other.go), since there's no menu to click
+// there in the first place. getlantern/systray exposes no left-click
+// handler for the icon itself (only per-menu-item click channels), so
+// "Open Dashboard" is a menu item, not a single-click gesture.
+func SetupMenu(onOpenDashboard, onExitClick func()) { platformSetupMenu(onOpenDashboard, onExitClick) }
 
 // Quit tears the tray down — call once the caller's own graceful shutdown
 // (servers stopped, resources closed) has actually finished, so the icon

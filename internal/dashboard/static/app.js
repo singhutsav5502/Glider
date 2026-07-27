@@ -3079,48 +3079,81 @@
     o.textContent = msg || "OK";
   }
 
-  function renderVendorsTable(vendorsList) {
-    const body = document.getElementById("vendors-body");
-    if (!body) return;
+  function renderVendorCards(vendorsList) {
+    const container = document.getElementById("vendors-cards");
+    if (!container) return;
     if (!vendorsList.length) {
-      body.innerHTML = `<tr><td colspan="7" class="hint">No CLIs discovered yet. Click Discover to probe configs/vendor_candidates.yaml.</td></tr>`;
+      container.innerHTML = `<p class="hint">No CLIs found yet. Click "Rescan for CLIs" above.</p>`;
       return;
     }
-    body.innerHTML = vendorsList.map((v) => {
-      const toggleLabel = v.enabled ? "Disable" : "Enable";
+    container.innerHTML = vendorsList.map((v) => {
       const toggleAction = v.enabled ? "disable" : "enable";
-      const templateCount = (v.templates || []).length;
-      return `<tr data-vendor-name="${escapeAttr(v.name)}">
-        <td>${escapeHtml(v.name)}</td>
-        <td><code>${escapeHtml(v.binary)}</code></td>
-        <td><code>${escapeHtml(v.path)}</code></td>
-        <td>${escapeHtml(v.version || "")}</td>
-        <td>${v.enabled ? '<span class="live-value ok">enabled</span>' : '<span class="live-value">disabled</span>'}</td>
-        <td>${templateCount} <button type="button" class="linkish" data-vendor-action="edit-templates">Edit</button></td>
-        <td><button type="button" class="linkish" data-vendor-action="${toggleAction}">${toggleLabel}</button></td>
-      </tr>
-      <tr class="vendor-templates-row" data-vendor-templates-row="${escapeAttr(v.name)}" hidden>
-        <td colspan="7">
-          <p class="hint" style="margin:0 0 6px">
-            Command-line shape for headless delegation. <code>{{prompt}}</code>, <code>{{session_id}}</code>
-            (for a "resume" template — see below), and <code>{{cwd}}</code> are substituted at run time.
-            The template named <code>default</code> is used for a plain <code>/${escapeHtml(v.name)} &lt;prompt&gt;</code>
-            flag; any other name is reached via <code>/${escapeHtml(v.name)}:&lt;template&gt; &lt;prompt&gt;</code>
-            (e.g. <code>/${escapeHtml(v.name)}:resume &lt;prompt&gt;</code>). JSON array of
-            <code>{name, args, mode}</code>, where <code>mode</code> is <code>"headless"</code> or <code>"interactive"</code>
-            (interactive/Path B launches aren't executed yet — see planning/permission_relay_design.md).
-          </p>
-          <textarea class="vendor-templates-editor" data-vendor-templates-editor="${escapeAttr(v.name)}"
-            rows="8" style="width:100%;font-family:monospace;font-size:12px"
-          >${escapeHtml(JSON.stringify(v.templates || [], null, 2))}</textarea>
-          <p class="cfg-error vendor-templates-error" data-vendor-templates-error="${escapeAttr(v.name)}" hidden></p>
-          <div style="margin-top:6px">
-            <button type="button" class="linkish" data-vendor-action="save-templates">Save</button>
-            <button type="button" class="linkish" data-vendor-action="cancel-templates">Cancel</button>
+      return `<div class="vendor-card" data-vendor-name="${escapeAttr(v.name)}">
+        <div class="vendor-card-head">
+          <div>
+            <div class="vendor-card-name">${escapeHtml(v.name)}</div>
+            <div class="vendor-card-path">${escapeHtml(v.path || v.binary)}${v.version ? " · " + escapeHtml(v.version) : ""}</div>
           </div>
-        </td>
-      </tr>`;
+          <div class="vendor-card-actions">
+            <label class="vendor-enable-toggle">
+              <input type="checkbox" data-vendor-action="${toggleAction}" ${v.enabled ? "checked" : ""}>
+              ${v.enabled ? "Enabled" : "Disabled"}
+            </label>
+            <button type="button" class="vendor-launch-btn" data-vendor-action="launch">▶ Launch interactively</button>
+          </div>
+        </div>
+
+        <div class="vendor-card-section">
+          <div class="vendor-card-section-label">How much can it do on its own?</div>
+          <div class="preset-buttons" data-vendor-presets="${escapeAttr(v.name)}">
+            <p class="hint">Loading…</p>
+          </div>
+        </div>
+
+        <details class="vendor-advanced">
+          <summary>Advanced: raw launch command (YAML/JSON)</summary>
+          <div class="vendor-advanced-body">
+            <p class="hint" style="margin:0 0 6px">
+              Exact command-line args used for headless delegation. <code>{{prompt}}</code>, <code>{{session_id}}</code>
+              (for a "resume" template), and <code>{{cwd}}</code> are substituted at run time. Most people never need
+              to touch this — use the buttons above instead.
+            </p>
+            <textarea class="vendor-templates-editor" data-vendor-templates-editor="${escapeAttr(v.name)}"
+              rows="8" style="width:100%;font-family:monospace;font-size:12px"
+            >${escapeHtml(JSON.stringify(v.templates || [], null, 2))}</textarea>
+            <p class="cfg-error vendor-templates-error" data-vendor-templates-error="${escapeAttr(v.name)}" hidden></p>
+            <div style="margin-top:6px">
+              <button type="button" class="linkish" data-vendor-action="save-templates">Save</button>
+            </div>
+          </div>
+        </details>
+      </div>`;
     }).join("");
+
+    vendorsList.forEach((v) => loadVendorPresets(v.name));
+  }
+
+  async function loadVendorPresets(name) {
+    const holder = document.querySelector(`[data-vendor-presets="${CSS.escape(name)}"]`);
+    if (!holder) return;
+    try {
+      const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/permissions`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const presets = Array.isArray(data.presets) ? data.presets : [];
+      if (!presets.length) {
+        holder.innerHTML = `<p class="hint">No presets for this CLI.</p>`;
+        return;
+      }
+      holder.innerHTML = presets.map((p) => `
+        <button type="button" class="preset-btn${p.id === data.current ? " active" : ""}${p.risky ? " risky" : ""}"
+          data-vendor-preset="${escapeAttr(p.id)}" ${presets.length === 1 ? "disabled" : ""}>
+          <div class="preset-btn-label">${escapeHtml(p.label)}</div>
+          <div class="preset-btn-desc">${escapeHtml(p.description)}</div>
+        </button>`).join("");
+    } catch (err) {
+      holder.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
+    }
   }
 
   async function refreshVendorsPanel() {
@@ -3129,9 +3162,11 @@
       const res = await fetch("/api/vendors");
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+      renderVendorCards(Array.isArray(data.vendors) ? data.vendors : []);
       const workspaceInput = document.getElementById("vendors-default-workspace");
       if (workspaceInput) workspaceInput.value = data.defaultWorkspace || "";
+      const detailSelect = document.getElementById("vendors-response-detail");
+      if (detailSelect) detailSelect.value = data.responseDetail || "clean";
     } catch (err) {
       showVendorsError(String(err.message || err));
     }
@@ -3148,7 +3183,8 @@
         body: JSON.stringify({ path: input.value }),
       });
       if (!res.ok) throw new Error(await res.text());
-      showVendorsOk("Default workspace saved.");
+      showVendorsOk("Default folder saved.");
+      refreshVendorsPanel();
     } catch (err) {
       showVendorsError(String(err.message || err));
     }
@@ -3156,14 +3192,31 @@
 
   document.getElementById("vendors-default-workspace-save")?.addEventListener("click", () => saveDefaultWorkspace());
 
+  async function saveResponseDetail(mode) {
+    showVendorsError("");
+    try {
+      const res = await fetch("/api/vendors/response-detail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showVendorsOk(mode === "raw" ? "Showing raw output from delegated tasks." : "Showing clean answers from delegated tasks.");
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  document.getElementById("vendors-response-detail")?.addEventListener("change", (e) => saveResponseDetail(e.target.value));
+
   async function vendorsDiscover() {
     showVendorsError("");
     try {
       const res = await fetch("/api/vendors/discover", { method: "POST" });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
-      showVendorsOk(`Discovered ${(data.vendors || []).length} CLI(s).`);
+      renderVendorCards(Array.isArray(data.vendors) ? data.vendors : []);
+      showVendorsOk(`Found ${(data.vendors || []).length} CLI(s).`);
     } catch (err) {
       showVendorsError(String(err.message || err));
     }
@@ -3175,15 +3228,42 @@
       const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/${action}`, { method: "POST" });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
+      renderVendorCards(Array.isArray(data.vendors) ? data.vendors : []);
     } catch (err) {
       showVendorsError(String(err.message || err));
     }
   }
 
-  function toggleVendorTemplatesRow(name) {
-    const row = document.querySelector(`[data-vendor-templates-row="${CSS.escape(name)}"]`);
-    if (row) row.hidden = !row.hidden;
+  async function launchVendorInteractive(name) {
+    showVendorsError("");
+    try {
+      const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/launch-interactive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showVendorsOk(`Launched ${name} in a new window.`);
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
+  }
+
+  async function applyVendorPreset(name, preset) {
+    showVendorsError("");
+    try {
+      const res = await fetch(`/api/vendors/${encodeURIComponent(name)}/permissions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preset }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showVendorsOk(`${name}: switched to "${preset.replace(/_/g, " ")}".`);
+      loadVendorPresets(name);
+      refreshVendorsPanel(); // claude's preset changes its templates — reload so Advanced stays in sync
+    } catch (err) {
+      showVendorsError(String(err.message || err));
+    }
   }
 
   async function saveVendorTemplates(name) {
@@ -3208,34 +3288,51 @@
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      renderVendorsTable(Array.isArray(data.vendors) ? data.vendors : []);
-      showVendorsOk(`Saved templates for ${name}.`);
+      renderVendorCards(Array.isArray(data.vendors) ? data.vendors : []);
+      showVendorsOk(`Saved launch command for ${name}.`);
     } catch (err) {
       if (errEl) { errEl.hidden = false; errEl.textContent = String(err.message || err); }
     }
   }
 
   document.getElementById("vendors-discover")?.addEventListener("click", () => vendorsDiscover());
-  document.getElementById("vendors-body")?.addEventListener("click", (ev) => {
+  document.getElementById("vendors-cards")?.addEventListener("click", (ev) => {
+    const presetBtn = ev.target.closest("[data-vendor-preset]");
+    if (presetBtn) {
+      const card = ev.target.closest("[data-vendor-name]");
+      if (!card) return;
+      applyVendorPreset(card.getAttribute("data-vendor-name"), presetBtn.getAttribute("data-vendor-preset"));
+      return;
+    }
     const btn = ev.target.closest("[data-vendor-action]");
     if (!btn) return;
     const action = btn.getAttribute("data-vendor-action");
+    const card = ev.target.closest("[data-vendor-name]");
+    if (!card) return;
+    const name = card.getAttribute("data-vendor-name");
 
-    if (action === "edit-templates" || action === "cancel-templates") {
-      const row = ev.target.closest("[data-vendor-name]");
-      if (!row) return;
-      toggleVendorTemplatesRow(row.getAttribute("data-vendor-name"));
+    if (action === "launch") {
+      launchVendorInteractive(name);
       return;
     }
     if (action === "save-templates") {
-      const row = ev.target.closest("[data-vendor-templates-row]");
-      if (!row) return;
-      saveVendorTemplates(row.getAttribute("data-vendor-templates-row"));
+      saveVendorTemplates(name);
       return;
     }
-    const row = ev.target.closest("[data-vendor-name]");
-    if (!row) return;
-    vendorAction(row.getAttribute("data-vendor-name"), action);
+    // "enable" / "disable" also fire on the checkbox's own change event below;
+    // this click handler only needs to cover it when something other than
+    // the checkbox itself (e.g. its label text) was clicked.
+    if (action === "enable" || action === "disable") {
+      if (ev.target.tagName === "INPUT") return; // let the change listener own this one
+      vendorAction(name, action);
+    }
+  });
+  document.getElementById("vendors-cards")?.addEventListener("change", (ev) => {
+    const checkbox = ev.target.closest("[data-vendor-action]");
+    if (!checkbox || checkbox.tagName !== "INPUT") return;
+    const card = ev.target.closest("[data-vendor-name]");
+    if (!card) return;
+    vendorAction(card.getAttribute("data-vendor-name"), checkbox.getAttribute("data-vendor-action"));
   });
 
   async function refreshMCPPanel() {

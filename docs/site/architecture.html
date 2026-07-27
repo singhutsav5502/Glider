@@ -12,89 +12,130 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a class="active" href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
     </nav>
-    <main class="prose">
+
+    <main class="prose deep">
       <div class="badge">Core</div>
       <h1>Architecture</h1>
       <p>
-        Glider is a <strong>shared harness</strong>: every completion (gateway or MITM) goes through
-        <strong>resolve model alias → tokenize → route → transform → execute</strong>.
-      </p>
-      <p class="note">
-        <strong>Model alias</strong> — rewrite the client’s model ID via <code>model_aliases</code>
-        (e.g. Cursor’s <code>gpt-4o</code> → <code>qwen2.5-coder:14b</code>) before the router runs.
-        Routing picks <em>which model/backend</em> answers one request. Delegation (see
-        <a href="mcp.html">Tools &amp; MCP</a> and <code>planning/permission_relay_design.md</code>)
-        instead hands a whole task to a different CLI vendor.
-      </p>
-      <p class="note">
-        For Path A/B lifecycles, sticky cloud, fulfill hub, and failure modes, see the
-        <a href="architecture-deep.html">architecture deep dive</a>,
-        <a href="data-flow.html">data-flow sequences</a>,
-        <a href="modules.html">module map</a>, and
-        <a href="concurrency.html">concurrency model</a>.
+        Glider sits beside whichever AI coding CLI you run — Claude Code, Cursor Agent, or
+        Antigravity (<code>agy</code>) — as one Go process (<code>cmd/glider</code>) with three
+        listen surfaces, a shared completion pipeline, and no code in that pipeline that branches
+        on which CLI is talking.
       </p>
 
-      <h2>Surfaces</h2>
+      <h2 id="surfaces">Surfaces</h2>
       <table>
-        <tr><th>Surface</th><th>Port</th><th>Role</th></tr>
-        <tr><td>Gateway</td><td><code>:8080/v1</code></td><td>OpenAI-compatible API; Cursor Override Base URL (Path A)</td></tr>
-        <tr><td>MITM</td><td><code>:8082</code></td><td>HTTPS forward proxy; decrypt allowlisted Cursor Agent hosts (Path B)</td></tr>
-        <tr><td>Dashboard</td><td><code>:8081</code></td><td>Config, VRAM, Rules, Vendors, MCP, Workspace, live metrics</td></tr>
+        <tr><th>Surface</th><th>Port</th><th>Config</th><th>Role</th></tr>
+        <tr><td>Gateway</td><td><code>:8080</code></td><td><code>server.proxy_port</code></td><td>OpenAI-compatible <code>/v1/*</code> — Override Base URL points a CLI here</td></tr>
+        <tr><td>MITM proxy</td><td><code>:8082</code> (+ <code>:8083</code> transparent)</td><td><code>mitm.port</code></td><td>CONNECT/transparent decrypt, delegation, origin passthrough — see <a href="mitm.html">MITM</a></td></tr>
+        <tr><td>Dashboard</td><td><code>:8081</code></td><td><code>server.dashboard_port</code></td><td>Operator UI, REST <code>/api/*</code>, WebSocket <code>/ws</code>, hosts this docs site</td></tr>
       </table>
+      <pre class="seq">┌────────────────────────────────── glider.exe (one process) ──────────────────────────────────┐
+│                                                                                              │
+│  ┌─────────────────┐   Complete()    ┌────────────────────────────┐                          │
+│  │ Gateway :8080   │────────────────▶│   Shared harness           │──▶ Ollama / vLLM / BYOK  │
+│  │ internal/api    │                 │   PipelineCompleter        │                          │
+│  └─────────────────┘                 │   router · transform ·     │                          │
+│                                      │   executor · metrics ·     │                          │
+│  ┌─────────────────┐ DecideLocal /   │   contextgraph             │                          │
+│  │ MITM :8082      │ CompleteLocal ▶│                            │──▶ CLI's own origin       │
+│  │ internal/mitm   │                 └─────────────▲──────────────┘   (passthrough)          │
+│  └─────────────────┘                               │                                         │
+│                                                    │ REST / WS                               │
+│  ┌─────────────────┐                               │                                         │
+│  │ Dashboard :8081 │───────────────────────────────┘                                         │
+│  └─────────────────┘                                                                         │
+│  Disk: ~/.glider/{mitm,history,context} · configs/*.yaml (watched)                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘</pre>
 
-      <h2>Pipeline</h2>
+      <h2 id="pipeline">The shared pipeline</h2>
+      <p>
+        Every completion — from the gateway or from MITM — goes through one
+        <code>orchestrator.PipelineCompleter</code>. The only difference is
+        <code>CompleteOptions.OriginPassthrough</code>: the gateway falls back to BYOK cloud on
+        non-local, MITM tunnels back to the CLI's own origin instead.
+      </p>
       <pre>CompletionRequest
-  → model_aliases
-  → tokenizer (token estimate)
-  → router.Engine (rules + classifier)
-  → transform (local context / Anthropic normalize)
-  → executor (Ollama | vLLM | OpenAI | Anthropic)
+  → ApplyModelAlias           (model_aliases: e.g. gpt-4o → qwen2.5-coder:14b)
+  → Tokenizer.EstimateRequestTokens
+  → router.Engine.Route       (see routing.html for full priority order)
+  → [origin gate — MITM only, non-local → ErrOriginPassthrough]
+  → episodes + BoundLocalContext   (local only — never the full history)
+  → Transformer.Apply         (opt-in, off by default)
+  → Executor.Execute          (Ollama | vLLM | OpenAI | Anthropic; fallback chain, circuit breaker)
   → metrics + contextgraph events</pre>
+      <p>
+        A message with a <code>/vendor</code> flag (<code>/claude</code>, <code>/cursor-agent</code>,
+        <code>/agy</code>) never reaches this pipeline at all — <code>DelegateHandler</code> claims
+        it first. See <a href="delegation.html">Delegation</a>.
+      </p>
 
-      <h2>Key packages</h2>
+      <h2 id="packages">Package map</h2>
       <table>
         <tr><th>Package</th><th>Responsibility</th></tr>
-        <tr><td><code>internal/orchestrator</code></td><td>PipelineCompleter, fallback, fan-out</td></tr>
-        <tr><td><code>internal/router</code></td><td>Priority rules, classifier, wrap-up, complexity</td></tr>
-        <tr><td><code>internal/mitm</code></td><td>CONNECT decrypt, Agent RPC fulfill hub</td></tr>
-        <tr><td><code>internal/contextgraph</code></td><td>Event log + turn family index</td></tr>
-        <tr><td><code>internal/vendors</code></td><td>Cross-CLI delegation: headless run, permission relay, resume</td></tr>
+        <tr><td><code>api</code></td><td>Gateway HTTP surface — <code>/v1/chat/completions</code>, <code>/v1/responses</code>, <code>/v1/models</code></td></tr>
+        <tr><td><code>orchestrator</code></td><td><code>PipelineCompleter</code>, fallback chain, circuit breaker, VRAM lifecycle, flag-gated fan-out</td></tr>
+        <tr><td><code>router</code></td><td>Priority rule engine — explicit / sticky / classifier / Starlark / ceiling</td></tr>
+        <tr><td><code>mitm</code></td><td>CONNECT + transparent decrypt, Cursor Agent RPC fulfill hub, delegation handler</td></tr>
+        <tr><td><code>vendors</code></td><td>Cross-CLI delegation: discovery, headless exec, permission relay, resume</td></tr>
+        <tr><td><code>ngl</code></td><td>Native Glider Language — cross-vendor wire-format envelope (<code>Turn</code>/<code>Part</code>/<code>EditViews</code>)</td></tr>
+        <tr><td><code>cursorrpc</code></td><td>Cursor-specific: Connect/protobuf extract, RunSSE encode/decode</td></tr>
+        <tr><td><code>contextgraph</code> / <code>contextkit</code></td><td>Turn-family event graph + compressed episode rings</td></tr>
+        <tr><td><code>backend</code></td><td>Completion clients — <code>ollama</code>, <code>vllm</code>, <code>cloud</code> (OpenAI/Anthropic)</td></tr>
+        <tr><td><code>transform</code></td><td>Token estimate, <code>BoundLocalContext</code>, optional rewrite pipeline</td></tr>
+        <tr><td><code>vram</code></td><td>nvidia-smi monitor, allocation strategy, idle unload</td></tr>
+        <tr><td><code>metrics</code></td><td>Collector → Bus (dashboard WS) → on-disk history</td></tr>
+        <tr><td><code>dashboard</code></td><td>Operator UI + REST/WS API; serves this docs site when present</td></tr>
+        <tr><td><code>config</code></td><td>YAML load, validate, file-watcher hot-reload</td></tr>
+        <tr><td><code>hotswap</code></td><td>Named config-reload module registry (<code>fan_out</code>, <code>backends</code>, <code>classifier</code>)</td></tr>
+        <tr><td><code>procinfo</code></td><td>PID / process-name resolution from a TCP connection</td></tr>
+        <tr><td><code>tray</code></td><td>System tray + Exit (Windows; no-op elsewhere)</td></tr>
       </table>
 
-      <h2>Config profiles</h2>
+      <h2 id="hotreload">Hot-reload vs. restart</h2>
+      <div class="note">
+        <strong>Hot</strong> (<code>config.Provider.Watch</code>): routing rules, model aliases,
+        transform config, log level, backend/model clients, hot-swap modules.
+        <strong>Restart required:</strong> listen ports, MITM CA/hosts/transparent-interception
+        settings.
+      </div>
+
+      <h2 id="failures">Failure modes</h2>
+      <table>
+        <tr><th>Mode</th><th>Behavior</th></tr>
+        <tr><td>Circuit breaker</td><td>Per backend: 5 failures → open, 30s cooldown, half-open single probe</td></tr>
+        <tr><td>Fallback</td><td>Health + breaker + warm check; local fail → BYOK cloud unless disabled; all fail → 502</td></tr>
+        <tr><td><code>ErrOriginPassthrough</code></td><td>MITM-only: non-local → tunnel to the CLI's own origin, credentials intact</td></tr>
+        <tr><td>Local fulfill error (hybrid)</td><td>Default: fall back to origin (<code>mitm.origin_on_local_error</code>)</td></tr>
+        <tr><td>Pure local</td><td><code>origin_on_local_error: false</code> — surface the error instead of a silent origin fallback</td></tr>
+      </table>
+
+      <h2 id="concurrency">Concurrency notes</h2>
       <ul>
-        <li><code>configs/glider.yaml</code> — dual-mode intro (gateway + MITM)</li>
-        <li><code>configs/glider.local.yaml</code> — Ollama-only pure local</li>
-        <li><code>configs/glider.cloud.yaml</code> — cloud-leaning profile</li>
+        <li>Hot-path config (<code>Config</code>, <code>router.Engine</code>) is swapped via <code>atomic.Pointer</code> — readers never block on a reload.</li>
+        <li>Gateway and MITM call <code>PipelineCompleter.Handle</code> concurrently; it's immutable wiring over synchronized dependencies — never stash per-request mutable state on it.</li>
+        <li>A delegate call's subprocess is tied to the incoming HTTP request's context — no background runner outlives the request.</li>
+        <li>Cursor's fulfill hub (<code>AgentFulfillHub</code>) guards its <code>waiting</code>/<code>pending</code>/<code>family</code> maps under one mutex — detail in <a href="mitm.html#hub">MITM</a>.</li>
       </ul>
 
-      <h2>Go deeper</h2>
+      <h2 id="config">Config profiles</h2>
       <ul>
-        <li><a href="c1-context.html">C1 Context</a> / <a href="c2-containers.html">C2</a> / <a href="c3-components.html">C3</a> / <a href="c4-code.html">C4 Code</a> -- C4 model with step-by-step tech</li>
-        <li><a href="architecture-deep.html">Architecture deep dive</a> -- sticky state machine, hub, failures</li>
-        <li><a href="data-flow.html">Data flow</a> -- ASCII sequence diagrams</li>
-        <li><a href="modules.html">Modules</a> -- <code>internal/*</code> package map</li>
-        <li><a href="concurrency.html">Concurrency</a> -- goroutines, locks, channels</li>
+        <li><code>configs/glider.yaml</code> — dual-mode default (gateway + MITM)</li>
+        <li><code>configs/glider.local.yaml</code> — Ollama-only, no cloud fallback (<a href="pure-local.html">Pure local</a>)</li>
+        <li><code>configs/glider.cloud.yaml</code> — cloud-leaning, MITM off</li>
       </ul>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a> · <a href="architecture-deep.html">Deep dive →</a></footer>
+    <footer class="foot"><a href="index.html">← Home</a> · <a href="routing.html">Routing →</a></footer>
   </div>
 </body>
 </html>

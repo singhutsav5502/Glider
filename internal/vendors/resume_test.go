@@ -2,6 +2,7 @@ package vendors_test
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -111,7 +112,7 @@ func TestResolveDelegate_DenyKnownTokenDropsIt(t *testing.T) {
 func TestResolveDelegate_UnknownWorkspaceAsksInsteadOfRunning(t *testing.T) {
 	v := fakeAgyVendor(t)
 	out := vendors.ResolveDelegate(context.Background(), v, "default", "delete old files", 999999)
-	if !strings.Contains(out, "/workspace ") {
+	if !strings.Contains(out, "/workspace") {
 		t.Fatalf("got %q, expected it to ask for a workspace directory", out)
 	}
 	if strings.Contains(out, "[agy] needs permission") {
@@ -163,20 +164,26 @@ func TestResolveDelegate_DefaultWorkspaceCoversUnknownPID(t *testing.T) {
 		Templates: []vendors.CommandTemplate{{Name: "default", Mode: "headless", Args: []string{"-c", "pwd"}}},
 	}
 	out := vendors.ResolveDelegate(context.Background(), v, "default", "unused", 555555)
-	if strings.Contains(out, "/workspace ") {
+	if strings.Contains(out, "/workspace") {
 		t.Fatalf("got %q, a default workspace was configured, should not ask", out)
 	}
 }
 
-func TestParseWorkspaceCommand_MatchesAnywhereInText(t *testing.T) {
-	path, ok := vendors.ParseWorkspaceCommand("some scaffolding /workspace C:\\Users\\me\\proj")
+func TestParseWorkspaceCommand_MatchesTrailingFlag(t *testing.T) {
+	path, ok := vendors.ParseWorkspaceCommand(`C:\Users\me\proj /workspace`)
 	if !ok || path != `C:\Users\me\proj` {
 		t.Fatalf("got path=%q ok=%v", path, ok)
 	}
 }
 
+func TestParseWorkspaceCommand_LeadingFlagNoMatch(t *testing.T) {
+	if _, ok := vendors.ParseWorkspaceCommand(`/workspace C:\Users\me\proj`); ok {
+		t.Fatalf("expected no match — the old leading-flag form is no longer accepted")
+	}
+}
+
 func TestParseWorkspaceCommand_NoMatch(t *testing.T) {
-	if _, ok := vendors.ParseWorkspaceCommand("/agy do something"); ok {
+	if _, ok := vendors.ParseWorkspaceCommand("do something /agy"); ok {
 		t.Fatalf("expected no match for a vendor-scoped flag")
 	}
 }
@@ -194,7 +201,172 @@ func TestResolveDelegate_NormalRunRegistersTokenOnDenial(t *testing.T) {
 	if !strings.Contains(out, "[agy] needs permission") {
 		t.Fatalf("got %q", out)
 	}
-	if !strings.Contains(out, "/agy:allow ") || !strings.Contains(out, "/agy:deny ") {
+	if !strings.Contains(out, "/agy:allow") || !strings.Contains(out, "/agy:deny") {
 		t.Fatalf("got %q, expected both allow/deny reply instructions", out)
+	}
+}
+
+// TestResolveDelegate_InteractiveTemplateDispatchesToLaunchInteractive
+// proves ResolveDelegate recognizes Mode == "interactive" and dispatches
+// to LaunchInteractiveFunc (with {{prompt}}/{{cwd}} substituted into the
+// template's own args) instead of ever calling RunWithOptions — swapping
+// LaunchInteractiveFunc for a recording stub instead of letting a real
+// detached OS console window open during a test run.
+func TestResolveDelegate_InteractiveTemplateDispatchesToLaunchInteractive(t *testing.T) {
+	var gotVendor vendors.Vendor
+	var gotCwd string
+	var gotArgs []string
+	orig := vendors.LaunchInteractiveFunc
+	vendors.LaunchInteractiveFunc = func(v vendors.Vendor, cwd string, extraArgs ...string) error {
+		gotVendor, gotCwd, gotArgs = v, cwd, extraArgs
+		return nil
+	}
+	defer func() { vendors.LaunchInteractiveFunc = orig }()
+
+	v := vendors.Vendor{
+		Name: "claude",
+		Templates: []vendors.CommandTemplate{
+			{Name: "interactive", Mode: "interactive", Args: []string{"{{prompt}}"}},
+		},
+	}
+	out := vendors.ResolveDelegate(context.Background(), v, "interactive", "fix the auth bug", 0)
+
+	if gotVendor.Name != "claude" {
+		t.Fatalf("expected LaunchInteractiveFunc to be called with the claude vendor, got %+v", gotVendor)
+	}
+	if len(gotArgs) != 1 || gotArgs[0] != "fix the auth bug" {
+		t.Fatalf("expected substituted args [%q], got %v", "fix the auth bug", gotArgs)
+	}
+	if gotCwd != "" {
+		t.Fatalf("expected empty cwd for an unresolvable origin PID, got %q", gotCwd)
+	}
+	if !strings.Contains(out, "Opened claude in a new interactive window") {
+		t.Fatalf("got %q, expected a confirmation reply, not captured output", out)
+	}
+	if strings.Contains(out, "fix the auth bug") {
+		t.Fatalf("got %q — the reply must not echo the prompt back as if it were a captured answer", out)
+	}
+}
+
+// TestResolveDelegate_InteractiveTemplateSurfacesLaunchFailure proves a
+// LaunchInteractiveFunc error becomes a plain reply, not a panic or a
+// silently-empty response.
+func TestResolveDelegate_InteractiveTemplateSurfacesLaunchFailure(t *testing.T) {
+	orig := vendors.LaunchInteractiveFunc
+	vendors.LaunchInteractiveFunc = func(v vendors.Vendor, cwd string, extraArgs ...string) error {
+		return fmt.Errorf("boom")
+	}
+	defer func() { vendors.LaunchInteractiveFunc = orig }()
+
+	v := vendors.Vendor{
+		Name:      "agy",
+		Templates: []vendors.CommandTemplate{{Name: "interactive", Mode: "interactive", Args: []string{"{{prompt}}"}}},
+	}
+	out := vendors.ResolveDelegate(context.Background(), v, "interactive", "task", 0)
+	if !strings.Contains(out, "Could not open agy interactively") || !strings.Contains(out, "boom") {
+		t.Fatalf("got %q", out)
+	}
+}
+
+// TestResolveDelegate_InteractiveTemplateUnknownWorkspaceAsksInsteadOfLaunching
+// mirrors the headless case (TestResolveDelegate_UnknownWorkspaceAsksInsteadOfRunning):
+// an unresolvable workspace for a known origin PID must ask, not launch
+// into an arbitrary directory.
+func TestResolveDelegate_InteractiveTemplateUnknownWorkspaceAsksInsteadOfLaunching(t *testing.T) {
+	called := false
+	orig := vendors.LaunchInteractiveFunc
+	vendors.LaunchInteractiveFunc = func(v vendors.Vendor, cwd string, extraArgs ...string) error {
+		called = true
+		return nil
+	}
+	defer func() { vendors.LaunchInteractiveFunc = orig }()
+
+	v := vendors.Vendor{
+		Name:      "claude",
+		Templates: []vendors.CommandTemplate{{Name: "interactive", Mode: "interactive", Args: []string{"{{prompt}}"}}},
+	}
+	out := vendors.ResolveDelegate(context.Background(), v, "interactive", "task", 777777)
+	if called {
+		t.Fatalf("expected LaunchInteractiveFunc NOT to be called for an unresolvable workspace")
+	}
+	if !strings.Contains(out, "/workspace") {
+		t.Fatalf("got %q, expected the ask-for-workspace reply", out)
+	}
+}
+
+// fakeClaudeVendor builds a Vendor whose "default" template prints a
+// realistic multi-line stream-json transcript (system/init, one assistant
+// delta, a terminal result line) — enough to exercise
+// ngl.DelegateRenderer's real parsing through ResolveDelegate end-to-end,
+// without a real claude install.
+func fakeClaudeVendor(t *testing.T) vendors.Vendor {
+	t.Helper()
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not found on PATH — skipping shell-based fake-exec test")
+	}
+	transcript := `{"type":"system","subtype":"init","session_id":"s1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working on it..."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Fixed the off-by-one in the loop bound.","session_id":"s1"}`
+	script := "printf '%s' '" + transcript + "'"
+	return vendors.Vendor{
+		Name: "claude",
+		Path: shPath,
+		Templates: []vendors.CommandTemplate{
+			{Name: "default", Mode: "headless", Args: []string{"-c", script}},
+		},
+	}
+}
+
+// TestResolveDelegate_CleanModeRendersJustTheResult and
+// TestResolveDelegate_RawModeReturnsFullTranscript are the direct
+// end-to-end tests for the response-detail feature (2026-07-28): by
+// default, ResolveDelegate must show only the vendor's final answer, not
+// its raw stream-json transcript — reversible via
+// vendors.SetResponseDetail(vendors.ResponseDetailRaw) for debugging.
+func TestResolveDelegate_CleanModeRendersJustTheResult(t *testing.T) {
+	vendors.SetResponseDetail(vendors.ResponseDetailClean)
+	v := fakeClaudeVendor(t)
+
+	out := vendors.ResolveDelegate(context.Background(), v, "default", "fix the loop bug", 0)
+	if out != "Fixed the off-by-one in the loop bound." {
+		t.Fatalf("got %q, want just the clean final answer", out)
+	}
+}
+
+func TestResolveDelegate_RawModeReturnsFullTranscript(t *testing.T) {
+	vendors.SetResponseDetail(vendors.ResponseDetailRaw)
+	defer vendors.SetResponseDetail(vendors.ResponseDetailClean) // don't leak into other tests
+	v := fakeClaudeVendor(t)
+
+	out := vendors.ResolveDelegate(context.Background(), v, "default", "fix the loop bug", 0)
+	if !strings.Contains(out, `"type":"system"`) || !strings.Contains(out, `"type":"result"`) {
+		t.Fatalf("got %q, want the full raw stream-json transcript in raw mode", out)
+	}
+}
+
+// TestResolveDelegate_CleanModeFallsBackWithNoteOnUnparsableOutput proves
+// the "renderer exists but declined" case appends a visible note rather
+// than silently showing the raw text as if nothing were unusual.
+func TestResolveDelegate_CleanModeFallsBackWithNoteOnUnparsableOutput(t *testing.T) {
+	vendors.SetResponseDetail(vendors.ResponseDetailClean)
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not found on PATH")
+	}
+	// Not valid stream-json at all — claudeDelegateRenderer must decline,
+	// not guess.
+	v := vendors.Vendor{
+		Name: "claude", Path: shPath,
+		Templates: []vendors.CommandTemplate{
+			{Name: "default", Mode: "headless", Args: []string{"-c", "printf 'plain unstructured output'"}},
+		},
+	}
+	out := vendors.ResolveDelegate(context.Background(), v, "default", "task", 0)
+	if !strings.Contains(out, "plain unstructured output") {
+		t.Fatalf("got %q, expected the raw text preserved", out)
+	}
+	if !strings.Contains(out, "couldn't parse a clean result") {
+		t.Fatalf("got %q, expected a visible fallback note", out)
 	}
 }

@@ -32,6 +32,18 @@ candidates:
         # the same session; a caller that wants to scope the resume to one
         # specific tool needs to build that arg list itself for now.
         args: ["-p", "--output-format", "stream-json", "--verbose", "--resume", "{{session_id}}", "{{prompt}}"]
+      - name: interactive
+        mode: interactive
+        # No -p/--output-format: confirmed via `claude --help` ("Usage:
+        # claude [options] [command] [prompt] ... starts an interactive
+        # session by default, use -p/--print for non-interactive output")
+        # that a bare positional prompt starts a normal interactive
+        # session already primed with that first message. Opened in a
+        # new, visible console window (vendors.LaunchInteractive) — Glider
+        # does not capture or relay anything from this session; reached
+        # via "<task> /claude:interactive" (planning/permission_relay_design.md
+        # §1's own anticipated example).
+        args: ["{{prompt}}"]
   - name: cursor-agent
     binary: cursor-agent
     probe_args: ["--version"]
@@ -49,6 +61,17 @@ candidates:
       - name: resume
         mode: headless
         args: ["-p", "--output-format", "stream-json", "--trust", "--resume", "{{session_id}}", "{{prompt}}"]
+      - name: interactive
+        mode: interactive
+        # No -p/--print, no --trust: confirmed via `cursor-agent --help`
+        # ("Usage: agent [options] [command] [prompt...]", prompt =
+        # "Initial prompt for the agent") that a bare positional prompt
+        # starts interactive mode already primed with that first message.
+        # --trust is deliberately omitted here, unlike the headless
+        # default template — a real human is present in this window to
+        # answer the workspace-trust prompt themselves, so Glider doesn't
+        # need to auto-trust on their behalf the way headless delegation does.
+        args: ["{{prompt}}"]
   - name: agy
     binary: agy
     probe_args: ["--version"]
@@ -98,3 +121,16 @@ candidates:
         # output text via ResolveDelegate's normal path, answerable with a
         # further plain "/agy ..." reply.
         args: ["-p", "--add-dir={{cwd}}", "{{prompt}}"]
+      - name: interactive
+        mode: interactive
+        # agy has no bare-positional-prompt form the way claude and
+        # cursor-agent do — --prompt-interactive (confirmed via `agy
+        # --help`: "Run an initial prompt interactively and continue the
+        # session") is its own equivalent. --add-dir={{cwd}} is still
+        # required for the same reason as the headless default template
+        # (agy ignores the real process cwd otherwise). Launch confirmed
+        # live (2026-07-27) to parse without error and stay running past
+        # 5s; full interactive behavior wasn't visually confirmed (run
+        # hidden, deliberately, to avoid popping a window mid-session) —
+        # worth one visible spot-check before leaning on this in anger.
+        args: ["--add-dir={{cwd}}", "--prompt-interactive", "{{prompt}}"]

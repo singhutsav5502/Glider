@@ -25,8 +25,8 @@ type anthropicMessagesRequest struct {
 
 // Messages handles POST /v1/messages — Claude Code's completion-plane route
 // (confirmed live via ANTHROPIC_BASE_URL, see planning/native_glider_orchestration.md
-// §7). Delegate commands ("/vendor-name <prompt>") use the same flag
-// convention as Glider's existing /local /cloud /fast /heavy routing
+// §7). Delegate commands ("<prompt> /vendor-name", flag trailing) use the
+// same convention as Glider's existing /local /cloud /fast /heavy routing
 // commands, matched dynamically against whichever CLIs discovery has
 // actually found and the dashboard has left enabled (internal/vendors) —
 // never a hardcoded vendor name. See vendors.ParseDelegateCommand's doc
@@ -80,7 +80,7 @@ func (h *Handlers) Messages(w http.ResponseWriter, r *http.Request) {
 	}
 	originPID := vendors.ResolveOriginPID(r.RemoteAddr)
 
-	// "/workspace <path>" is handled before the vendor-scoped delegate flag
+	// A trailing "/workspace" flag is handled before the vendor-scoped delegate flag
 	// — see internal/mitm/delegate_handler.go's identical handling for why
 	// (not vendor-specific, keyed by the origin process's PID).
 	if path, ok := vendors.ParseWorkspaceCommand(userText); ok && originPID != 0 {

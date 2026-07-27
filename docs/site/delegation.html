@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Delegation · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="routing.html">Routing</a>
+      <a class="active" href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Cross-CLI</div>
+      <h1>Delegation &amp; permission relay</h1>
+      <p>
+        Send a prompt from whichever CLI you're sitting in to a <em>different</em> installed CLI.
+        Glider runs it headless, and if it pauses on a permission decision, relays that decision
+        back to you as a normal reply instead of it silently auto-denying.
+      </p>
+
+      <h2 id="flag">The flag</h2>
+      <pre>fix the failing test in internal/foo /claude
+refactor this function /cursor-agent
+summarize recent commits /agy</pre>
+      <p>
+        <code>vendors.ParseDelegateCommand</code> looks for a <code>/vendor-name</code> flag at
+        the <strong>end</strong> of the message — never the start, never buried mid-sentence —
+        claimed by <code>DelegateHandler</code> (or the gateway's own Messages route)
+        <em>before</em> normal routing, so it never interferes with ordinary requests. A
+        <code>:template</code> suffix picks a non-default command template, e.g.
+        <code>fix the auth bug /agy:interactive</code> — every vendor ships an
+        <code>interactive</code> template out of the box (<code>configs/vendor_candidates.yaml</code>):
+        instead of running headless and relaying captured text back, it opens the vendor's own
+        native session in a brand-new console window, already primed with your task as its first
+        message, and hands control to you directly there. No output comes back into this chat.
+      </p>
+      <p class="note">
+        <strong>Why the end, not the start:</strong> confirmed live, Claude Code's own client
+        reads an unrecognized leading <code>/word</code> as a local slash command and never sends
+        the message over the network at all (<em>"Unknown command: /agy"</em>). A flag typed as
+        your first characters never reaches Glider from that front — full stop, regardless of how
+        Glider's parser searches. Trailing-only sidesteps this for every front, not just Claude
+        Code. It also means the text before the flag survives intact as the prompt, instead of an
+        earlier "search anywhere" version of the parser silently dropping whatever came before
+        the first match.
+      </p>
+
+      <h2 id="why">Why this isn't just a live pause</h2>
+      <p>
+        None of the three supported vendors actually <strong>block</strong> for a permission
+        decision in headless (<code>-p</code>) mode:
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>Headless permission behavior</th></tr>
+        <tr><td>cursor-agent</td><td>Never blocks — a denial resolves inline in the stream-json output and the model continues</td></tr>
+        <tr><td>claude (Claude Code)</td><td>Never blocks — denied tool gets an immediate error result; the terminal event carries a structured denial list</td></tr>
+        <tr><td>agy (Antigravity)</td><td>Fails closed unconditionally — its own stderr says headless mode cannot prompt</td></tr>
+      </table>
+      <p>
+        So the real feature is a <strong>resume loop</strong>: run headless, detect the denial from
+        already-captured output, ask you out-of-band, then resume the delegate's session with
+        expanded permission once you answer. Not truly live — the run has already ended by the
+        time the question is asked — but fast enough to feel responsive.
+      </p>
+
+      <h2 id="sequence">Sequence</h2>
+      <pre class="seq">User (in claude, say)     DelegateHandler         vendors.RunWithOptions      agy subprocess
+  |                             |                          |                        |
+  | "fix the bug /agy"         |                          |                        |
+  |---------------------------->| ParseDelegateCommand     |                        |
+  |                             |------------------------->| exec agy -p --add-dir  |
+  |                             |                          |----------------------->|
+  |                             |                          |                        | denies a tool
+  |                             |                          |<-----------------------|
+  |                             |<-------------------------| DetectDenials          |
+  |                             | RegisterPendingResume(token)                      |
+  |<----------------------------| reply: "needs permission… abc123 /agy:allow"      |
+  |                             |                          |                        |
+  | "abc123 /agy:allow"        |                          |                        |
+  |---------------------------->| TakePendingResume(token) |                        |
+  |                             | GrantResumePermission (vendor-specific)           |
+  |                             |------------------------->| exec agy -p --continue |
+  |                             |                          |----------------------->|
+  |                             |                          |          edits a file  |
+  |                             |                          |<-----------------------|
+  |                             |<-------------------------| ExtractEditViews       |
+  |<----------------------------| reply: result + diff block                        |</pre>
+
+      <h2 id="grant">Granting permission (vendor-specific, hidden behind one interface)</h2>
+      <table>
+        <tr><th>Vendor</th><th>Mechanism</th></tr>
+        <tr><td>claude</td><td>Resume template: <code>--resume &lt;session-id&gt;</code> + the continuation prompt</td></tr>
+        <tr><td>cursor-agent</td><td>Resume template: <code>--resume [chatId] -p --output-format stream-json --trust</code></td></tr>
+        <tr><td>agy</td><td>Writes a scoped rule into its own <code>settings.json</code> (and per-project config if the workspace matches a known project) — <strong>agy's own officially-designed headless-permission mechanism</strong>, confirmed via its changelog — then reverts both files to their exact original bytes afterward</td></tr>
+      </table>
+      <p>
+        Two alternatives were tried and rejected for agy first: a plain
+        <code>--dangerously-skip-permissions</code> resume flag looked cleaner (uniform with the
+        other two) but proved unreliable live — the model responds by <em>explaining</em> the flag
+        instead of acting on it. <code>--continue</code>/<code>--conversation &lt;id&gt;</code>
+        alone also proved unreliable, resuming an unrelated "most recent" conversation instead of
+        the denied one.
+      </p>
+      <p>
+        Every vendor's quirk sits behind one <code>VendorAdapter</code> interface
+        (<code>DetectDenials</code>, <code>ExtractSessionID</code>, <code>GrantResumePermission</code>,
+        <code>WrapResumePrompt</code>, <code>ExtractEditViews</code>) — shared code never branches
+        on a vendor name.
+      </p>
+
+      <h2 id="workspace">Workspace scoping</h2>
+      <p>
+        No wire protocol Glider intercepts carries a filesystem path, so a delegate call can't
+        know the origin CLI's project directory from the request alone. Reading it from the
+        origin process's memory (its PEB) was tried and rejected — Windows Defender's real-time
+        cross-process memory-read protection silently truncates the read on a normal install.
+      </p>
+      <p>
+        Instead: the origin process's PID (resolved from the TCP connection, no memory read) keys
+        a small directory registry. An unrecognized PID is asked once
+        (<code>&lt;path&gt; /workspace</code> — same trailing-flag convention as above) and
+        remembered for that process's lifetime; the dashboard's <strong>Vendors</strong> tab can
+        set a default workspace to skip asking in the common single-project case.
+      </p>
+
+      <h2 id="rendering">Rendering the result back</h2>
+      <p>
+        A delegate's edit is rendered as a diff appended to the reply regardless of which vendor
+        produced it — <code>VendorAdapter.ExtractEditViews</code> parses the vendor's own edit
+        shape (Claude's structured patch hunks, cursor-agent's before/after diff string, agy's
+        range-replace or whole-file write) into a canonical <code>EditViews</code> that
+        <code>FormatEditSummary</code> renders uniformly.
+      </p>
+
+      <h2 id="gaps">Known gaps</h2>
+      <ul>
+        <li><strong>agy sometimes still asks a clarifying question</strong> after a successful grant instead of acting — ordinary agent caution on a one-shot destructive request, not a bug, but it means the loop isn't always one round trip.</li>
+        <li><strong>No real interactive/pty relay (Path B).</strong> A genuinely live mid-execution pause — catching a TUI prompt inside an already-running headless call — would need Windows ConPTY plumbing and a captured TUI-prompt wire format per vendor, neither built yet. Don't confuse this with the <code>:interactive</code> template above, which sidesteps the whole problem by handing the task to a brand-new native session instead of trying to relay one.</li>
+        <li><strong>No cost/consent gate</strong> beyond the explicit flag itself — a delegated call can spend against a different subscription/API key than the one you're directly watching.</li>
+      </ul>
+      <p>Full design: <code>planning/permission_relay_design.md</code>. Adapter boundary: <code>planning/adapter_boundary.md</code>.</p>
+    </main>
+    <footer class="foot"><a href="routing.html">← Routing</a> · <a href="mitm.html">MITM →</a></footer>
+  </div>
+</body>
+</html>

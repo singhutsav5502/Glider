@@ -12,19 +12,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a class="active" href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -32,32 +25,27 @@
     <main class="prose">
       <div class="badge">Ollama</div>
       <h1>Pure local mode</h1>
-      <p>Run the harness with <strong>no cloud API keys</strong> and default route local.</p>
+      <p>Run the harness with <strong>no cloud API keys</strong> and a local default route.</p>
 
       <h2>Start</h2>
       <pre>ollama serve
 ollama pull qwen2.5-coder:14b
 .\glider.exe --config configs\glider.local.yaml</pre>
-      <p>Default local model across configs is <strong><code>qwen2.5-coder:14b</code></strong> (aliases map <code>gpt-4o</code> / <code>claude-3.5-sonnet</code> onto it).</p>
+      <p>Default local model across configs: <code>qwen2.5-coder:14b</code> (aliases map <code>gpt-4o</code> / <code>claude-3.5-sonnet</code> onto it).</p>
 
       <h2>Knobs in glider.local.yaml</h2>
       <ul>
         <li><code>routing.default: local</code></li>
         <li><code>routing.allow_cloud_fallback: false</code></li>
-        <li><code>routing.default_local_model: qwen2.5-coder:14b</code></li>
         <li><code>mitm.agent_rpc_canned_on_error: false</code></li>
-        <li><code>mitm.origin_on_local_error: false</code> — clear Ollama errors vs silent Cursor origin</li>
+        <li><code>mitm.origin_on_local_error: false</code> — clear Ollama errors instead of a silent origin fallback</li>
         <li><code>mitm.require_local_healthy: true</code></li>
       </ul>
-      <pre># excerpt — model_aliases
-model_aliases:
-  gpt-4o: qwen2.5-coder:14b
-  claude-3.5-sonnet: qwen2.5-coder:14b</pre>
 
       <h2>Gateway-only (no MITM)</h2>
-      <p>Set <code>mitm.enabled: false</code>. Cursor Override Base URL → <code>http://127.0.0.1:8080/v1</code>.</p>
+      <p>Set <code>mitm.enabled: false</code>. Override Base URL → <code>http://127.0.0.1:8080/v1</code>.</p>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a></footer>
+    <footer class="foot"><a href="context.html">← Context</a> · <a href="api.html">API →</a></footer>
   </div>
 </body>
 </html>

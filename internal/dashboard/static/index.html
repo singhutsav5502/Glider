@@ -168,23 +168,22 @@
           <div>
             <h2 class="graphs-title" style="margin:0">Agent CLIs</h2>
             <p class="hint" style="margin:6px 0 0">
-              CLIs discovered on this host (<code>configs/vendor_candidates.yaml</code> is the candidate list —
-              add an entry there for a new CLI, no rebuild needed). Enabled CLIs can be addressed from any
-              intercepted session with <code>/name &lt;prompt&gt;</code> (same convention as /local /cloud) to delegate to them headlessly.
+              Other AI coding CLIs found on this computer. Click <strong>Launch interactively</strong> to open one
+              in its own window, or type its name at the end of a message elsewhere (e.g. "fix this bug agy")
+              to hand it a task automatically.
             </p>
           </div>
-          <button type="button" id="vendors-discover" class="linkish">Discover</button>
+          <button type="button" id="vendors-discover" class="linkish">Rescan for CLIs</button>
         </div>
 
         <p id="vendors-error" class="cfg-error" hidden></p>
         <p id="vendors-ok" class="cfg-ok" hidden></p>
 
         <fieldset class="cfg-section">
-          <legend>Default workspace</legend>
+          <legend>Default project folder</legend>
           <p class="hint" style="margin:0 0 8px">
-            Directory delegated CLI calls run in when Glider can't otherwise identify the origin session's own
-            project directory (or on a platform where that's not resolvable at all). Left blank, Glider asks once
-            per session instead (reply with <code>/workspace &lt;path&gt;</code>) rather than guessing.
+            Folder these CLIs open in when Glider can't tell which project you meant. Leave blank and Glider
+            will just ask the first time it needs to know.
           </p>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="text" id="vendors-default-workspace" placeholder="e.g. C:\Users\me\myproject" style="flex:1">
@@ -193,26 +192,23 @@
         </fieldset>
 
         <fieldset class="cfg-section">
-          <legend>Registered CLIs</legend>
-          <div class="mcp-table-wrap">
-            <table class="mcp-table" id="vendors-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Binary</th>
-                  <th>Path</th>
-                  <th>Version</th>
-                  <th>Enabled</th>
-                  <th>Templates</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="vendors-body">
-                <tr><td colspan="7" class="hint">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
+          <legend>Delegated task replies</legend>
+          <p class="hint" style="margin:0 0 8px">
+            What you see back when a task is handed to another CLI. <strong>Clean</strong> shows just the final
+            answer; <strong>Raw</strong> shows everything the CLI printed, useful when something looks wrong and
+            you want to see exactly what happened.
+          </p>
+          <label style="display:flex;gap:8px;align-items:center;font-weight:normal">
+            <select id="vendors-response-detail">
+              <option value="clean">Clean (recommended)</option>
+              <option value="raw">Raw / debug</option>
+            </select>
+          </label>
         </fieldset>
+
+        <div class="vendor-cards" id="vendors-cards">
+          <p class="hint">Loading…</p>
+        </div>
       </section>
 
       <section id="panel-workspace" class="panel">

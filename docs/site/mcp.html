@@ -12,19 +12,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a class="active" href="mcp.html">Tools &amp; MCP</a>
@@ -33,107 +26,47 @@
       <div class="badge">Tools</div>
       <h1>Tools &amp; MCP</h1>
       <p>
-        Glider unifies builtins and Model Context Protocol (MCP) servers under
-        <code>internal/tools</code>. The registry dispatches <code>tools:</code> refs
-        and feeds results into the model when the agentic tool loop is active.
-        Full planning write-up: <code>planning/tools.md</code>.
+        <code>internal/tools</code> unifies builtins, plugins, and MCP servers under one registry,
+        sandboxed to a workspace directory. It's built and tested, and the dashboard/delegation's
+        edit-rendering path uses parts of it, but nothing currently drives its own agentic tool
+        loop (<code>RunAgentLoop</code>) — that ran under the removed hoop/swarm stage runner.
+        Today, multi-turn agent work happens by <a href="delegation.html">delegating</a> to a real
+        vendor CLI, which brings its own tool loop.
       </p>
 
-      <h2 id="workspace">Workspace, ScopeRel &amp; artifacts</h2>
-      <p>Default sandbox: <code>~/.glider/workspace</code>. Each run gets:</p>
+      <h2 id="workspace">Workspace &amp; sandbox</h2>
+      <p>Default: <code>~/.glider/workspace</code> (<code>orchestration.tools.workspace</code> — never set this to <code>.</code>).</p>
       <pre>runs/&lt;run-id&gt;/
-  work/   ← clones, scratch
-  out/    ← final reports</pre>
-      <p><strong>ScopeRel:</strong> with a run active, bare paths resolve under that run’s <code>work/</code> (same for <code>fs_*</code> and <code>git_clone</code>):</p>
-      <pre>audit-target  →  runs/clone-repo-security-audit/work/audit-target</pre>
-      <pre>tools:
-  - { name: git_clone, kind: builtin }
-  - { name: fs_list, kind: builtin }
-  - { name: artifact_write, kind: builtin }</pre>
-      <pre># artifact_write text input
-out findings.md
-# Severity: high
-…</pre>
-      <p>Dashboard → <strong>Workspace</strong> tab, or <a href="api.html#workspace"><code>GET /api/workspace?run=&lt;id&gt;</code></a>.</p>
-
-      <h2 id="blind">Blind pre-pass vs agent tool loop</h2>
+  work/   ← clones, scratch, intermediate files
+  out/    ← final deliverables</pre>
+      <p>Bare paths resolve under the active run's <code>work/</code> automatically (ScopeRel). Builtins cannot escape the workspace root.</p>
       <table>
-        <tr><th>Path</th><th>What runs</th></tr>
-        <tr><td>Blind pre-pass</td><td>Only safe tools (<code>datetime</code>, <code>fs_list</code>, git status/diff/log, MCP list) with input <code>"."</code> — never the task goal</td></tr>
-        <tr><td>Agent loop</td><td><code>git_clone</code>, writes, search, web, MCP — via native <code>tool_calls</code> or parsed text JSON</td></tr>
+        <tr><th>Tool</th><th>Role</th></tr>
+        <tr><td><code>fs_read</code>/<code>write</code>/<code>list</code>/<code>search</code>, <code>code_grep</code></td><td>Workspace files</td></tr>
+        <tr><td><code>git_status</code>/<code>diff</code>/<code>log</code>/<code>clone</code></td><td>Git helpers</td></tr>
+        <tr><td><code>shell_exec</code></td><td>Allowlisted shell — off by default</td></tr>
+        <tr><td><code>web_search</code> / <code>web_fetch</code> / <code>http_fetch</code></td><td>Brave→Tavily→SerpAPI→SearXNG→DuckDuckGo chain / readable page / raw GET</td></tr>
+        <tr><td><code>artifact_write</code></td><td>Write under <code>runs/&lt;id&gt;/{work,out}</code></td></tr>
+        <tr><td><code>context_query</code></td><td>Query <code>contextgraph</code> — see <a href="context.html">Context</a></td></tr>
       </table>
-      <pre>{"name":"fs_list","arguments":{"input":"audit-target"}}</pre>
-      <p>Undeclared tools are rejected. MCP <code>"*"</code> expands before CallTool. MaxSteps ≥ 20 (sequential) / ≥ 28 (parallel workers).</p>
 
-      <h2 id="web">Web search</h2>
-      <pre># configs/glider.yaml
-orchestration:
-  tools:
-    web_search:
-      provider: auto   # brave → tavily → serpapi → searxng → duckduckgo
-      max_results: 5</pre>
-      <pre># .env.local (optional keyed providers)
+      <h2 id="mcp">MCP</h2>
+      <p>GitHub is the built-in server (HTTP hosted Copilot MCP + Docker stdio); <code>internal/mcp.Manager</code> supports any additional stdio or Streamable-HTTP server.</p>
+      <p><strong>Auth</strong> (never inline <code>auth.token</code> in config):</p>
+      <pre>export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN</pre>
+      <p>Or Dashboard <strong>MCP</strong> tab → <strong>Sign in with GitHub</strong> (OAuth device flow) or <strong>Paste PAT</strong> (writes <code>~/.glider/credentials/github_token</code>, mode 0600).</p>
+      <p>The Streamable HTTP client persists <code>Mcp-Session-Id</code>, sends <code>MCP-Protocol-Version</code> + <code>X-MCP-Toolsets</code> on follow-ups, and on a 401/403 clears the session and re-<code>initialize</code>s once before retrying.</p>
+      <p>Dashboard <strong>MCP</strong> tab: server list, Connect/Disconnect/Reconnect/Refresh, live tool catalog (falls back to a documented catalog when nothing's connected). Full endpoint list: <a href="api.html#mcp">API · MCP</a>.</p>
+
+      <h2 id="websearch">Web search setup</h2>
+      <pre># .env.local
 BRAVE_SEARCH_API_KEY=
 TAVILY_API_KEY=
 SERPAPI_KEY=
 SEARXNG_URL=http://127.0.0.1:8080</pre>
-      <p>Tools: <code>web_search</code> (snippets) and <code>web_fetch</code> (readable page). Both are agent-loop only (not blind-safe).</p>
-
-      <h2>Builtins</h2>
-      <p>
-        <code>fs_read</code>, <code>fs_write</code>, <code>fs_list</code>, <code>fs_search</code>,
-        <code>code_grep</code>, <code>http_fetch</code>, <code>web_search</code>, <code>web_fetch</code>,
-        <code>git_*</code>, <code>artifact_write</code>, <code>context_query</code>,
-        <code>datetime</code>, <code>calculator</code>, <code>shell_exec</code> (off by default —
-        <code>orchestration.tools.allow_shell</code>).
-      </p>
-
-      <h2>GitHub connect (Cursor-like UI)</h2>
-      <p>
-        <strong>Glider running is not the same as GitHub MCP connected.</strong>
-        If the tools panel says <em>Documented catalog</em>, the dashboard is up but the MCP
-        <em>session</em> to GitHub is not — sign in or Connect for <code>source=live</code>.
-      </p>
-      <ol>
-        <li><strong>Sign in with GitHub</strong> — device flow (enter a code at github.com/login/device). Put <code>GLIDER_GITHUB_OAUTH_CLIENT_ID</code> in <code>.env.local</code> (copy from <code>.env.example</code>; gitignored). Shell env still wins over the file.</li>
-        <li><strong>Paste PAT</strong> — saves to <code>~/.glider/credentials/github_token</code> (0600) and connects HTTP <code>github</code>.</li>
-        <li><strong>Forget token</strong> — clears the credential file and disconnects.</li>
-      </ol>
-
-      <h2>GitHub token (env or credential file)</h2>
-      <p>Never put a PAT in YAML. Prefer the MCP tab UI, or set one of these in the Glider process environment (first non-empty wins):</p>
-      <pre>GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # preferred
-GITHUB_TOKEN=ghp_...
-GH_TOKEN=ghp_...</pre>
-      <p>Config validation rejects inline <code>auth.token</code>; use <code>token_env</code> only. At startup Glider also hydrates from <code>~/.glider/credentials/github_token</code> when env is empty.</p>
-
-      <h2>GitHub MCP endpoints</h2>
-      <table>
-        <tr><th>Mode</th><th>Server id</th><th>How</th></tr>
-        <tr>
-          <td>HTTP (hosted Copilot MCP)</td>
-          <td><code>github</code></td>
-          <td><code>https://api.githubcopilot.com/mcp/</code> — Connect after Sign in / PAT. Glider persists <code>Mcp-Session-Id</code>, sends <code>X-MCP-Toolsets</code>, and re-handshakes once on 401/session errors. Live PAT verify steps: <a href="../planning/tools.md">tools.md</a></td>
-        </tr>
-        <tr>
-          <td>Docker stdio</td>
-          <td><code>github-stdio</code></td>
-          <td><code>docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server</code> — Connect from the MCP tab</td>
-        </tr>
-      </table>
-
-      <h2>Dashboard MCP UI</h2>
-      <ol>
-        <li>Open Dashboard → <strong>MCP</strong> tab (<code>http://127.0.0.1:8081</code>).</li>
-        <li>Use <strong>Sign in with GitHub</strong> or <strong>Paste PAT</strong>, then confirm HTTP shows <em>connected</em>.</li>
-        <li>Use Connect / Disconnect / Reconnect / Refresh on each server row.</li>
-        <li>Tools list: <strong>live</strong> when the session is up; <strong>catalog</strong> is a static fallback with an explicit reason (not “server off”).</li>
-      </ol>
-
-      <h2>HTTP API</h2>
-      <p>See <a href="api.html#mcp">API · MCP</a> and <a href="api.html#workspace">API · Workspace</a>.</p>
+      <p>Provider <code>auto</code> tries each in order, falling back to DuckDuckGo HTML (no key). Forcing a keyed provider with an empty env returns a clear error instead of inventing results.</p>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a></footer>
+    <footer class="foot"><a href="api.html">← API</a> · <a href="index.html">Home</a></footer>
   </div>
 </body>
 </html>

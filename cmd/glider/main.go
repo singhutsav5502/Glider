@@ -36,6 +36,7 @@ import (
 	"github.com/glider-ai/glider/internal/tray"
 	"github.com/glider-ai/glider/internal/vendors"
 	"github.com/glider-ai/glider/internal/vram"
+	"github.com/glider-ai/glider/internal/webviewshell"
 	"github.com/google/uuid"
 )
 
@@ -59,8 +60,23 @@ func main() {
 		cancel()
 	}()
 
+	// Loaded again, in full, inside runGlider itself — this is just enough
+	// to know the dashboard's port before the tray menu exists, so "Open
+	// Dashboard" has a URL to point at from the very first click. Cheap
+	// and harmless to read twice (same pattern seedDefaultWorkspace/
+	// seedResponseDetail already use for their own independent reads).
+	dashboardPort := 8081
+	if cfg, err := config.LoadConfig(*cfgPath); err == nil && cfg.Server.DashboardPort != 0 {
+		dashboardPort = cfg.Server.DashboardPort
+	}
+	dashboardURL := fmt.Sprintf("http://127.0.0.1:%d", dashboardPort)
+
 	onReady := func() {
-		tray.SetupMenu(cancel)
+		tray.SetupMenu(func() {
+			if err := webviewshell.Show(dashboardURL); err != nil {
+				slog.Default().Warn("open dashboard failed", "err", err)
+			}
+		}, cancel)
 		go runGlider(ctx, *cfgPath)
 	}
 	tray.Run(onReady, func() {})
@@ -286,6 +302,7 @@ func runGlider(ctx context.Context, cfgPath string) {
 	}
 
 	seedDefaultWorkspace(log)
+	seedResponseDetail(log)
 
 	proxyAddr := fmt.Sprintf(":%d", cfg.Server.ProxyPort)
 	proxy := api.NewServer(proxyAddr, handlers)
@@ -367,7 +384,7 @@ func runGlider(ctx context.Context, cfgPath string) {
 				"note", "BidiAppend extract -> DecideLocal -> RunSSE text codec when correlated; child tool RunSSE local only when tool_codec on")
 		}
 		// DelegateHandler goes first: it only claims /v1/messages requests
-		// carrying an explicit "/vendor-name <prompt>" flag (same convention
+		// carrying an explicit trailing "<prompt> /vendor-name" flag (same convention
 		// as /local /cloud), so it never interferes with interceptor's
 		// existing Cursor-focused logic — anything it doesn't claim falls
 		// straight through.
@@ -413,7 +430,15 @@ func runGlider(ctx context.Context, cfgPath string) {
 
 	var dash *dashboard.Server
 	if cfg.Dashboard.Enabled {
-		dashAddr := fmt.Sprintf(":%d", cfg.Server.DashboardPort)
+		// 127.0.0.1, not ":<port>" (= 0.0.0.0, every interface): the
+		// dashboard is a local control panel — vendor delegation, config
+		// edits, the works — with no legitimate reason to be reachable
+		// from other machines on the network. Found while wiring the
+		// webview shell, which only ever needs 127.0.0.1 anyway, but the
+		// bug predates that work; the gateway/MITM ports are left
+		// untouched here since remote reachability there is a real,
+		// separate, sometimes-wanted tradeoff, not an oversight.
+		dashAddr := fmt.Sprintf("127.0.0.1:%d", cfg.Server.DashboardPort)
 		store := &dashboard.FileConfigStore{Provider: provider, Path: cfgPath}
 		models := &dashboard.RegistryModelController{Registry: reg}
 		dash = dashboard.New(dashAddr, bus, store, models)
@@ -552,6 +577,25 @@ func seedDefaultWorkspace(log *slog.Logger) {
 	}
 	vendors.SetDefaultWorkspace(reg.DefaultWorkspace)
 	log.Info("glider default delegate workspace loaded", "dir", reg.DefaultWorkspace)
+}
+
+// seedResponseDetail loads the persisted response-detail setting (same
+// pattern as seedDefaultWorkspace above, same reasoning) into the
+// in-memory value ResolveDelegate actually reads. Empty/missing means the
+// default (clean) — vendors.SetResponseDetail already treats an
+// unrecognized value as clean too, so this never needs its own zero check
+// beyond "registry unreadable, do nothing."
+func seedResponseDetail(log *slog.Logger) {
+	regPath, err := vendors.DefaultRegistryPath()
+	if err != nil {
+		return
+	}
+	reg, err := vendors.LoadRegistry(regPath)
+	if err != nil || reg.ResponseDetail == "" {
+		return
+	}
+	vendors.SetResponseDetail(reg.ResponseDetail)
+	log.Info("glider delegate response detail loaded", "mode", reg.ResponseDetail)
 }
 
 // vendorProcessNames derives the transparent redirector's process allowlist

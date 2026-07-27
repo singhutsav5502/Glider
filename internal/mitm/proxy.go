@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -76,13 +77,31 @@ func (p *Proxy) Start() error {
 	go p.serve()
 
 	if p.Redirector != nil && p.TransparentPort != 0 {
+		// Transparent interception is a real, but OPTIONAL enhancement on
+		// top of the CONNECT-based proxy already listening above — a
+		// failure here must never take down the whole app. Fixed
+		// 2026-07-28 after a real report: a double-clicked, non-elevated
+		// glider.exe vanished instantly with no tray icon and no visible
+		// error, because this used to return an error all the way up to
+		// main.go's os.Exit(1) — killing a process that had already
+		// successfully started its gateway and dashboard, over a failure
+		// in a feature the user may not even have known was on (mitm.transparent
+		// defaults to true). WinDivertOpen requiring Administrator
+		// privileges to load its kernel driver is the overwhelmingly
+		// common cause; a plain double-click from Explorer is never
+		// elevated, while an already-elevated terminal is — exactly
+		// matching the reported "works from cmd, not by double-clicking"
+		// split.
+		//
 		// 0.0.0.0, not 127.0.0.1: the redirector rewrites destinations to the
 		// machine's real local IP (not loopback — see redirector_windows.go's
 		// detectPrimaryLocalIP for why), so this listener must accept on that
 		// interface too, not just loopback.
 		transpLn, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p.TransparentPort))
 		if err != nil {
-			return fmt.Errorf("mitm: transparent listener: %w", err)
+			p.Log.Warn("mitm: transparent listener failed to bind — continuing without OS-level transparent "+
+				"interception (the gateway and CONNECT-based MITM proxy still work normally)", "err", err)
+			return nil
 		}
 		p.transpLn = transpLn
 		go p.serveTransparent()
@@ -97,7 +116,12 @@ func (p *Proxy) Start() error {
 			AllowHosts:        p.Hosts.Patterns(),
 			AllowProcessNames: p.TransparentAllowProcessNames,
 		}); err != nil {
-			return fmt.Errorf("mitm: transparent redirector: %w", err)
+			p.Log.Warn("mitm: transparent redirector failed to start — continuing without OS-level transparent "+
+				"interception (the gateway and CONNECT-based MITM proxy still work normally); if this is "+
+				"WinDivertOpen failing, run Glider as Administrator to enable it", "err", err)
+			_ = p.transpLn.Close()
+			p.transpLn = nil
+			return nil
 		}
 	}
 	return nil
@@ -328,71 +352,111 @@ func closeWrite(c net.Conn) error {
 	return nil
 }
 
+// mitmSession terminates TLS for one decrypted connection and serves every
+// request on it through net/http.Server's own ServeTLS, which negotiates
+// ALPN (h2 vs http/1.1) with the real client automatically and dispatches
+// either to the same http.Handler — replacing an earlier hand-rolled
+// tls.Server()+http.ReadRequest loop that offered no ALPN at all and
+// unconditionally assumed HTTP/1.1 framing. Fixed 2026-07-28: a genuinely
+// h2-only client (confirmed live — cursor-agent's real completion-plane
+// host, agentn.global.api5.cursor.sh, negotiates h2 unconditionally, see
+// planning/agent_cli_interop.md's "cursor-agent exact completion-plane RPC
+// name" entry) either can't complete a handshake against a server offering
+// no ALPN at all, or has its stream corrupted by an HTTP/1.1-only reader —
+// this was a real gap in Glider's own transparent interception, not just a
+// theoretical one, once cursor-agent's actual wire behavior was confirmed.
 func (p *Proxy) mitmSession(client net.Conn, br *bufio.Reader, host, hostport string) {
 	leaf, err := p.Authority.CertificateForHost(host)
 	if err != nil {
 		p.Log.Error("mitm leaf cert failed", "host", host, "err", err)
 		return
 	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{*leaf},
-		MinVersion:   tls.VersionTLS12,
-	}
-	// Peek buffered bytes + remaining client into TLS server.
-	tlsClient := tls.Server(&bufConn{Conn: client, r: br}, tlsCfg)
-	if err := tlsClient.Handshake(); err != nil {
-		p.Log.Debug("mitm client handshake failed", "host", host, "err", err)
-		return
-	}
-	defer tlsClient.Close()
 
 	connectSession := fmt.Sprintf("c%x", time.Now().UnixNano())
 	p.Log.Debug("mitm decrypt session", "host", host, "connect_session", connectSession)
 
-	for {
-		_ = tlsClient.SetDeadline(time.Now().Add(p.DialTimeout))
-		req, err := http.ReadRequest(bufio.NewReader(tlsClient))
-		if err != nil {
-			return
-		}
-		_ = tlsClient.SetDeadline(time.Time{})
-		req = req.WithContext(WithConnectSession(req.Context(), connectSession))
+	ln := newSingleConnListener(&bufConn{Conn: client, r: br})
+	srv := &http.Server{
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{*leaf},
+			MinVersion:   tls.VersionTLS12,
+		},
+		ReadHeaderTimeout: p.DialTimeout,
+		IdleTimeout:       p.DialTimeout,
+		ErrorLog:          discardHTTPServerLog,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(WithConnectSession(r.Context(), connectSession))
+			tw := &trackedResponseWriter{ResponseWriter: w}
 
-		if !p.PassthroughOnly && p.Local != nil {
-			rw := &responseCapture{conn: tlsClient, header: http.Header{}}
-			handled, herr := p.Local.TryHandle(rw, req)
-			if herr != nil {
-				p.Log.Warn("mitm local handler error", "err", herr)
-			}
-			if handled {
-				if !rw.wrote {
-					http.Error(rw, "empty local response", http.StatusBadGateway)
+			if !p.PassthroughOnly && p.Local != nil {
+				handled, herr := p.Local.TryHandle(tw, r)
+				if herr != nil {
+					p.Log.Warn("mitm local handler error", "err", herr)
 				}
-				if req.Close || rw.header.Get("Connection") == "close" {
+				if handled {
+					if !tw.wrote {
+						http.Error(tw, "empty local response", http.StatusBadGateway)
+					}
 					return
 				}
-				continue
+				// Not handled — fall through to origin passthrough. Body may
+				// have been consumed; LocalHandler must not consume body
+				// unless it handles (unchanged contract).
 			}
-			// Not handled — fall through to origin passthrough. Body may have been consumed;
-			// LocalHandler must not consume body unless it handles.
-		}
 
-		if err := p.passthroughHTTPS(tlsClient, req, host, hostport); err != nil {
-			p.Log.Debug("mitm passthrough failed", "host", host, "err", err)
-			return
-		}
-		if req.Close {
-			return
-		}
+			if err := p.passthroughHTTPS(tw, r, host, hostport); err != nil {
+				p.Log.Debug("mitm passthrough failed", "host", host, "err", err)
+			}
+		}),
+	}
+	_ = srv.ServeTLS(ln, "", "")
+}
+
+// discardHTTPServerLog silences http.Server's own default stderr logging
+// (e.g. "http: TLS handshake error..." for a client that hangs up mid
+// handshake, routine on a MITM proxy) — Proxy already logs through p.Log at
+// the call sites that matter.
+var discardHTTPServerLog = log.New(io.Discard, "", 0)
+
+// trackedResponseWriter records whether anything was ever written, so
+// mitmSession's handler can tell "LocalHandler claimed handled=true but
+// wrote nothing" (a real bug in that handler) apart from a legitimate
+// empty-but-headers-only response — the same distinction the old
+// responseCapture.wrote field made. Forwards Flush() to the real
+// http.ResponseWriter's own Flusher (present for both h1.1 and h2 via
+// net/http.Server) so SSE replies (delegate text streamed incrementally)
+// keep working exactly as before.
+type trackedResponseWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (t *trackedResponseWriter) WriteHeader(status int) {
+	t.wrote = true
+	t.ResponseWriter.WriteHeader(status)
+}
+
+func (t *trackedResponseWriter) Write(p []byte) (int, error) {
+	t.wrote = true
+	return t.ResponseWriter.Write(p)
+}
+
+func (t *trackedResponseWriter) Flush() {
+	if f, ok := t.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
-func (p *Proxy) passthroughHTTPS(client net.Conn, req *http.Request, host, hostport string) error {
-	raw, err := net.DialTimeout("tcp", hostport, p.DialTimeout)
-	if err != nil {
-		return err
-	}
-	defer raw.Close()
+// passthroughHTTPS forwards req to the real origin over a real TLS
+// connection that offers both h2 and http/1.1 via ALPN, and writes the
+// origin's response back through w. Uses http.Transport instead of a
+// hand-rolled tls.Client+req.Write+http.ReadResponse (the pre-2026-07-28
+// version): net/http's own transport already handles ALPN negotiation
+// with the real origin and response framing for both protocol versions —
+// the hand-rolled version assumed HTTP/1.1 unconditionally and broke
+// against any genuinely HTTP/2-only origin (this function's sibling fix in
+// mitmSession's own doc comment has the live-confirmed example).
+func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host, hostport string) error {
 	cfg := &tls.Config{
 		ServerName: host,
 		MinVersion: tls.VersionTLS12,
@@ -403,37 +467,81 @@ func (p *Proxy) passthroughHTTPS(client net.Conn, req *http.Request, host, hostp
 			cfg.ServerName = host
 		}
 	}
-	up := tls.Client(raw, cfg)
-	if err := up.Handshake(); err != nil {
-		return err
-	}
-	defer up.Close()
 
-	// Ensure Host header and URL are absolute for upstream.
-	req.RequestURI = ""
-	if req.URL.Scheme == "" {
-		req.URL.Scheme = "https"
+	// One fresh Transport (and therefore one fresh outbound connection) per
+	// call, matching the original's one-dial-per-request behavior — no
+	// cross-request connection pooling here, deliberately unchanged scope.
+	transport := &http.Transport{
+		TLSClientConfig:   cfg,
+		ForceAttemptHTTP2: true,
+		DialContext:       (&net.Dialer{Timeout: p.DialTimeout}).DialContext,
 	}
-	if req.URL.Host == "" {
-		req.URL.Host = host
+	defer transport.CloseIdleConnections()
+
+	outReq := req.Clone(req.Context())
+	outReq.RequestURI = ""
+	if outReq.URL.Scheme == "" {
+		outReq.URL.Scheme = "https"
 	}
-	req.Host = host
-	if err := req.Write(up); err != nil {
-		return err
-	}
-	resp, err := http.ReadResponse(bufio.NewReader(up), req)
+	// hostport (not host) so the Transport's own dialer resolves/connects
+	// to the right address; Host below still carries the bare hostname for
+	// the actual HTTP Host header, matching the original's split behavior.
+	outReq.URL.Host = hostport
+	outReq.Host = host
+
+	resp, err := transport.RoundTrip(outReq)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
 	if p.Debug != nil && p.Debug.Enabled {
 		resp.Body = wrapResponsePeek(resp.Body, req, resp, p.Debug)
 	}
-	if err := resp.Write(client); err != nil {
-		return err
+
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+// singleConnListener adapts one already-accepted net.Conn to the
+// net.Listener interface http.Server.ServeTLS requires, so ServeTLS's own
+// ALPN negotiation and request dispatch apply to exactly this one MITM'd
+// connection.
+type singleConnListener struct {
+	conn   net.Conn
+	used   bool
+	closed chan struct{}
+}
+
+func newSingleConnListener(c net.Conn) *singleConnListener {
+	return &singleConnListener{conn: c, closed: make(chan struct{})}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	if !l.used {
+		l.used = true
+		return l.conn, nil
+	}
+	<-l.closed
+	return nil, io.EOF
+}
+
+func (l *singleConnListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
 	}
 	return nil
 }
+
+func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 func (p *Proxy) forwardPlainHTTP(client net.Conn, req *http.Request) {
 	hostport := req.Host
@@ -473,45 +581,6 @@ func (b *bufConn) Read(p []byte) (int, error) {
 	}
 	return b.Conn.Read(p)
 }
-
-// responseCapture implements http.ResponseWriter over a raw TLS conn.
-type responseCapture struct {
-	conn        net.Conn
-	header      http.Header
-	status      int
-	wroteHeader bool
-	wrote       bool
-}
-
-func (r *responseCapture) Header() http.Header { return r.header }
-
-func (r *responseCapture) WriteHeader(status int) {
-	if r.wroteHeader {
-		return
-	}
-	r.status = status
-	r.wroteHeader = true
-	if r.status == 0 {
-		r.status = http.StatusOK
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "HTTP/1.1 %d %s\r\n", r.status, http.StatusText(r.status))
-	_ = r.header.Write(&b)
-	b.WriteString("\r\n")
-	_, _ = io.WriteString(r.conn, b.String())
-	r.wrote = true
-}
-
-func (r *responseCapture) Write(p []byte) (int, error) {
-	if !r.wroteHeader {
-		r.WriteHeader(http.StatusOK)
-	}
-	r.wrote = true
-	return r.conn.Write(p)
-}
-
-// Ensure responseCapture implements http.Flusher for SSE.
-func (r *responseCapture) Flush() {}
 
 // wrapResponsePeek tees the first N response body bytes for debug ObserveResponse
 // without blocking the client copy. Fires once when peek fills or on Close.

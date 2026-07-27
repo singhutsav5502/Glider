@@ -250,11 +250,24 @@ func agyProjectsDir() (string, error) {
 	return filepath.Join(home, ".gemini", "config", "projects"), nil
 }
 
-// findProjectFileForDir scans agy's known projects for one whose bound git
+// findProjectFileForDir scans agy's known projects for one whose bound
 // folder matches dir. ok=false with a nil error is the common, expected
 // case for a scratch/one-off delegation target that's never been opened
 // interactively — not a failure, just "nothing to layer the grant into
 // beyond the global file."
+//
+// Real project files on this machine use TWO different shapes for the
+// same field, not one: git-repo-bound projects nest it under
+// resources[].gitFolder.folderUri, but plain-directory projects (no git
+// repo involved — e.g. a scratch folder, or one bound via a bare
+// "folderUri" some agy versions write) put it directly at
+// resources[].folderUri instead. An earlier version of this function only
+// checked the gitFolder-nested form — confirmed live (2026-07-26, found
+// while building the permission-preset writer) to silently miss every
+// bare-form project file, which meant GrantResumePermission's per-project
+// grant was skipping those directories entirely and falling back to the
+// global-only grant, unnoticed because the global grant still succeeded.
+// Fixed by checking both shapes.
 func findProjectFileForDir(dir string) (path string, ok bool, err error) {
 	projectsDir, err := agyProjectsDir()
 	if err != nil {
@@ -283,8 +296,9 @@ func findProjectFileForDir(dir string) (path string, ok bool, err error) {
 		var doc struct {
 			ProjectResources struct {
 				Resources []struct {
+					FolderURI string `json:"folderUri"` // bare form
 					GitFolder struct {
-						FolderURI string `json:"folderUri"`
+						FolderURI string `json:"folderUri"` // git-repo-bound form
 					} `json:"gitFolder"`
 				} `json:"resources"`
 			} `json:"projectResources"`
@@ -293,7 +307,7 @@ func findProjectFileForDir(dir string) (path string, ok bool, err error) {
 			continue
 		}
 		for _, r := range doc.ProjectResources.Resources {
-			if strings.EqualFold(r.GitFolder.FolderURI, wantURI) {
+			if strings.EqualFold(r.FolderURI, wantURI) || strings.EqualFold(r.GitFolder.FolderURI, wantURI) {
 				return p, true, nil
 			}
 		}

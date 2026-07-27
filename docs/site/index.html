@@ -14,19 +14,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a class="active" href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -36,79 +29,50 @@
       <div class="badge">Hostable docs</div>
       <h1>Glider</h1>
       <p>
-        Routing and permission-relay layer for AI coding CLIs: shared gateway + MITM
-        completion path (resolve model alias → tokenize → route → transform → execute),
-        task-aware routing, and cross-CLI delegation with permission relay.
+        A routing and permission-relay layer for AI coding CLIs — Claude Code, Cursor Agent,
+        and Antigravity (<code>agy</code>). Routes their inference to local models or your own
+        cloud keys, and lets you delegate a task from one CLI to another, permission prompts
+        included.
       </p>
-      <p>
-        <a href="../SETUP.md">Step-by-step setup</a>
-      </p>
+      <p><a href="../SETUP.md">Step-by-step setup</a></p>
     </header>
 
     <section class="grid">
-      <a class="card" href="../SETUP.md">
-        <h3>Setup guide</h3>
-        <p>Ollama → build → dashboard → optional CLI integration (gateway / MITM / delegation).</p>
-      </a>
-      <a class="card" href="c1-context.html">
-        <h3>C1 Context</h3>
-        <p>Glider vs Cursor, Ollama/vLLM, cloud APIs, user, OS -- system boundary.</p>
-      </a>
-      <a class="card" href="c2-containers.html">
-        <h3>C2 Containers</h3>
-        <p>Gateway :8080, Dashboard :8081, MITM :8082, backends, ~/.glider.</p>
-      </a>
-      <a class="card" href="c3-components.html">
-        <h3>C3 Components</h3>
-        <p>Pipeline, router, transform, fulfill hub, delegation, metrics.</p>
-      </a>
-      <a class="card" href="c4-code.html">
-        <h3>C4 Code</h3>
-        <p>Complete, BidiAppend to RunSSE, sticky cloud, delegation call chains.</p>
-      </a>
-      <a class="card" href="architecture-deep.html">
-        <h3>Architecture deep dive</h3>
-        <p>Ports, Path A/B lifecycles, sticky cloud, fulfill hub, routing, failures.</p>
-      </a>
-      <a class="card" href="data-flow.html">
-        <h3>Data flow</h3>
-        <p>Sequence diagrams for gateway, BidiAppend/RunSSE, sticky, loops.</p>
-      </a>
-      <a class="card" href="modules.html">
-        <h3>Modules</h3>
-        <p>Full internal/* package map with responsibilities and key types.</p>
-      </a>
-      <a class="card" href="concurrency.html">
-        <h3>Concurrency</h3>
-        <p>Goroutines, locks, channels, WS, delegate subprocesses, MITM hub races.</p>
-      </a>
       <a class="card" href="architecture.html">
         <h3>Architecture</h3>
-        <p>Gateway, MITM, orchestrator, dashboard, and how they share one harness.</p>
+        <p>Surfaces, the shared completion pipeline, package map, failure modes — one page.</p>
       </a>
       <a class="card" href="routing.html">
         <h3>Routing</h3>
-        <p>Explicit flags, sticky turn families, classifier, Starlark, token ceiling.</p>
+        <p>Priority order from explicit flags down to the default rule.</p>
+      </a>
+      <a class="card" href="delegation.html">
+        <h3>Delegation</h3>
+        <p>Hand a task to another CLI; permission prompts relay back to you.</p>
+      </a>
+      <a class="card" href="mitm.html">
+        <h3>MITM &amp; interception</h3>
+        <p>CONNECT decrypt, transparent WinDivert redirect, Cursor's Agent RPC plane.</p>
+      </a>
+      <a class="card" href="ngl.html">
+        <h3>NGL &amp; interfaces</h3>
+        <p>The three per-vendor interfaces (OriginAdapter, DelegateRenderer, ParseXTurn) — and the map between them.</p>
       </a>
       <a class="card" href="context.html">
         <h3>Context</h3>
-        <p>Event log + turn graph, episodes, and what locals actually receive.</p>
-      </a>
-      <a class="card" href="path-a-b.html">
-        <h3>Path A / B</h3>
-        <p>Override Base URL vs MITM Agent RPC; when to use which.</p>
+        <p>Event log + entity graph behind sticky routing and analytics.</p>
       </a>
       <a class="card" href="pure-local.html">
         <h3>Pure local</h3>
-        <p>glider.local.yaml, Ollama-only, no cloud keys required.</p>
+        <p><code>glider.local.yaml</code> — Ollama only, no cloud keys required.</p>
       </a>
       <a class="card" href="api.html">
         <h3>HTTP API</h3>
-        <p>Config, VRAM, context, vendors, MCP, hot-swap endpoints.</p>
+        <p>Dashboard REST surface: config, context, vendors, MCP, workspace.</p>
       </a>
       <a class="card" href="mcp.html">
         <h3>Tools &amp; MCP</h3>
-        <p>GitHub token env, dashboard MCP tab, MCP server management.</p>
+        <p>Builtin tools, workspace sandbox, GitHub MCP setup.</p>
       </a>
     </section>
 
@@ -118,29 +82,14 @@
 .\glider.exe --config configs\glider.local.yaml
 # Dashboard: http://127.0.0.1:8081
 # Docs (this site): open docs/site/index.html or scripts\serve-docs.ps1</pre>
-      <h2>Reference depth</h2>
-      <p>
-        Start with the C4 model:
-        <a href="c1-context.html">C1</a> &rarr;
-        <a href="c2-containers.html">C2</a> &rarr;
-        <a href="c3-components.html">C3</a> &rarr;
-        <a href="c4-code.html">C4</a>,
-        then go deep:
-        <a href="architecture-deep.html">architecture-deep</a> for sticky/hub,
-        <a href="data-flow.html">data-flow</a> for sequences,
-        <a href="modules.html">modules</a> for <code>internal/*</code>,
-        <a href="concurrency.html">concurrency</a> for runtime sync.
-      </p>
+
       <h2>Host this site</h2>
-      <p>
-        Everything under <code>docs/site/</code> is static HTML/CSS -- drop on GitHub Pages,
-        Netlify, nginx, or run locally:
-      </p>
+      <p>Everything under <code>docs/site/</code> is static HTML/CSS — no build step, no external JS.</p>
       <pre>powershell -File scripts\serve-docs.ps1
 # → http://127.0.0.1:8090</pre>
     </main>
 
-    <footer class="foot">Glider documentation · synced with planning/ as of Jul 2026</footer>
+    <footer class="foot">Glider documentation</footer>
   </div>
 </body>
 </html>

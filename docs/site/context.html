@@ -12,19 +12,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a class="active" href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -32,66 +25,27 @@
     <main class="prose">
       <div class="badge">Memory</div>
       <h1>Context management</h1>
-      <p>Hybrid dual-layer store: <strong>append-only event log</strong> (runtime provenance) + <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME) + in-memory turn index for sticky routing.</p>
+      <p>Hybrid dual-layer store: an <strong>append-only event log</strong> (runtime provenance) plus an <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME provenance), with an in-memory turn index for sticky routing.</p>
 
       <h2>Why</h2>
-      <p>Without a memory layer, Composer wrap-ups and subagents look like new small prompts and get mis-routed to local. The graph answers: "is this still part of turn family X?" Dual-layer <code>Query</code> / <code>context_query</code> also answers structural questions (episode / file / symbol) without dumping transcripts.</p>
+      <p>Without a memory layer, Cursor's Composer wrap-ups and subagent chrome look like new small prompts and get mis-routed to local. The graph answers "is this still part of turn family X?" — see <a href="mitm.html#stickymachine">MITM · sticky-cloud</a>.</p>
 
-      <h2>Dual-layer model</h2>
+      <h2>Layers</h2>
       <table>
-        <thead><tr><th>Layer</th><th>Role</th><th>Provenance</th><th>Persist</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>Event log</td>
-            <td>Append-only verbs (RouteDecided, FulfilledLocal, OriginPassthrough, FileTreeIndexed, &hellip;)</td>
-            <td>Prefer RUNTIME; EXTRACTED when attrs come from tools</td>
-            <td><code>~/.glider/context/events-*.jsonl</code></td>
-          </tr>
-          <tr>
-            <td>Entity / edge store</td>
-            <td>file, dir, symbol + relations (contains, references, &hellip;)</td>
-            <td>EXTRACTED | INFERRED | RUNTIME</td>
-            <td><code>~/.glider/context/entities.jsonl</code></td>
-          </tr>
-        </tbody>
+        <tr><th>Layer</th><th>Role</th><th>Persist</th></tr>
+        <tr><td>Event log</td><td>Append-only verbs: <code>RouteDecided</code>, <code>FulfilledLocal</code>, <code>OriginPassthrough</code>, <code>TurnOpened</code>, <code>StickyBound</code>, …</td><td><code>~/.glider/context/events-*.jsonl</code></td></tr>
+        <tr><td>Entity/edge store</td><td>file, dir, symbol + relations</td><td><code>~/.glider/context/entities.jsonl</code></td></tr>
+        <tr><td>Episodes</td><td>Compressed session summaries for local prompt injection</td><td><code>contextkit</code> (in-process rings)</td></tr>
       </table>
 
-      <h2>Query surface</h2>
-      <p><code>Store.Query</code> / <code>QueryWith</code> / tool <code>context_query</code> search <strong>both</strong> layers. Filters:</p>
-      <pre>context_query: &lt;turn_id&gt; [key=file-tree] [kind=note|file|dir]
-  [prov=RUNTIME|EXTRACTED|INFERRED] [neigh=id] [explain=id] [communities=1] keyword&hellip;
-
-Examples:
-  t-abc key=file-tree
-  t-abc prov=EXTRACTED readme
-  t-abc explain=sym:demo.go#Helper
-  t-abc communities=1
-  prov=RUNTIME RouteDecided</pre>
-      <p><code>IndexFileTree</code> records a <code>file-tree</code> key. <code>PathSummary(turn, from, to)</code> prefers entity edges, falls back to event scan.</p>
-      <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP (not full Leiden).</p>
-      <p>Ingest:</p>
-      <ul>
-        <li>File-tree: <code>POST /api/context/index-tree</code> or post-<code>git_clone</code> (EXTRACTED dir/file + contains)</li>
-        <li>Symbols: <code>POST /api/context/index-symbols</code> — Go via <code>go/parser</code>, JS/TS/Python via regex; <code>SymbolIndexer</code> interface ready for tree-sitter</li>
-      </ul>
-      <p class="note">
-        <code>RecordHoopContext</code>/<code>LookupHoopContext</code>/<code>HoopContextDigest</code>
-        and durable multi-wave "thread" facts still exist in <code>contextgraph</code>
-        (<code>hoop_context.go</code>, <code>thread_facts.go</code>) but have no caller since the
-        hoop/swarm stage runner that used to drive them was removed — dead library code, not a
-        live feature.
-      </p>
-
-      <h2>Storage</h2>
-      <ul>
-        <li><strong>Hot</strong> — <code>internal/contextgraph.Store</code> keyed by turn_family / request_uuid / connect_session</li>
-        <li><strong>Warm events</strong> — JSONL under <code>~/.glider/context/events-YYYY-MM-DD.jsonl</code></li>
-        <li><strong>Entities</strong> — <code>~/.glider/context/entities.jsonl</code></li>
-        <li><strong>Episodes</strong> — compact outcomes for local prompts (<code>contextkit</code>)</li>
-      </ul>
+      <h2>Query</h2>
+      <p><code>context_query</code> tool / <code>Store.Query</code> search both layers:</p>
+      <pre>context_query: &lt;turn_id&gt; [key=file-tree] [kind=note|file|dir] [prov=RUNTIME|EXTRACTED|INFERRED]
+  [neigh=id] [explain=id] [communities=1] keyword…</pre>
+      <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP, not full Leiden.</p>
 
       <h2>What locals receive</h2>
-      <p>Not the full TipTap mega-dump. Bounded pack: <strong>latest user turn</strong> + up to N compressed episodes (<code>transform.local_context</code>). Dashboard Overview paints <strong>episode chips</strong> from <code>GET /api/context/episodes</code>.</p>
+      <p>Never the full transcript. A bounded pack: the latest user turn plus up to N compressed episodes (<code>transform.local_context</code>). Dashboard Overview shows episode chips from <code>GET /api/context/episodes</code>.</p>
 
       <h2>Inspect</h2>
       <pre>GET  /api/context/recent
@@ -102,9 +56,15 @@ POST /api/context/index-tree
 POST /api/context/index-symbols
 GET  /api/context/communities?turn_id=
 GET  /api/context/explain?turn_id=&amp;id=</pre>
+
+      <p class="note">
+        <code>contextgraph</code> also still contains <code>RecordHoopContext</code>/
+        <code>LookupHoopContext</code> and durable multi-wave "thread" facts from a removed
+        stage-runner feature — dead library code with no caller today, not a live feature.
+      </p>
       <p>Full write-up: <code>planning/context_management.md</code>.</p>
     </main>
-    <footer class="foot"><a href="index.html">&larr; Home</a></footer>
+    <footer class="foot"><a href="ngl.html">← NGL</a> · <a href="pure-local.html">Pure local →</a></footer>
   </div>
 </body>
 </html>

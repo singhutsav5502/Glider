@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MITM &amp; interception · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a class="active" href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Interception</div>
+      <h1>MITM &amp; interception</h1>
+      <p>
+        Two ways to get a CLI's HTTPS traffic to Glider, and one CLI-specific fulfill mechanism
+        (Cursor's Agent RPC plane) layered on top once it arrives.
+      </p>
+
+      <h2 id="two-ways">Gateway vs. MITM</h2>
+      <table>
+        <tr><th></th><th>Gateway</th><th>MITM</th></tr>
+        <tr><td>Client setting</td><td>Override Base URL → <code>:8080/v1</code></td><td>Proxy setting, or nothing (transparent redirect)</td></tr>
+        <tr><td>Traffic</td><td>Whatever you pointed at Glider</td><td>The CLI's own cloud plane</td></tr>
+        <tr><td>Non-local means</td><td>Your OpenAI/Anthropic keys (BYOK)</td><td>Tunnel to the CLI's own origin, its credentials intact</td></tr>
+        <tr><td>Best for</td><td>Agent + tools — proven, works with any CLI</td><td>Cursor text-only local fulfill, transparent interception, delegation</td></tr>
+      </table>
+
+      <h2 id="connect">CONNECT + TLS forge</h2>
+      <pre>CONNECT host:443
+  → 200 Connection Established
+  → HostMatcher.Match?
+       yes → mint leaf from Glider CA, decrypt, try local fulfill / delegation / origin
+       no  → blind tunnel (bidirectional io.Copy, no decrypt)</pre>
+      <p>
+        Only allowlisted hosts are decrypted. CA: <code>~/.glider/mitm/ca.{crt,key}</code>, created
+        on first MITM start. Install <code>ca.crt</code> into your OS trust store; for
+        Node/Electron-based CLIs also set <code>NODE_EXTRA_CA_CERTS</code> — Claude Code's Node
+        runtime was confirmed to trust the OS store directly and does <em>not</em> need this env
+        var, which matters for the transparent path below.
+      </p>
+      <table>
+        <tr><th>Host pattern</th><th>Vendor</th></tr>
+        <tr><td><code>api2.cursor.sh</code>, <code>api3</code>, <code>api4</code>, <code>*.api5.cursor.sh</code></td><td>Cursor</td></tr>
+        <tr><td><code>api.anthropic.com</code></td><td>Claude Code</td></tr>
+        <tr><td><code>daily-cloudcode-pa.googleapis.com</code>, <code>cloudcode-pa.googleapis.com</code>, <code>antigravity-unleash.goog</code>, <code>oauth2.googleapis.com</code>, <code>www.googleapis.com</code>, <code>play.googleapis.com</code></td><td>agy (Antigravity)</td></tr>
+      </table>
+
+      <h2 id="transparent">Transparent redirection (Windows, WinDivert)</h2>
+      <p>
+        Cooperative MITM (proxy setting, CA trust) requires the CLI to be configured for it.
+        Transparent mode removes that requirement entirely: Glider redirects outbound HTTPS on
+        chosen ports for chosen process names at the OS packet level — no CLI cooperation, and it
+        works retroactively on a session that was already running before Glider even started.
+      </p>
+      <pre>mitm:
+  transparent: true
+  transparent_port: 8083
+  transparent_ports: [443]
+  windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll   # WinDivertNN.sys alongside it</pre>
+      <p>
+        WinDivert rewrites a matched packet's destination to <code>127.0.0.1:8083</code>,
+        recomputes checksums, and reinjects it — the client's own TCP stack never sees the rewrite.
+        Windows has no OS-native "what was the original destination" lookup (unlike Linux's
+        <code>SO_ORIGINAL_DST</code>), so the redirector keeps its own flow table keyed by the
+        client's source <code>ip:port</code>. Process-name narrowing reads the same vendor
+        registry the dashboard's <strong>Vendors</strong> tab populates — run discovery there first,
+        or transparent mode has no process filter, only the port match.
+      </p>
+      <p>
+        Live-verified end-to-end for Claude Code (redirect + CA trust, zero cooperation, including
+        an already-open terminal session). Not yet exercised the same way for cursor-agent/agy.
+        Linux/macOS are designed (<code>iptables</code> <code>REDIRECT</code> +
+        <code>SO_ORIGINAL_DST</code>; Network Extension / <code>pfctl</code>) but unbuilt.
+      </p>
+
+      <h2 id="sticky">Cursor's Agent RPC plane (BidiAppend → RunSSE)</h2>
+      <p>
+        Cursor's own wire protocol splits prompt and answer across two RPCs — this section and
+        the two below are specific to Cursor's MITM plane, not a general mechanism.
+      </p>
+      <ol>
+        <li><strong>BidiAppend</strong> — prompt/context envelope arrives; latest-turn text extracted; decide → <code>ArmLocal</code> or <code>ArmOrigin</code> on the fulfill hub, keyed by request UUID.</li>
+        <li><strong>RunSSE</strong> — response stream opens; hub <code>Wait(reqID, 800ms)</code>; local offer → encode text and fulfill; else dial origin.</li>
+      </ol>
+      <p>
+        Only <strong>root</strong> Agent RunSSE is a candidate for text-only local fulfill.
+        Child/tool-loop RunSSE stays on origin by default (opt-in
+        <code>mitm.agent_rpc_tool_codec</code> ships a common ToolCall map; the full catalog is
+        still deferred) — use the gateway for Agent+tools.
+      </p>
+
+      <h3 id="hub">Fulfill hub internals</h3>
+      <p>
+        <code>AgentFulfillHub</code> correlates BidiAppend (prompt) with RunSSE (answer) for the
+        same request UUID, under one mutex: <code>waiting</code> (RunSSE arrived first),
+        <code>pending</code> (Bidi arrived first), <code>family</code> (turn-family sticky state).
+        <code>ArmLocal</code>/<code>ArmOrigin</code> signal a waiter if one exists, else store
+        pending and schedule a 30s GC. <code>Wait</code> checks pending, else registers a waiter
+        and selects on offer vs. an 800ms timer — on timeout it re-checks pending once, for the
+        race where Bidi lands exactly as the timer fires. A local-fulfill encode failure after a
+        partial write must not dial origin — the client already consumed a response.
+      </p>
+
+      <h3 id="stickymachine">Sticky-cloud state machine</h3>
+      <p>
+        Turn-family sticky is <em>not</em> conversation-wide. An explicit flag or a cloud
+        <code>DecideLocal</code> decision opens a short-lived family keyed by the root request
+        UUID; immediate chrome follow-ons (reply summary, title gen) inherit it. Without this,
+        those follow-ons look like small local prompts and steal turns that must stay on the
+        cloud parent that just ran.
+      </p>
+      <table>
+        <tr><th>Constant</th><th>Value</th><th>Meaning</th></tr>
+        <tr><td><code>defaultRunSSEFulfillWait</code></td><td>800ms</td><td>RunSSE waits for a Bidi decision; idle reconnects fail-soft to origin</td></tr>
+        <tr><td><code>DefaultTurnFamilyTTL</code></td><td>90s</td><td>Family window (<code>routing.turn_family_ttl</code>)</td></tr>
+        <tr><td><code>DefaultCloudPostRunGrace</code></td><td>120s</td><td>Extra sticky life after parent RunSSE ends</td></tr>
+      </table>
+      <p><strong>Invariant:</strong> a live StickyCloud family must never be downgraded by a concurrent StickyLocal open while it's still active. Full policy: <code>planning/routing_session_policy.md</code>.</p>
+
+      <h2 id="config">Config knobs</h2>
+      <table>
+        <tr><th>Key</th><th>Notes</th></tr>
+        <tr><td><code>enabled</code></td><td>Dual-mode default: <code>true</code></td></tr>
+        <tr><td><code>hosts</code></td><td>Decrypt allowlist — see table above</td></tr>
+        <tr><td><code>agent_rpc_fulfill</code></td><td>Cursor BidiAppend → RunSSE text fulfill</td></tr>
+        <tr><td><code>agent_rpc_canned_on_error</code></td><td>Keep <code>false</code> in production</td></tr>
+        <tr><td><code>agent_rpc_tool_codec</code></td><td>Opt-in Cursor tool-call frames; prefer the gateway for Agent+tools</td></tr>
+        <tr><td><code>origin_on_local_error</code></td><td>Hybrid fail-soft to origin (default); pure-local sets this <code>false</code></td></tr>
+        <tr><td><code>transparent</code>, <code>transparent_port</code>, <code>windivert_dll_path</code></td><td>See transparent redirection above</td></tr>
+      </table>
+      <p>Restart required for port/CA/host/transparent changes; everything else hot-reloads.</p>
+    </main>
+    <footer class="foot"><a href="delegation.html">← Delegation</a> · <a href="ngl.html">NGL →</a></footer>
+  </div>
+</body>
+</html>

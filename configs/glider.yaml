@@ -275,11 +275,12 @@ mitm:
         # today it's hand-maintained from the live research in that planning doc.
     passthrough_default: true
     # OS-level transparent interception (planning/transparent_redirector_design.md).
-    # Windows only for now (WinDivert). Off by default — flip transparent: true and
-    # point windivert_dll_path at a real WinDivert.dll (WinDivertNN.sys alongside it)
-    # to make interception cooperation-free and retroactive on already-open CLI
-    # sessions, instead of relying on env vars a process only reads at launch.
-    transparent: false
+    # Windows only for now (WinDivert). On by default in this profile — makes
+    # interception cooperation-free and retroactive on already-open CLI sessions,
+    # instead of relying on env vars a process only reads at launch. Needs
+    # windivert_dll_path to point at a real WinDivert.dll (WinDivertNN.sys
+    # alongside it); falls back to non-transparent MITM if that's missing.
+    transparent: true
     transparent_port: 8083
     transparent_ports: [443]
     windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll

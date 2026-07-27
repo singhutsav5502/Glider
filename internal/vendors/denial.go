@@ -219,9 +219,12 @@ func (agyAdapter) ExtractEditViews(stdout []byte) (ngl.EditViews, bool) {
 // on any of the three vendors' wire formats (planning/permission_relay_design.md
 // §2.2: none of them have a native "permission request" content-block
 // type). token is the correlation id from RegisterPendingResume — embedded
-// so the human's next message ("/vendor:allow <token>" or
-// "/vendor:deny <token>") round-trips it straight back through
-// ParseDelegateCommand's existing flag syntax, no new parser needed.
+// so the human's next message ("<token> /vendor:allow" or
+// "<token> /vendor:deny") round-trips it straight back through
+// ParseDelegateCommand's existing trailing-flag syntax, no new parser
+// needed. The token comes BEFORE the flag, not after, because the flag
+// has to be the last thing in the message — see ParseDelegateCommand's
+// doc comment for why a leading "/" breaks on some fronts.
 func FormatDenialSummary(vendorName, token string, denials []Denial, text string) string {
 	var b strings.Builder
 	if text != "" {
@@ -240,8 +243,8 @@ func FormatDenialSummary(vendorName, token string, denials []Denial, text string
 			b.WriteString("  - " + d.Detail + "\n")
 		}
 	}
-	b.WriteString("\nReply with \"/" + vendorName + ":allow " + token + "\" to approve and continue, " +
-		"or \"/" + vendorName + ":deny " + token + "\" to skip this step.")
+	b.WriteString("\nReply with \"" + token + " /" + vendorName + ":allow\" to approve and continue, " +
+		"or \"" + token + " /" + vendorName + ":deny\" to skip this step.")
 	return b.String()
 }
 

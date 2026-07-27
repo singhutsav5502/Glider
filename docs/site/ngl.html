@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NGL &amp; interfaces · Glider Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a class="active" href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Interop layer</div>
+      <h1>NGL &amp; interfaces</h1>
+      <p>
+        <strong>NGL (Native Glider Language)</strong> is <code>internal/ngl</code>'s package of small,
+        per-vendor interfaces that let claude, cursor-agent, and agy plug into Glider's shared code without
+        that shared code ever branching on a vendor's literal name. Three interfaces, three different
+        questions, three different directions of data flow — this page is the map between them, since it's
+        easy to conflate "parse a vendor's own output" with "recognize a vendor's own request" the first time
+        you're looking for where to add a fourth CLI.
+      </p>
+
+      <h2 id="why">Why three interfaces, not one</h2>
+      <p>
+        Each answers a genuinely different question, about data flowing in a different direction, at a
+        different point in Glider's own pipeline:
+      </p>
+      <table>
+        <tr><th>Interface</th><th>Question it answers</th><th>Data source</th><th>Direction</th></tr>
+        <tr>
+          <td><code>OriginAdapter</code></td>
+          <td>Is this HTTP request a vendor CLI's own live traffic to its own backend — and if I need to
+            answer as if I were that backend, how?</td>
+          <td>A live HTTP request Glider intercepted (MITM or gateway)</td>
+          <td>Incoming — network → Glider</td>
+        </tr>
+        <tr>
+          <td><code>DelegateRenderer</code></td>
+          <td>What did a headless delegate run actually print, cleaned up to just the final answer?</td>
+          <td>A completed subprocess's captured stdout</td>
+          <td>Outgoing (rendering) — subprocess → chat reply</td>
+        </tr>
+        <tr>
+          <td><code>ParseXTurn</code> family<br><span class="hint">(<code>ParseClaudeTurn</code>,
+            <code>ParseCursorAgentTurn</code>, <code>ParseAgyTurn</code>)</span></td>
+          <td>What does one line of a vendor's own stream-json output mean, structurally — text, tool call,
+            tool result, reasoning?</td>
+          <td>One event line of a vendor's own headless/stream output</td>
+          <td>Outgoing (structuring) — subprocess → <code>Turn</code>/<code>Part</code></td>
+        </tr>
+      </table>
+      <p class="note">
+        A fourth, separate interface lives one layer down in <code>internal/vendors</code>:
+        <code>VendorAdapter</code> handles execution-time side effects (denial detection, permission grants,
+        session-id extraction) rather than wire-format parsing at all — see
+        <a href="delegation.html">Delegation</a> for that one. Don't confuse it with the three above; it's a
+        different boundary (process execution, not wire format).
+      </p>
+
+      <h2 id="turn">Turn &amp; Part — the shared vocabulary</h2>
+      <p>
+        <code>ParseXTurn</code> functions all produce the same shape, defined once in <code>turn.go</code>:
+      </p>
+      <pre>type Turn struct {
+    Vendor string          // "claude" | "cursor-agent" | "agy" | future
+    Raw    json.RawMessage // the adapter's native event, untouched
+    Parts  []Part
+}</pre>
+      <p>
+        <code>Raw</code> is always kept — normalization is additive, never a replacement, so a <code>Turn</code>
+        can always be re-emitted to the same vendor untouched. <code>Parts</code> classifies content
+        (<code>PartUserText</code>, <code>PartToolCall</code>, <code>PartToolResult</code>,
+        <code>PartReasoning</code>, <code>PartOther</code>) without renaming anything — a <code>ToolCall</code>'s
+        <code>Name</code>/<code>Args</code> stay in the vendor's own vocabulary; a vendor pack's alias table
+        maps names for callers that want cross-vendor uniformity, not this layer.
+      </p>
+
+      <h2 id="origin-adapter">OriginAdapter — recognizing a front's own traffic</h2>
+      <p>
+        Built 2026-07-27 after a real, live bug: <code>internal/mitm</code>'s delegate handler used to
+        hardcode <code>r.URL.Path != "/v1/messages"</code> as its entry gate — true only when Claude Code is
+        the front CLI. Typing a delegate flag directly into cursor-agent's or agy's own interactive session
+        silently did nothing, because their own traffic is never Anthropic-Messages-API-shaped and the gate
+        rejected the request before any flag-parsing logic ever ran.
+      </p>
+      <pre>type OriginAdapter interface {
+    Vendor() string
+    Matches(r *http.Request) bool
+    ExtractUserInstruction(body []byte) (text, model string, stream, ok bool, err error)
+    WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error
+}</pre>
+      <p>
+        <code>internal/mitm/delegate_handler.go</code> calls <code>ngl.ResolveOriginAdapter(r)</code> and
+        never compares a host or path against a vendor's literal name itself — each adapter's own
+        <code>Matches</code> owns that. <code>ExtractUserInstruction</code>'s <code>ok=false</code> is a
+        distinct, deliberate outcome from a real error: it means the body parsed structurally fine but this
+        adapter has no <em>confirmed</em> way to separate genuine human text from this vendor's own
+        scaffolding — callers must fall through to real origin passthrough, never fall back to a raw
+        substring scan. That exact shortcut, tried once for Claude before NGL existed, is what caused the
+        original scaffold-injection bug this package's own doc comment describes.
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>Real wire shape</th><th>Confidence</th></tr>
+        <tr><td>claude</td><td>Anthropic Messages API, <code>POST /v1/messages</code></td><td>Public spec — ground truth</td></tr>
+        <tr><td>agy</td><td>Gemini-style REST, <code>POST .../v1internal:streamGenerateContent</code>, human text wrapped in <code>&lt;USER_REQUEST&gt;</code> tags</td><td>Live-captured and byte-verified (2026-07-27)</td></tr>
+        <tr><td>cursor-agent</td><td>Connect-RPC over genuine HTTP/2, <code>POST /agent.v1.AgentService/Run</code></td><td>Live-captured; request field path cross-verified against the public <code>agent_v1.proto</code> schema field-for-field</td></tr>
+      </table>
+      <p class="note">
+        cursor-agent's completion host negotiates HTTP/2 <em>unconditionally</em> — invisible to any capture
+        tooling (including, until 2026-07-28, Glider's own MITM proxy) that assumes HTTP/1.1. See
+        <a href="mitm.html">MITM</a> for the fix.
+      </p>
+
+      <h2 id="delegate-renderer">DelegateRenderer — clean replies, not raw transcripts</h2>
+      <p>
+        Built 2026-07-28: a headless delegate run's raw captured stdout is exactly what
+        <code>vendors.RunResult.Text</code> holds — for claude and cursor-agent, that's the <em>entire</em>
+        <code>stream-json</code> NDJSON transcript (every internal event line, not just the answer), because
+        both vendors' headless mode is asked to emit it that way for denial/session-id extraction elsewhere
+        in the pipeline. Relaying that whole blob as a delegate reply is exactly right for debugging and
+        exactly wrong for daily use.
+      </p>
+      <pre>type DelegateRenderer interface {
+    Vendor() string
+    Render(raw []byte) (clean string, ok bool)
+}</pre>
+      <p>
+        claude's and cursor-agent's renderers both walk the NDJSON for the terminal
+        <code>{"type":"result","result":"..."}</code> line — the vendor's own already-synthesized final
+        answer, not a re-derivation — and use the <em>last</em> one found, same defensive "last, not first"
+        choice <code>LastUserInstruction</code> makes for the incoming direction. agy's renderer is
+        near-identity: agy has no <code>--output-format</code> flag at all, so its headless stdout is already
+        plain prose. <code>ok=false</code> (no result event found, or an empty one) means fall back to the
+        raw text — never guess a clean answer that might not be there.
+      </p>
+      <p>
+        <code>vendors.ResolveDelegate</code> renders through this by default (<code>clean</code>), controlled
+        by a single Vendors-page toggle (Settings → <em>Delegated task replies</em>), not a per-message flag —
+        an operator/debugging posture, not a per-task choice. Raw mode always shows the unformatted transcript;
+        clean mode falls back to raw <em>with a visible note</em> when a renderer declines, so degraded
+        formatting is never silently indistinguishable from a normal short answer.
+      </p>
+
+      <h2 id="checklist">Adding a fourth vendor</h2>
+      <p>
+        The point of all three interfaces: adding a vendor is new files, never a diff to shared dispatch
+        code. A complete addition touches:
+      </p>
+      <ul>
+        <li><code>configs/vendor_candidates.yaml</code> — probe args, print flag, <code>default</code>/<code>resume</code>/<code>interactive</code> templates (data, not Go).</li>
+        <li><code>internal/vendors/adapter.go</code> — a <code>VendorAdapter</code> for denial detection, session-id/edit-view extraction (execution layer, not wire format).</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;.go</code> — a <code>ParseXTurn</code>, if the vendor's own stdout needs structuring beyond plain text.</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;_origin.go</code> — an <code>OriginAdapter</code>, <strong>only once its real live wire shape is confirmed</strong> — see the confidence column above; never registered on a guess.</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;_render.go</code> — a <code>DelegateRenderer</code>, once its headless output shape is confirmed.</li>
+      </ul>
+      <p>None of the five require touching <code>internal/mitm/delegate_handler.go</code>, <code>vendors.ResolveDelegate</code>, or any other shared dispatch code at all.</p>
+
+      <p>Full incident history and live-capture methodology: <code>planning/agent_cli_interop.md</code>. Delegation flag mechanics: <a href="delegation.html">Delegation</a>.</p>
+    </main>
+    <footer class="foot"><a href="mitm.html">← MITM</a> · <a href="context.html">Context →</a></footer>
+  </div>
+</body>
+</html>

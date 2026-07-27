@@ -4,7 +4,7 @@
 |---|---|---|
 | Gateway + MITM proxy | `internal/api`, `internal/mitm` | Working — dual-mode, CONNECT + TLS forge, transparent WinDivert redirector (Windows) |
 | Routing | `internal/router` | Working — explicit / sticky / classifier / Starlark / token-ceiling chain |
-| Cross-CLI delegation | `internal/vendors`, `internal/ngl` | Working for claude / cursor-agent / agy — headless run, denial detection, permission relay, resume |
+| Cross-CLI delegation | `internal/vendors`, `internal/ngl` | Working for claude / cursor-agent / agy — headless run, denial detection, permission relay, resume, `:interactive` hand-off to a real native session |
 | Backends + registry | `internal/backend` | Working — Ollama, vLLM, OpenAI, Anthropic |
 | Config hot-reload | `internal/config`, `backend.Reloader` | Working — rules/aliases/threshold/log/backends live; ports/MITM CA/hosts need restart |
 | Context graph | `internal/contextgraph`, `internal/contextkit` | Working — turn-family sticky, episode summaries, entity/community index |
@@ -21,7 +21,12 @@ The v1 CLI-interop pass removed the old `internal/loop`/`internal/swarm` hoop-an
 ## How to run
 
 ```bash
-go build -o glider.exe ./cmd/glider
+# Windows: -H=windowsgui suppresses the console window a plain build
+# would otherwise pop up behind the tray icon on every launch — Glider is
+# a background tray app, not a CLI, so it has no console output anyone's
+# meant to watch live (logs still work the same either way: text-format
+# to stdout, redirect to a file if you want them).
+go build -ldflags="-H=windowsgui" -o glider.exe ./cmd/glider
 ./glider.exe --config configs/glider.yaml
 
 # Pure local (Ollama only, no cloud keys):
@@ -41,7 +46,8 @@ go build -o glider.exe ./cmd/glider
 |---|---|
 | Path B tool-loop fulfill | Text-only local fulfill ships for Cursor's MITM Connect plane; tool-call frames are opt-in/partial (`mitm.agent_rpc_tool_codec`) — prefer the gateway path for Agent+tools |
 | `agy` resume prompt nudge | `WrapResumePrompt` did not reliably stop `agy`'s model from *describing* the now-granted action instead of performing it, in live testing — a documented negative result, not a guarantee |
-| Transparent interception | Windows/WinDivert only; live-verified end-to-end with an unmodified `claude -p`, but not yet exercised against cursor-agent/agy in that same zero-cooperation mode |
+| Transparent interception | Windows/WinDivert only. Live-verified end-to-end with an unmodified `claude -p`; cursor-agent's/agy's own wire shapes are now confirmed (`internal/ngl`'s `OriginAdapter`s, `planning/agent_cli_interop.md`) and the MITM proxy itself gained real HTTP/2 support (2026-07-28, needed for cursor-agent's h2-only completion host) — but a full live pass through Glider's *own* transparent redirector against cursor-agent/agy specifically (as opposed to the standalone `tools/wirecapture` used for wire-format research) hasn't been re-run since that fix |
+| Delegate response formatting | `ResolveDelegate` relays a vendor's raw captured output (e.g. Claude's stream-json NDJSON) as-is — fine for debugging, not for day-to-day reading; a proper per-vendor render through `internal/ngl`'s existing outgoing-direction parsers is scoped but not yet built |
 | Dashboard | Functional, not pixel-matched to any mock |
 
 See [planning/README.md](planning/README.md) for design-doc detail on each of these.

@@ -212,7 +212,7 @@ StickyLocal works similarly for `/local` families. Explicit `/local` can beat St
 | `internal/mitm/classify.go` | Path kinds (openai / agent_rpc / control / other) |
 | `internal/mitm/intercept.go` | Decrypted request → harness / fulfill |
 | `internal/mitm/redirector_windows.go` | WinDivert transparent redirection (Windows) |
-| `internal/mitm/delegate_handler.go` | `/vendor-name <prompt>` flag → cross-CLI delegation, ahead of normal interception |
+| `internal/mitm/delegate_handler.go` | trailing `<prompt> /vendor-name` flag → cross-CLI delegation, ahead of normal interception |
 | `internal/mitm/agent_fulfill_hub.go` | BidiAppend↔RunSSE correlation, StickyCloud/Local (Cursor) |
 | `internal/api/` | Path A OpenAI + Responses gateway |
 | `internal/cursorrpc/` | Cursor Connect/protobuf helpers, RunSSE encode |
@@ -244,7 +244,8 @@ See [STATUS.md](../STATUS.md) for the current gap list.
 |-----|-----|
 | [SETUP.md](SETUP.md) | Step-by-step install and CLI integration |
 | [CURSOR_CHECKLIST.md](CURSOR_CHECKLIST.md) | Verification checklist |
-| [site/path-a-b.html](site/path-a-b.html) | Product overview of gateway vs MITM |
+| [site/mitm.html](site/mitm.html) | Product overview of gateway vs MITM, transparent interception |
+| [site/delegation.html](site/delegation.html) | Cross-CLI delegation and permission relay |
 | [planning/cursor_agent_research.md](../planning/cursor_agent_research.md) | Cursor wire-format research |
 | [planning/transparent_redirector_design.md](../planning/transparent_redirector_design.md) | WinDivert design |
 | [planning/permission_relay_design.md](../planning/permission_relay_design.md) | Delegation / permission-relay design |

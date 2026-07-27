@@ -12,19 +12,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a class="active" href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -32,30 +25,31 @@
     <main class="prose">
       <div class="badge">Harness</div>
       <h1>Routing</h1>
-      <p>The router evaluates rules in <strong>descending priority</strong>. Explicit <code>/local</code> / <code>/cloud</code> always win. Token thresholds are a safety net — not the primary “is this simple?” signal.</p>
+      <p>The router evaluates rules in <strong>descending priority</strong>. Explicit <code>/local</code> / <code>/cloud</code> always win. Token thresholds are a safety net, not the primary "is this simple?" signal.</p>
 
-      <h2>Priority order (default intro config)</h2>
+      <h2>Priority order (default profile)</h2>
       <table>
         <tr><th>Pri</th><th>Rule</th><th>Effect</th></tr>
         <tr><td>100 / 99</td><td>Explicit <code>/local</code> <code>/fast</code> / <code>/cloud</code> <code>/heavy</code></td><td>Hard force</td></tr>
-        <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Composer wrap-ups → cloud/origin</td></tr>
+        <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Composer wrap-ups (Cursor MITM) → cloud/origin</td></tr>
         <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Tools / must-cloud → cloud; small tasks → local</td></tr>
         <tr><td>75</td><td>Complexity heuristic</td><td>Opt-in (<code>complexity.enabled</code>)</td></tr>
         <tr><td>50</td><td>Starlark scripts</td><td>e.g. refactor detect → local</td></tr>
-        <tr><td>10 / 5</td><td>Context size</td><td>&gt;8000 cloud / ≤8000 local</td></tr>
-        <tr><td>0</td><td>Default always</td><td>Cloud when unsure (or local in pure-local profile)</td></tr>
+        <tr><td>10 / 5</td><td>Context size</td><td>&gt;8000 tokens → cloud, else local</td></tr>
+        <tr><td>0</td><td>Default</td><td>Cloud when unsure (local in the pure-local profile)</td></tr>
       </table>
+      <p>A delegate flag (<code>/claude</code>, <code>/cursor-agent</code>, <code>/agy</code>) is claimed before any of this runs — see <a href="delegation.html">Delegation</a>.</p>
 
-      <h2>MITM turn policy</h2>
+      <h2>Cursor MITM turn policy</h2>
       <ul>
-        <li><strong>Turn-family sticky</strong> — after <code>/cloud</code> (or DecideLocal→cloud), reply-summary / title / mid-turn subagents stay origin for TTL + parent-run grace.</li>
-        <li><strong>Deny-local</strong> for non-TipTap follow-ons while StickyCloud is live.</li>
-        <li><strong>Next user TipTap message</strong> re-decides (can go local again).</li>
-        <li><strong>Tool follow-up</strong> — child tools re-evaluate allowlist/denylist.</li>
+        <li><strong>Turn-family sticky</strong> — after <code>/cloud</code> (or a cloud <code>DecideLocal</code> decision), reply-summary/title/mid-turn subagents stay origin for a TTL + parent-run grace.</li>
+        <li><strong>Deny-local</strong> for non-fresh-user follow-ons while sticky is live.</li>
+        <li><strong>Next real user message</strong> can re-decide (may go local again).</li>
+        <li><strong>Tool follow-up</strong> — child tool calls re-evaluate allow/deny.</li>
       </ul>
-      <p>Details: <code>planning/routing_session_policy.md</code></p>
+      <p>This mechanism is specific to Cursor's own MITM protocol — detail in <a href="mitm.html#sticky">MITM</a>. Full policy: <code>planning/routing_session_policy.md</code>.</p>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a></footer>
+    <footer class="foot"><a href="architecture.html">← Architecture</a> · <a href="delegation.html">Delegation →</a></footer>
   </div>
 </body>
 </html>

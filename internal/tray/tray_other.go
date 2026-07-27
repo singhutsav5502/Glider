@@ -15,7 +15,7 @@ func platformRun(onReady, onExit func()) {
 
 // platformSetupMenu is a no-op — no tray, no menu to click. OS signals
 // remain the only shutdown trigger on this platform.
-func platformSetupMenu(onExitClick func()) {}
+func platformSetupMenu(onOpenDashboard, onExitClick func()) {}
 
 func platformQuit() {
 	close(quitCh)

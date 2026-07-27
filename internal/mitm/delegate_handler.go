@@ -2,7 +2,6 @@ package mitm
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,7 +12,7 @@ import (
 )
 
 // DelegateHandler is the transparent/MITM-path counterpart of
-// internal/api's Messages route: same "/vendor-name <prompt>" flag
+// internal/api's Messages route: same trailing "<prompt> /vendor-name" flag
 // convention (vendors.ParseDelegateCommand), same dynamic vendor registry,
 // applied to real OS-level-intercepted /v1/messages traffic instead of
 // gateway traffic reached via ANTHROPIC_BASE_URL. Deliberately flag-gated,
@@ -27,12 +26,20 @@ type DelegateHandler struct {
 }
 
 // TryHandle implements LocalHandler. Only claims requests it can actually
-// answer — anything not on the /v1/messages path, or without a matching
-// delegate flag, returns handled=false so the caller falls through to
-// whatever else it would otherwise do (origin passthrough, another
-// LocalHandler in the chain).
+// answer. Recognition is dispatched through ngl.ResolveOriginAdapter —
+// each registered vendor's own OriginAdapter reports whether it recognizes
+// this request's host/path shape as its own front-CLI traffic, so this
+// function never compares r.URL.Path or r.Host against a literal vendor
+// name. Fixed 2026-07-27: this used to hardcode `r.URL.Path != "/v1/messages"`
+// as its entry gate, which only happens to be true when Claude Code is the
+// front CLI — cursor-agent's and agy's own real traffic is never that
+// shape, so typing a delegate flag directly into either of those CLIs
+// silently did nothing (the gate rejected the request before any
+// flag-parsing ran). See internal/ngl/origin.go's OriginAdapter doc
+// comment for the full incident writeup.
 func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (bool, error) {
-	if r.URL.Path != "/v1/messages" {
+	adapter := ngl.ResolveOriginAdapter(r)
+	if adapter == nil {
 		return false, nil
 	}
 
@@ -52,13 +59,12 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
-	var req struct {
-		Model    string          `json:"model"`
-		Stream   bool            `json:"stream"`
-		Messages json.RawMessage `json:"messages"`
+	userText, model, stream, ok, err := adapter.ExtractUserInstruction(body)
+	if err != nil {
+		return false, fmt.Errorf("mitm delegate: extract instruction: %w", err)
 	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return false, nil // not a shape we understand — let origin handle it
+	if !ok {
+		return false, nil // recognized front, but no confirmed way to isolate human text — let origin handle it
 	}
 
 	regPath, err := vendors.DefaultRegistryPath()
@@ -70,23 +76,9 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 		return false, nil
 	}
 
-	// Origin vendor identification is generalized per-request (2026-07-26)
-	// — resolved from the real OS process on the other end of the
-	// connection (vendors.ResolveOriginVendorName), not hardcoded to
-	// "claude". "" (unresolvable, or a process matching no registered
-	// vendor) is a safe, valid result: ngl.LastUserInstruction already
-	// treats an unrecognized vendor name as "no scaffold stripping
-	// needed" rather than erroring — see planning/adapter_boundary.md §4
-	// for the history of why this was hardcoded in the first place.
-	originVendorName := vendors.ResolveOriginVendorName(r.RemoteAddr, reg)
-	userText, err := ngl.LastUserInstruction(originVendorName, req.Messages)
-	if err != nil {
-		return false, nil // not a shape we understand — let origin handle it
-	}
-
 	originPID := vendors.ResolveOriginPID(r.RemoteAddr)
 
-	// "/workspace <path>" is handled before the vendor-scoped delegate flag
+	// A trailing "/workspace" flag is handled before the vendor-scoped delegate flag
 	// — it's not vendor-specific (see ParseWorkspaceCommand's doc comment)
 	// and only makes sense to act on when the origin process is actually
 	// identifiable, since it's keyed by PID.
@@ -97,10 +89,8 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 		vendors.SetWorkspaceForPID(originPID, path)
 		h.logInfo("mitm delegate: workspace set", "pid", originPID, "dir", path)
 		replyText := fmt.Sprintf("Workspace set to %q for this session. Resend your delegate request.", path)
-		if req.Stream {
-			writeAnthropicSSE(w, req.Model, replyText)
-		} else {
-			writeAnthropicJSON(w, req.Model, replyText)
+		if err := adapter.WriteReply(w, model, replyText, stream); err != nil {
+			h.logInfo("mitm delegate: write reply failed", "vendor", adapter.Vendor(), "err", err)
 		}
 		return true, nil
 	}
@@ -110,14 +100,12 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 		return false, nil // no delegate flag present — real origin answers as normal
 	}
 
-	h.logInfo("mitm delegate: routing to vendor", "vendor", vendor.Name, "template", templateName, "host", r.Host, "originPID", originPID)
+	h.logInfo("mitm delegate: routing to vendor", "front", adapter.Vendor(), "vendor", vendor.Name, "template", templateName, "host", r.Host, "originPID", originPID)
 
 	replyText := vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
 
-	if req.Stream {
-		writeAnthropicSSE(w, req.Model, replyText)
-	} else {
-		writeAnthropicJSON(w, req.Model, replyText)
+	if err := adapter.WriteReply(w, model, replyText, stream); err != nil {
+		h.logInfo("mitm delegate: write reply failed", "vendor", adapter.Vendor(), "err", err)
 	}
 	return true, nil
 }
@@ -126,62 +114,6 @@ func (h *DelegateHandler) logInfo(msg string, args ...any) {
 	if h.Log != nil {
 		h.Log.Info(msg, args...)
 	}
-}
-
-func writeAnthropicJSON(w http.ResponseWriter, model, text string) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":            "msg_glider_delegate",
-		"type":          "message",
-		"role":          "assistant",
-		"model":         model,
-		"content":       []map[string]any{{"type": "text", "text": text}},
-		"stop_reason":   "end_turn",
-		"stop_sequence": nil,
-		"usage":         map[string]any{"input_tokens": 0, "output_tokens": 0},
-	})
-}
-
-func writeAnthropicSSE(w http.ResponseWriter, model, text string) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeAnthropicJSON(w, model, text)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	send := func(event string, data map[string]any) {
-		payload, _ := json.Marshal(data)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
-		flusher.Flush()
-	}
-
-	send("message_start", map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id": "msg_glider_delegate", "type": "message", "role": "assistant",
-			"model": model, "content": []any{}, "stop_reason": nil,
-			"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
-		},
-	})
-	send("content_block_start", map[string]any{
-		"type": "content_block_start", "index": 0,
-		"content_block": map[string]any{"type": "text", "text": ""},
-	})
-	send("content_block_delta", map[string]any{
-		"type": "content_block_delta", "index": 0,
-		"delta": map[string]any{"type": "text_delta", "text": text},
-	})
-	send("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
-	send("message_delta", map[string]any{
-		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
-		"usage": map[string]any{"output_tokens": len(text) / 4},
-	})
-	send("message_stop", map[string]any{"type": "message_stop"})
 }
 
 // ChainHandler tries each Handler in order, using the first one that

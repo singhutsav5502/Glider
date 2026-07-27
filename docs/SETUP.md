@@ -111,19 +111,19 @@ Deep dive: [`docs/MITM_NETWORK.md`](MITM_NETWORK.md).
 
 ## 7. Delegate a task to another CLI
 
-From inside any CLI Glider is routing, a message with a vendor flag hands the prompt to a different installed CLI:
+From inside any CLI Glider is routing, a message with a vendor flag hands the prompt to a different installed CLI. The flag goes at the **end** of the message, not the start — some CLIs (Claude Code confirmed) read a leading `/` as their own local slash command and never send the message at all:
 
 ```
-/claude fix the failing test in internal/foo
-/cursor-agent refactor this function
-/agy summarize recent commits
+fix the failing test in internal/foo /claude
+refactor this function /cursor-agent
+summarize recent commits /agy
 ```
 
-Glider runs that CLI headless. If it pauses for a permission prompt, Glider relays the prompt back as the reply along with a resume token:
+Glider runs that CLI headless. If it pauses for a permission prompt, Glider relays the prompt back as the reply along with a resume token — reply with the token first, then the flag:
 
 ```
-/claude:allow <token>
-/claude:deny <token>
+<token> /claude:allow
+<token> /claude:deny
 ```
 
 The dashboard's **Vendors** tab lists discovered CLIs, lets you rescan (`configs/vendor_candidates.yaml` defines the candidates), enable/disable one, and set a default workspace directory for delegated runs. Design detail: [`planning/permission_relay_design.md`](../planning/permission_relay_design.md).

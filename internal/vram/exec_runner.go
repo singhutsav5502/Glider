@@ -1,12 +1,18 @@
 package vram
 
-import "os/exec"
+import (
+	"os/exec"
+
+	"github.com/glider-ai/glider/internal/procutil"
+)
 
 // ExecRunner runs commands via os/exec (used by NvidiaSmiMonitor in production).
 type ExecRunner struct{}
 
 func (ExecRunner) Run(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	cmd := exec.Command(name, args...)
+	procutil.HideWindow(cmd)
+	return cmd.CombinedOutput()
 }
 
 // NewDefaultNvidiaSmiMonitor creates a monitor backed by the real nvidia-smi binary.

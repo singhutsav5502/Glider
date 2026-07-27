@@ -41,11 +41,12 @@ var defaultResumeStore = &resumeStore{pending: map[string]PendingResume{}}
 
 // RegisterPendingResume stores a denied run's state and returns a short
 // correlation token for it — embedded in the "ask the human" text
-// (FormatDenialSummary) and round-tripped back via "/vendor:allow <token>"
-// or "/vendor:deny <token>", reusing ParseDelegateCommand's existing
-// ":<template>" flag syntax rather than inventing a second parser: "allow"
-// and "deny" are handled as control-flow markers by the caller before ever
-// reaching Vendor.ResolveTemplate, not real CommandTemplates.
+// (FormatDenialSummary) and round-tripped back via "<token> /vendor:allow"
+// or "<token> /vendor:deny", reusing ParseDelegateCommand's existing
+// trailing ":<template>" flag syntax rather than inventing a second
+// parser: "allow" and "deny" are handled as control-flow markers by the
+// caller before ever reaching Vendor.ResolveTemplate, not real
+// CommandTemplates.
 func RegisterPendingResume(v Vendor, prompt, sessionID, cwd string, denials []Denial) string {
 	token := newToken()
 	defaultResumeStore.mu.Lock()
@@ -110,27 +111,62 @@ func ResolveDelegate(ctx context.Context, vendor Vendor, templateName, prompt st
 	case "deny":
 		return resolveDeny(strings.TrimSpace(prompt))
 	default:
-		opts := RunOptions{Template: templateName}
-		if originPID != 0 {
-			dir, ok := defaultWorkspaceStore.Lookup(originPID)
-			if !ok {
-				return fmt.Sprintf("I don't know which directory to run %s in for this session yet. "+
-					"Reply with \"/workspace <path>\" (e.g. \"/workspace .\" for the current directory) to set it once, "+
-					"then resend your request. You can also set a default workspace from the dashboard's Vendors page.", vendor.Name)
-			}
-			opts.Cwd = dir
+		tmpl, ok := vendor.ResolveTemplate(templateName)
+		if !ok {
+			return fmt.Sprintf("%s has no %q command template.", vendor.Name, templateName)
 		}
 
-		out, runErr := RunWithOptions(ctx, vendor, prompt, opts)
+		var cwd string
+		if originPID != 0 {
+			dir, found := defaultWorkspaceStore.Lookup(originPID)
+			if !found {
+				return fmt.Sprintf("I don't know which directory to run %s in for this session yet. "+
+					"Reply with \"<path> /workspace\" (e.g. \". /workspace\" for the current directory) to set it once, "+
+					"then resend your request. You can also set a default workspace from the dashboard's Vendors page.", vendor.Name)
+			}
+			cwd = dir
+		}
+
+		if tmpl.Mode == "interactive" {
+			return resolveInteractive(vendor, tmpl, prompt, cwd)
+		}
+
+		out, runErr := RunWithOptions(ctx, vendor, prompt, RunOptions{Template: templateName, Cwd: cwd})
 		if runErr != nil {
 			return fmt.Sprintf("Delegation to %s failed: %s", vendor.Name, runErr.Error())
 		}
 		if len(out.Denials) > 0 {
-			token := RegisterPendingResume(vendor, prompt, out.SessionID, opts.Cwd, out.Denials)
+			// Raw text, not renderDelegateReply: a denied run stopped
+			// before reaching a terminal result event by definition, so
+			// there is no clean final answer to extract — trying anyway
+			// would just append a confusing "couldn't parse" note right
+			// before the actual permission-denial message.
+			token := RegisterPendingResume(vendor, prompt, out.SessionID, cwd, out.Denials)
 			return FormatDenialSummary(vendor.Name, token, out.Denials, out.Text)
 		}
-		return out.Text + FormatEditSummary(vendor.Name, out.EditViews)
+		return renderDelegateReply(vendor.Name, out.Text) + FormatEditSummary(vendor.Name, out.EditViews)
 	}
+}
+
+// resolveInteractive hands off to LaunchInteractiveFunc instead of
+// RunWithOptions — there is no stdout to capture (a genuinely interactive
+// session, not a headless one), so unlike the default case above there is
+// no RunResult, no denial detection, and nothing to relay back except a
+// short confirmation that the window was opened. This is deliberately NOT
+// Path B (planning/permission_relay_design.md §3, still unbuilt): no pty
+// relay, no correlation back into this chat, no way for Glider to see or
+// act on anything that happens in that window from here on.
+func resolveInteractive(vendor Vendor, tmpl CommandTemplate, prompt, cwd string) string {
+	args := substituteTemplateArgs(tmpl.Args, prompt, "", cwd)
+	if err := LaunchInteractiveFunc(vendor, cwd, args...); err != nil {
+		return fmt.Sprintf("Could not open %s interactively: %s", vendor.Name, err.Error())
+	}
+	where := cwd
+	if where == "" {
+		where = "its default directory"
+	}
+	return fmt.Sprintf("Opened %s in a new interactive window (in %s) with your task queued as its first message. "+
+		"Continue there directly — this chat won't see anything from that session.", vendor.Name, where)
 }
 
 // resolveAllow grants whatever scoped, vendor-specific permission the
@@ -170,7 +206,7 @@ func resolveAllow(ctx context.Context, token string) string {
 		newToken := RegisterPendingResume(pr.Vendor, pr.Prompt, out.SessionID, pr.Cwd, out.Denials)
 		return FormatDenialSummary(pr.Vendor.Name, newToken, out.Denials, out.Text) + revertNote
 	}
-	return out.Text + FormatEditSummary(pr.Vendor.Name, out.EditViews) + revertNote
+	return renderDelegateReply(pr.Vendor.Name, out.Text) + FormatEditSummary(pr.Vendor.Name, out.EditViews) + revertNote
 }
 
 func resolveDeny(token string) string {

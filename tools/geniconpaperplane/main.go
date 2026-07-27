@@ -17,14 +17,18 @@ import (
 	"os"
 )
 
-// mainColor/foldColor: a clean, saturated blue with a darker fold accent
-// — reads clearly against both light and dark system tray backgrounds
-// (unlike pure white/black, which disappears against one or the other),
-// and the two-tone split reads as a folded-paper crease rather than a
-// flat, generic arrow/play-button triangle.
+// mainColor/foldColor: white body with a slate-grey fold accent — high
+// contrast between the two tones themselves (unlike the original
+// blue/darker-blue pair, which read closer together), reading as a
+// folded-paper crease rather than a flat, generic arrow/play-button
+// triangle. A thin dark outline (outlineColor, see renderPlane) keeps the
+// white body from disappearing against a light tray/title-bar
+// background, since pure white with no edge definition at all does
+// exactly that.
 var (
-	mainColor = color.RGBA{R: 0x4A, G: 0xA3, B: 0xF5, A: 0xFF}
-	foldColor = color.RGBA{R: 0x25, G: 0x63, B: 0xAD, A: 0xFF}
+	mainColor    = color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+	foldColor    = color.RGBA{R: 0x6B, G: 0x72, B: 0x7D, A: 0xFF}
+	outlineColor = color.RGBA{R: 0x20, G: 0x22, B: 0x26, A: 0xFF}
 )
 
 // point is a normalized (0..1) coordinate, scaled to each target canvas
@@ -87,7 +91,9 @@ func main() {
 // mainShape renders as the darker accent color.
 func renderPlane(size int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
-	const margin = 0.04
+	// margin shrunk from the original 0.04 — the shape now fills nearly
+	// the whole canvas instead of leaving a wide, mostly-empty border.
+	const margin = 0.01
 	inset := func(pts []point) []point {
 		out := make([]point, len(pts))
 		for i, p := range pts {
@@ -98,19 +104,71 @@ func renderPlane(size int) *image.RGBA {
 	main_ := inset(mainShape)
 	fold := inset(foldShape)
 
-	for py := 0; py < size; py++ {
+	inside := make([]bool, size*size)
+	for py := range size {
 		fy := (float64(py) + 0.5) / float64(size)
-		for px := 0; px < size; px++ {
+		for px := range size {
 			fx := (float64(px) + 0.5) / float64(size)
-			switch {
-			case pointInPolygon(fx, fy, fold):
+			if pointInPolygon(fx, fy, main_) || pointInPolygon(fx, fy, fold) {
+				inside[py*size+px] = true
+			}
+		}
+	}
+
+	for py := range size {
+		fy := (float64(py) + 0.5) / float64(size)
+		for px := range size {
+			if !inside[py*size+px] {
+				continue
+			}
+			fx := (float64(px) + 0.5) / float64(size)
+			if pointInPolygon(fx, fy, fold) {
 				img.SetRGBA(px, py, foldColor)
-			case pointInPolygon(fx, fy, main_):
+			} else {
 				img.SetRGBA(px, py, mainColor)
 			}
 		}
 	}
+
+	drawOutline(img, inside, size)
 	return img
+}
+
+// drawOutline dilates the shape's own mask by outlineWidth pixels and
+// paints the newly-covered ring outlineColor — a white body with no edge
+// definition at all disappears against a light tray/title-bar background,
+// which is exactly the failure mode a plain white silhouette would have
+// here. Cheap raster dilation, not a true vector stroke, but crisp enough
+// at icon sizes and needs no new dependency.
+func drawOutline(img *image.RGBA, inside []bool, size int) {
+	outlineWidth := max(size/32, 1)
+	for py := range size {
+		for px := range size {
+			if inside[py*size+px] {
+				continue
+			}
+			near := false
+			for dy := -outlineWidth; dy <= outlineWidth && !near; dy++ {
+				ny := py + dy
+				if ny < 0 || ny >= size {
+					continue
+				}
+				for dx := -outlineWidth; dx <= outlineWidth; dx++ {
+					nx := px + dx
+					if nx < 0 || nx >= size {
+						continue
+					}
+					if inside[ny*size+nx] {
+						near = true
+						break
+					}
+				}
+			}
+			if near {
+				img.SetRGBA(px, py, outlineColor)
+			}
+		}
+	}
 }
 
 // pointInPolygon is the standard ray-casting / even-odd crossing test

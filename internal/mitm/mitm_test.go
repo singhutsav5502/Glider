@@ -1,12 +1,14 @@
 package mitm_test
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -256,4 +258,164 @@ func containsHTTP200(s string) bool {
 
 func stringContains(s, sub string) bool {
 	return strings.Contains(s, sub)
+}
+
+// failingRedirector always fails Start — stands in for WinDivertOpen
+// failing on a non-elevated process, the real, live-reported cause this
+// test guards against.
+type failingRedirector struct{}
+
+func (failingRedirector) Start(ctx context.Context, cfg mitm.RedirectConfig) error {
+	return fmt.Errorf("simulated: WinDivertOpen requires Administrator privileges")
+}
+func (failingRedirector) Stop() error { return nil }
+
+// TestProxyStart_TransparentRedirectorFailureIsNonFatal is the direct
+// regression test for a real, live-reported bug (2026-07-28): a
+// double-clicked, non-elevated glider.exe vanished instantly with no tray
+// icon and no visible error. Root cause: mitm.transparent defaults to true
+// (2026-07-26), and WinDivertOpen requires Administrator privileges to
+// load its kernel driver — a failure that used to make Proxy.Start return
+// an error, which main.go turned into os.Exit(1), killing a process that
+// had already successfully started its gateway and dashboard over a
+// failure in one optional enhancement. Proxy.Start must now succeed (and
+// the CONNECT-based proxy must still actually work) even when the
+// transparent redirector can't start at all.
+func TestProxyStart_TransparentRedirectorFailureIsNonFatal(t *testing.T) {
+	upLeafAuth, err := mitm.GenerateAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	upLeaf, err := upLeafAuth.CertificateForHost("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upLn, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{*upLeaf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upLn.Close()
+	go http.Serve(upLn, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "upstream-ok")
+	}))
+
+	auth, err := mitm.GenerateAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &mitm.Proxy{
+		Addr:            "127.0.0.1:0",
+		Authority:       auth,
+		Hosts:           mitm.NewHostMatcher([]string{"127.0.0.1"}),
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		PassthroughOnly: true,
+		Redirector:      failingRedirector{},
+		TransparentPort: 0, // set below once we know a free port isn't needed — see note
+	}
+	// A nonzero TransparentPort is required to even attempt starting the
+	// redirector (see Proxy.Start's own guard) — any free port works
+	// since failingRedirector never actually uses it.
+	proxy.TransparentPort = 39001
+
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("expected Start() to succeed despite a failing transparent redirector, got: %v", err)
+	}
+	defer proxy.Shutdown(t.Context())
+
+	// The CONNECT-based proxy must still genuinely work.
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(auth.CertPEM())
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxy.ListenAddr()}),
+		TLSClientConfig: &tls.Config{
+			RootCAs:    pool,
+			ServerName: "127.0.0.1",
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	resp, err := client.Get("https://" + upLn.Addr().String() + "/v1/ping")
+	if err != nil {
+		t.Fatalf("CONNECT-based proxy should still work: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "upstream-ok" {
+		t.Fatalf("body=%q", body)
+	}
+}
+
+// TestMITMPassthroughHTTP2 is the direct regression test for the real,
+// live-confirmed bug fixed 2026-07-28: mitmSession/passthroughHTTPS used to
+// offer no ALPN at all to the client side and assume HTTP/1.1 framing
+// unconditionally against the real origin — broken against any genuinely
+// HTTP/2-only peer (confirmed live: cursor-agent's actual completion-plane
+// host, agentn.global.api5.cursor.sh, negotiates h2 unconditionally — see
+// planning/agent_cli_interop.md's "cursor-agent exact completion-plane RPC
+// name" entry). Uses a real HTTP/2 origin (httptest.Server.EnableHTTP2) and
+// a real HTTP/2-capable client Transport, both going through Glider's own
+// CONNECT proxy — proves the whole path negotiates and speaks genuine h2,
+// not just a same-shape HTTP/1.1 response that happens to pass a header check.
+func TestMITMPassthroughHTTP2(t *testing.T) {
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Proto", r.Proto)
+		_, _ = io.WriteString(w, "h2-upstream-ok")
+	}))
+	upstream.EnableHTTP2 = true
+	upstream.StartTLS()
+	defer upstream.Close()
+
+	upURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := mitm.GenerateAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &mitm.Proxy{
+		Addr:      "127.0.0.1:0",
+		Authority: auth,
+		Hosts:     mitm.NewHostMatcher([]string{upURL.Hostname()}),
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS12,
+		},
+		PassthroughOnly: true,
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Shutdown(t.Context())
+
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(auth.CertPEM())
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxy.ListenAddr()}),
+		TLSClientConfig: &tls.Config{
+			RootCAs:    pool,
+			ServerName: upURL.Hostname(),
+			MinVersion: tls.VersionTLS12,
+		},
+		ForceAttemptHTTP2: true,
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+
+	resp, err := client.Get(upstream.URL + "/v1/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("got Proto=%q, want HTTP/2 end-to-end through the MITM proxy", resp.Proto)
+	}
+	if resp.Header.Get("X-Proto") != "HTTP/2.0" {
+		t.Fatalf("origin itself saw Proto=%q, want HTTP/2.0 — the MITM hop must not have downgraded the request", resp.Header.Get("X-Proto"))
+	}
+	if string(body) != "h2-upstream-ok" {
+		t.Fatalf("body=%q", body)
+	}
 }

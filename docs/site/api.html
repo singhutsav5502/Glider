@@ -12,19 +12,12 @@
     <nav class="nav">
       <a class="brand" href="index.html">Glider</a>
       <a href="index.html">Home</a>
-      <span class="nav-section">C4</span>
-      <a href="c1-context.html">C1</a>
-      <a href="c2-containers.html">C2</a>
-      <a href="c3-components.html">C3</a>
-      <a href="c4-code.html">C4</a>
       <a href="architecture.html">Architecture</a>
-      <a href="architecture-deep.html">Deep dive</a>
-      <a href="data-flow.html">Data flow</a>
-      <a href="modules.html">Modules</a>
-      <a href="concurrency.html">Concurrency</a>
       <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
       <a href="context.html">Context</a>
-      <a href="path-a-b.html">Path A / B</a>
       <a href="pure-local.html">Pure local</a>
       <a class="active" href="api.html">API</a>
       <a href="mcp.html">Tools &amp; MCP</a>
@@ -38,79 +31,69 @@
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
         <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Full config JSON; <code>?format=yaml</code></td></tr>
+        <tr><td>GET</td><td><code>/api/validate</code></td><td>Validate a config without applying it</td></tr>
         <tr><td>GET</td><td><code>/api/vram</code></td><td>GPUs + discovered models</td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/gpu-assignments</code></td><td>Per-model GPU assignment</td></tr>
+        <tr><td>GET</td><td><code>/api/models</code> · <code>/api/models/{id}</code></td><td>List / update models</td></tr>
         <tr><td>GET</td><td><code>/api/metrics</code></td><td>Route counts, local/cloud %</td></tr>
       </table>
 
-      <h2>Context</h2>
+      <h2 id="context">Context</h2>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
         <tr><td>GET</td><td><code>/api/context/recent</code></td><td>Recent events</td></tr>
-        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/api/context/turns/{id}</code></td><td>Turn families</td></tr>
-        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/api/context/export</code></td><td>Episode pack</td></tr>
+        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/turns/{id}</code></td><td>Turn families</td></tr>
+        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/export</code></td><td>Episode pack</td></tr>
         <tr><td>POST</td><td><code>/api/context/prune</code></td><td>Retention prune</td></tr>
-        <tr><td>POST</td><td><code>/api/context/index-tree</code></td><td><code>{"root":".","turn_id":"…"}</code></td></tr>
-        <tr><td>POST</td><td><code>/api/context/index-symbols</code></td><td>Symbol ingest</td></tr>
-        <tr><td>GET</td><td><code>/api/context/communities</code></td><td><code>?turn_id=</code></td></tr>
-        <tr><td>GET</td><td><code>/api/context/explain</code></td><td><code>?turn_id=&amp;id=</code></td></tr>
+        <tr><td>POST</td><td><code>/api/context/index-tree</code> · <code>/index-symbols</code></td><td>Ingest file tree / symbols</td></tr>
+        <tr><td>GET</td><td><code>/api/context/communities</code> · <code>/explain</code></td><td><code>?turn_id=</code></td></tr>
+      </table>
+
+      <h2 id="vendors">Vendors &amp; hot-swap</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Persisted vendor registry (discovered CLIs, templates, default workspace)</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Rescan <code>configs/vendor_candidates.yaml</code></td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Set the default delegate workspace directory</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Toggle a vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Update a vendor's command templates</td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>/{name}</code></td><td>Hot-swap registry</td></tr>
       </table>
 
       <h2 id="workspace">Workspace</h2>
-      <p>Browse the tools sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>. Guide: <a href="mcp.html#workspace">Tools &amp; MCP</a>.</p>
+      <p>Browses the tools/delegation sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>.</p>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Root listing + workspace path</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Root listing</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that run</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>List a relative directory</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?file=runs/&lt;id&gt;/out/report.md</code></td><td>Capped text preview (<code>limit=</code>)</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?file=…&amp;limit=</code></td><td>Capped text preview</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Unified diff of two paths</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;path=runs/&lt;id&gt;/work/x</code></td><td>Git diff if <code>.git</code> present</td></tr>
       </table>
-      <pre>GET /api/workspace?run=run-3f9c1a
-GET /api/workspace?file=runs/run-3f9c1a/out/findings.md&amp;limit=8000</pre>
+
+      <h2 id="mcp">MCP</h2>
+      <p>Live <code>internal/mcp.Manager</code>. UI: Dashboard → <strong>MCP</strong>. Guide: <a href="mcp.html">Tools &amp; MCP</a>.</p>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers</code> · <code>/{id}</code> · <code>/{id}/tools</code></td><td>Server status + tool catalog</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code> · <code>/disconnect</code> · <code>/reconnect</code> · <code>/refresh</code></td><td></td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token / connection status</td></tr>
+        <tr><td>POST/DELETE</td><td><code>/api/mcp/github/token</code></td><td>Paste PAT / forget token</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code> · <code>/poll</code></td><td>OAuth device flow</td></tr>
+      </table>
 
       <h2>Agent logs</h2>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Ring buffer; entries include monotonic <code>seq</code>. Optional <code>after_seq</code>/<code>afterSeq</code> returns only <code>Seq &gt; n</code> (oldest-first catch-up; empty when nothing new)</td></tr>
-        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm</code></td><td>List instance ids</td></tr>
+        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Ring buffer, monotonic <code>seq</code>; <code>after_seq</code> for catch-up</td></tr>
         <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Clear one ring</td></tr>
       </table>
-      <p class="note">The <code>agentlog</code> store and its <code>hoop</code>/<code>swarm</code> scopes still exist in <code>internal/agentlog</code>, but nothing currently calls <code>Append</code> — the hoop/swarm runners were its only writers, and both are gone. These endpoints work but return empty until something new writes to this store.</p>
-
-      <h2>Vendors &amp; hot-swap</h2>
-      <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Persisted vendor registry (discovered CLIs, templates, default workspace)</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Rescan <code>configs/vendor_candidates.yaml</code>, persist result</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Set the default delegate workspace directory</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Toggle a vendor</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Update a vendor's command templates</td></tr>
-        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>.../{name}</code></td><td>Hot-swap registry</td></tr>
-      </table>
-
-      <h2 id="mcp">MCP</h2>
-      <p>Live <code>internal/mcp.Manager</code> (not stubs). UI: Dashboard → <strong>MCP</strong> tab. Guide: <a href="mcp.html">Tools &amp; MCP</a>.</p>
-      <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/mcp/servers</code></td><td>Configured servers + status + GitHub summary</td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/servers/{id}</code></td><td>One server status</td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/servers/{id}/tools</code></td><td>Live tools, or GitHub catalog + <code>message</code>/<code>health_error</code></td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code></td><td>Connect configured server</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/disconnect</code></td><td>Disconnect session</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/reconnect</code></td><td>Disconnect + connect</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/refresh</code></td><td>Reconnect if up, else connect</td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token / HTTP / stdio / device-flow readiness + hint</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/github/token</code></td><td>Paste PAT → save + connect</td></tr>
-        <tr><td>DELETE</td><td><code>/api/mcp/github/token</code></td><td>Forget token + disconnect</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code></td><td>Start OAuth device flow</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/github/device/poll</code></td><td>Poll device flow; on auth connect HTTP</td></tr>
-      </table>
+      <p class="note">This store still exists in <code>internal/agentlog</code> but nothing currently writes to it — its only writers were the hoop/swarm runners, both removed. The endpoints work but return empty.</p>
 
       <h2>Gateway OpenAI surface</h2>
-      <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code></p>
+      <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code> · <code>/healthz</code></p>
     </main>
-    <footer class="foot"><a href="index.html">← Home</a></footer>
+    <footer class="foot"><a href="pure-local.html">← Pure local</a> · <a href="mcp.html">Tools &amp; MCP →</a></footer>
   </div>
 </body>
 </html>

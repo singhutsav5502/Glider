@@ -262,6 +262,74 @@ func TestAgyGrant_AlsoGrantsInMatchingProjectFile(t *testing.T) {
 	}
 }
 
+// TestAgyGrant_AlsoGrantsInProjectFileUsingBareFolderURI is the regression
+// test for a real bug found live: findProjectFileForDir originally only
+// checked resources[].gitFolder.folderUri, silently missing the other
+// shape real agy project files actually use — a bare resources[].folderUri
+// with no "gitFolder" wrapper (confirmed on-disk for several
+// non-git-bound projects). That meant the per-project half of a grant
+// silently no-op'd for any such directory while the global grant still
+// succeeded, masking the miss. Same test as
+// TestAgyGrant_AlsoGrantsInMatchingProjectFile, but with the bare shape.
+func TestAgyGrant_AlsoGrantsInProjectFileUsingBareFolderURI(t *testing.T) {
+	isolateAgySettings(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	projectsDir := filepath.Join(home, ".gemini", "config", "projects")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	workDir := t.TempDir()
+	uri, err := vendors.DirToFileURIForTest(workDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	projectFile := filepath.Join(projectsDir, "proj-bare.json")
+	originalProject := []byte(`{
+  "id": "proj-bare",
+  "name": "scratch-project",
+  "projectResources": {"resources": [{"folderUri": "` + uri + `"}]}
+}`)
+	if err := os.WriteFile(projectFile, originalProject, 0o644); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a := agyGrantAdapter(t)
+	revert, err := a.GrantResumePermission(vendors.Vendor{Name: "agy"}, workDir, []vendors.Denial{{ToolName: "read_file"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(projectFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	grants, _ := doc["permissionGrants"].(map[string]any)
+	inner, _ := grants["permissionGrants"].(map[string]any)
+	allow, _ := inner["allow"].([]any)
+	if len(allow) != 1 || allow[0] != "read_file(*)" {
+		t.Fatalf("got project file allow %+v, want [\"read_file(*)\"] — bare folderUri form should match just like gitFolder-nested does", allow)
+	}
+
+	if err := revert(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	restored, err := os.ReadFile(projectFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(restored) != string(originalProject) {
+		t.Fatalf("expected exact byte-for-byte restore of the project file, got %s", restored)
+	}
+}
+
 // TestAgyGrant_NoMatchingProjectFileIsFineNotAnError proves the common
 // case (a scratch/one-off directory never opened interactively) is a
 // clean no-op for the project half of the grant, not a failure.

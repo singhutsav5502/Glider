@@ -62,11 +62,11 @@ Both modes share one completion path (`PipelineCompleter`) that answers **which 
 
 ### Delegation (cross-CLI permission relay)
 
-A message containing a flag like `/claude do X`, `/cursor-agent do Y`, or `/agy do Z` is claimed by a dedicated handler *before* normal routing — it never interferes with ordinary requests. Glider then:
+A message containing a flag like `do X /claude`, `do Y /cursor-agent`, or `do Z /agy` is claimed by a dedicated handler *before* normal routing — it never interferes with ordinary requests. The flag must come at the **end** of the message, not the start: some CLIs (Claude Code confirmed) treat a leading `/` as their own local slash command and never send the message at all if it starts with an unrecognized one — putting the flag last sidesteps that for every front. Glider then:
 
 1. Runs the target CLI headless with that prompt (per-vendor `CommandTemplate`, data-driven — see `configs/vendor_candidates.yaml`, editable from the dashboard's **Vendors** tab).
 2. Uses that CLI's `VendorAdapter` to detect a permission denial in its output.
-3. Relays the denial back to you as the reply, with a one-shot resume token (`/vendor:allow <token>` / `/vendor:deny <token>`).
+3. Relays the denial back to you as the reply, with a one-shot resume token (`<token> /vendor:allow` / `<token> /vendor:deny`).
 4. On allow, grants the permission (mechanism is vendor-specific — flag, or, for `agy`, its own settings file) and resumes the same session.
 
 See [`planning/permission_relay_design.md`](planning/permission_relay_design.md) for the full design, including known limits.
