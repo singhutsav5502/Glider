@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glider-ai/glider/internal/atomicfile"
 	"github.com/glider-ai/glider/internal/ngl"
 	"github.com/glider-ai/glider/internal/procutil"
 	"gopkg.in/yaml.v3"
@@ -209,7 +210,11 @@ func SaveRegistry(path string, reg Registry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	// atomicfile: this file is rewritten on every dashboard config change
+	// (enable/disable a vendor, edit a template, save a default
+	// workspace, ...) — a crash mid-write shouldn't be able to leave it
+	// truncated/invalid, forcing a full re-discover to recover.
+	return atomicfile.WriteFile(path, data, 0o644)
 }
 
 // Find looks up a vendor by name.

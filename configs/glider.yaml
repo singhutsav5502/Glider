@@ -24,7 +24,12 @@
 server:
     proxy_port: 8080
     dashboard_port: 8081
-    log_level: debug
+    # info, not debug: this is the profile STATUS.md's own "How to run"
+    # points at as the default — debug-level logging here (left on from
+    # active development) means every request's full detail lands in the
+    # log by default for anyone who just follows that doc. Set back to
+    # debug locally when you actually need it.
+    log_level: info
 thresholds:
     max_local_context_tokens: 8000
     idle_unload_timeout: 5m
@@ -284,9 +289,15 @@ mitm:
     transparent_port: 8083
     transparent_ports: [443]
     windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll
-    # Path B R&D: observe/dump Connect Agent RPCs. Turn off after R&D.
-    # Also: set GLIDER_MITM_DEBUG_RPC=1
-    debug_agent_rpc: true
+    # Path B R&D: observe/dump Connect Agent RPCs to disk (headers
+    # redacted, but full request/response byte previews otherwise) — off
+    # by default (was left on from active development; its own comment
+    # here already said "turn off after R&D," this is that). Files
+    # accumulate in debug_dump_dir with no automatic cleanup, so this is
+    # a real opt-in-when-you-need-it setting, not a leave-it-on one.
+    # Enable with GLIDER_MITM_DEBUG_RPC=1 for one session instead of
+    # flipping this back to true permanently.
+    debug_agent_rpc: false
     # Path B: BidiAppend extract -> DecideLocal -> RunSSE text fulfill (experimental).
     # Tool-loop child RunSSE still origin. Fail-soft -> origin when wait/encode fails.
     # Also: GLIDER_MITM_AGENT_RPC_FULFILL=1

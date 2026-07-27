@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [ ] Ollama running with at least one model from `glider.yaml` (e.g. `qwen2.5-coder:14b`) if testing local routes
-- [ ] `go build -o glider.exe ./cmd/glider && .\glider.exe --config configs\glider.yaml`
+- [ ] `go build -ldflags="-H=windowsgui" -o glider.exe ./cmd/glider && .\glider.exe --config configs\glider.yaml`
 - [ ] Gateway `http://localhost:8080/healthz` → `ok`
 - [ ] Dashboard `http://localhost:8081` loads (Overview shows Path B text-only Agent banner; LOCAL/CLOUD % includes `origin_passthrough`)
 - [ ] Optional: `GET http://localhost:8081/api/metrics` returns `distribution.local_pct` / `cloud_pct`

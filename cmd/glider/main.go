@@ -31,6 +31,7 @@ import (
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/plugin"
 	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/safego"
 	"github.com/glider-ai/glider/internal/tools"
 	"github.com/glider-ai/glider/internal/transform"
 	"github.com/glider-ai/glider/internal/tray"
@@ -425,8 +426,8 @@ func runGlider(ctx context.Context, cfgPath string) {
 
 	vramMon := vram.NewDefaultNvidiaSmiMonitor()
 	stopVRAM := make(chan struct{})
-	go pollVRAM(stopVRAM, vramMon, collector, reg, log)
-	go pollBackendHealth(stopVRAM, reg, log)
+	safego.Go("pollVRAM", log, func() { pollVRAM(stopVRAM, vramMon, collector, reg, log) })
+	safego.Go("pollBackendHealth", log, func() { pollBackendHealth(stopVRAM, reg, log) })
 
 	var dash *dashboard.Server
 	if cfg.Dashboard.Enabled {

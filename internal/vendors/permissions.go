@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/glider-ai/glider/internal/atomicfile"
 	"github.com/google/uuid"
 )
 
@@ -269,7 +270,9 @@ func writeAgyProjectSettings(cwd string, settings map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("vendors: marshaling %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, updated, 0o644); err != nil {
+	// Same reasoning as agy_grant.go's grantRulesInFile: this is the
+	// user's real, external agy project-settings file, not Glider's own.
+	if err := atomicfile.WriteFile(path, updated, 0o644); err != nil {
 		return fmt.Errorf("vendors: writing %s: %w", path, err)
 	}
 	return nil

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/glider-ai/glider/internal/atomicfile"
 )
 
 // GrantResumePermission implements agyAdapter's side of the one execution-
@@ -201,7 +203,12 @@ func grantRulesInFile(path string, keyPath []string, rules []string) (func() err
 	if err != nil {
 		return nil, fmt.Errorf("marshaling updated %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, updated, 0o644); err != nil {
+	// atomicfile, not os.WriteFile: this is the user's real, external agy
+	// settings.json, not a Glider-owned file — a crash mid-write here
+	// (this call, or the revert closure below, which runs again on every
+	// resumed delegate call) would corrupt a config file Glider has no
+	// way to help the user recover, not just lose Glider's own state.
+	if err := atomicfile.WriteFile(path, updated, 0o644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", path, err)
 	}
 
@@ -209,7 +216,7 @@ func grantRulesInFile(path string, keyPath []string, rules []string) (func() err
 		if !existed {
 			return os.Remove(path)
 		}
-		return os.WriteFile(path, original, 0o644)
+		return atomicfile.WriteFile(path, original, 0o644)
 	}, nil
 }
 

@@ -67,6 +67,38 @@ func TestTakePendingResume_UnknownTokenFails(t *testing.T) {
 	}
 }
 
+// TestRegisterPendingResume_SweepsExpiredEntriesOnRegister is the direct
+// regression test for a real finding from the 2026-07-28 security/
+// reliability audit: a denial the human never answers used to sit in
+// defaultResumeStore's map forever (only TakePendingResume ever deleted
+// an entry, and only for the specific token someone actually replied
+// to) — unbounded growth on a service meant to run for days/weeks.
+// Checks the DELTA in PendingResumeCount(), not an absolute value, since
+// the store is shared global state across every test in this file.
+func TestRegisterPendingResume_SweepsExpiredEntriesOnRegister(t *testing.T) {
+	old := vendors.PendingResumeTTL
+	vendors.PendingResumeTTL = 5 * time.Millisecond
+	defer func() { vendors.PendingResumeTTL = old }()
+
+	before := vendors.PendingResumeCount()
+	vendors.RegisterPendingResume(vendors.Vendor{Name: "agy"}, "p1", "", "", nil)
+	afterFirst := vendors.PendingResumeCount()
+	if afterFirst != before+1 {
+		t.Fatalf("expected count to grow by 1, got before=%d after=%d", before, afterFirst)
+	}
+
+	time.Sleep(20 * time.Millisecond) // let the first entry expire
+
+	// A second registration should sweep the now-expired first entry away
+	// as a side effect — net count stays the same (one expired removed,
+	// one new added) instead of growing unboundedly.
+	vendors.RegisterPendingResume(vendors.Vendor{Name: "agy"}, "p2", "", "", nil)
+	afterSecond := vendors.PendingResumeCount()
+	if afterSecond != afterFirst {
+		t.Fatalf("expected the expired entry to be swept (count unchanged at %d), got %d — expired entries are leaking", afterFirst, afterSecond)
+	}
+}
+
 func TestTakePendingResume_ExpiredTokenFails(t *testing.T) {
 	old := vendors.PendingResumeTTL
 	vendors.PendingResumeTTL = 5 * time.Millisecond

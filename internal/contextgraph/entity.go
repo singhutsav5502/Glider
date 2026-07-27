@@ -64,10 +64,6 @@ func (s *Store) upsertEntityLocked(e Entity) {
 	persistEntityJSONL(s.Dir, cp)
 }
 
-func (s *Store) persistEntityLocked(e Entity) {
-	persistEntityJSONL(s.Dir, e)
-}
-
 // LoadEntities replays entities.jsonl from Dir into the in-memory index.
 // Later lines with the same ID win (upsert). Returns count of lines applied.
 func (s *Store) LoadEntities() (int, error) {

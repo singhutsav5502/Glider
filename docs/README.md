@@ -28,6 +28,7 @@ Or with Glider running from the repo root: [http://127.0.0.1:8081/docs/](http://
 | [site/routing.html](site/routing.html) | Routing rule priority + Cursor sticky logic |
 | [site/delegation.html](site/delegation.html) | Cross-CLI delegation and permission relay |
 | [site/mitm.html](site/mitm.html) | Gateway vs MITM, transparent interception, Cursor's Agent RPC plane |
+| [site/ngl.html](site/ngl.html) | NGL's three interfaces (`OriginAdapter`, `DelegateRenderer`, `ParseXTurn`) and how they fit together |
 | [site/context.html](site/context.html) | Context graph, event log, episode store |
 | [site/pure-local.html](site/pure-local.html) | Ollama-only configuration |
 | [site/api.html](site/api.html) | Dashboard HTTP API reference |

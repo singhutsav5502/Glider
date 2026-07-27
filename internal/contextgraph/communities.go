@@ -198,7 +198,7 @@ func (s *Store) Explain(turnID, entityID string) string {
 		}
 		parts = append(parts, fmt.Sprintf("explain: id=%s kind=%s label=%q provenance=%s",
 			target.ID, target.Kind, target.Label, prov))
-		if target.Attrs != nil && len(target.Attrs) > 0 {
+		if len(target.Attrs) > 0 {
 			parts = append(parts, "attrs: "+attrsBlob(target.Attrs))
 		}
 		entityID = target.ID

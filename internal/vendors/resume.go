@@ -47,14 +47,44 @@ var defaultResumeStore = &resumeStore{pending: map[string]PendingResume{}}
 // parser: "allow" and "deny" are handled as control-flow markers by the
 // caller before ever reaching Vendor.ResolveTemplate, not real
 // CommandTemplates.
+//
+// Also opportunistically evicts any already-expired entries — the only
+// other place a token is ever removed is TakePendingResume, which only
+// runs for a token someone actually replies to. A denial the human never
+// answers (common in practice: they see the prompt, decide not to bother)
+// would otherwise sit in this map forever on a long-running process —
+// found in the 2026-07-28 security/reliability audit, unbounded growth on
+// a service meant to run for days/weeks. Sweeping here (not a separate
+// background goroutine) keeps this self-contained and bounds growth by
+// "how often does a NEW denial happen," which is already the map's own
+// natural growth rate.
 func RegisterPendingResume(v Vendor, prompt, sessionID, cwd string, denials []Denial) string {
 	token := newToken()
 	defaultResumeStore.mu.Lock()
 	defer defaultResumeStore.mu.Unlock()
+	cutoff := time.Now().Add(-PendingResumeTTL)
+	for k, pr := range defaultResumeStore.pending {
+		if pr.CreatedAt.Before(cutoff) {
+			delete(defaultResumeStore.pending, k)
+		}
+	}
 	defaultResumeStore.pending[token] = PendingResume{
 		Vendor: v, Prompt: prompt, SessionID: sessionID, Denials: denials, Cwd: cwd, CreatedAt: time.Now(),
 	}
 	return token
+}
+
+// PendingResumeCount returns the number of currently-stored pending
+// resumes — test-only visibility into defaultResumeStore's size (which is
+// otherwise unexported), so a test can confirm expired entries actually
+// get swept rather than only checking TakePendingResume's per-token
+// behavior (which would look identical whether or not the sweep exists,
+// since Take already deletes-on-expiry for whichever single token it's
+// asked about).
+func PendingResumeCount() int {
+	defaultResumeStore.mu.Lock()
+	defer defaultResumeStore.mu.Unlock()
+	return len(defaultResumeStore.pending)
 }
 
 // TakePendingResume looks up and removes a token's state — one-shot, so a

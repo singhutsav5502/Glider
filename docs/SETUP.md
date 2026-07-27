@@ -26,7 +26,9 @@ ollama --version
 ```powershell
 cd D:\___repos\Glider   # or your clone path
 go test ./... -count=1
-go build -o glider.exe ./cmd/glider
+# -H=windowsgui: Glider is a background tray app — this stops a console
+# window from popping up behind the tray icon on launch.
+go build -ldflags="-H=windowsgui" -o glider.exe ./cmd/glider
 ```
 
 ---

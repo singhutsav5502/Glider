@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/glider-ai/glider/internal/procutil"
+	"github.com/glider-ai/glider/internal/safego"
 )
 
 // stdioSession is a live MCP session over a subprocess stdin/stdout.
@@ -88,8 +89,8 @@ func startStdioSession(ctx context.Context, cfg ServerConfig, notify func(Notifi
 		notify:   notify,
 		readDone: make(chan struct{}),
 	}
-	go s.drainStderr()
-	go s.readLoop()
+	safego.Go("mcp-stdio-drainStderr:"+cfg.ID, nil, s.drainStderr)
+	safego.Go("mcp-stdio-readLoop:"+cfg.ID, nil, s.readLoop)
 
 	if err := s.handshake(ctx); err != nil {
 		_ = s.Close(context.Background())

@@ -168,7 +168,7 @@ func ValidateDetailed(cfg *Config, opts ValidateOptions) ValidationResult {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("models[%d] (%s): backend %q not listed in backends", i, name, m.Backend))
 			}
 		}
-		if opts.Catalog != nil && len(opts.Catalog) > 0 && m.Backend != "openai" && m.Backend != "anthropic" {
+		if len(opts.Catalog) > 0 && m.Backend != "openai" && m.Backend != "anthropic" {
 			if !opts.Catalog.Has(name) {
 				msg := fmt.Sprintf("models[%d]: %q not found in discovered backend models", i, name)
 				if opts.Soft {

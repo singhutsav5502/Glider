@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/glider-ai/glider/internal/procinfo"
+	"github.com/glider-ai/glider/internal/safego"
 )
 
 const (
@@ -197,12 +198,13 @@ func (r *WinDivertRedirector) Start(ctx context.Context, cfg RedirectConfig) err
 	for i := range r.jobs {
 		r.jobs[i] = make(chan packetJob, workerQueueSize)
 		r.wg.Add(1)
-		go r.worker(loopCtx, i)
+		idx := i
+		safego.Go(fmt.Sprintf("windivert-worker-%d", idx), r.Log, func() { r.worker(loopCtx, idx) })
 	}
 	r.wg.Add(3)
-	go r.recvLoop(loopCtx)
-	go r.sweepStaleFlows(loopCtx)
-	go r.statsLoop(loopCtx)
+	safego.Go("windivert-recvLoop", r.Log, func() { r.recvLoop(loopCtx) })
+	safego.Go("windivert-sweepStaleFlows", r.Log, func() { r.sweepStaleFlows(loopCtx) })
+	safego.Go("windivert-statsLoop", r.Log, func() { r.statsLoop(loopCtx) })
 	return nil
 }
 
