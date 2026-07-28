@@ -3,7 +3,10 @@ package vendors_test
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -280,6 +283,38 @@ func TestResolveDelegate_InteractiveTemplateDispatchesToLaunchInteractive(t *tes
 	}
 }
 
+// TestResolveDelegate_InteractiveTemplateUsesKnownWorkspace is the
+// interactive-launch counterpart to TestResolveDelegate_KnownWorkspaceIsUsed
+// (the headless case) — a real gap until now: every other interactive-mode
+// test in this file uses an unresolvable PID (0) specifically so it can
+// assert an EMPTY cwd, which never exercised whether a KNOWN workspace
+// actually reaches LaunchInteractiveFunc at all.
+func TestResolveDelegate_InteractiveTemplateUsesKnownWorkspace(t *testing.T) {
+	var gotCwd string
+	orig := vendors.LaunchInteractiveFunc
+	vendors.LaunchInteractiveFunc = func(v vendors.Vendor, cwd string, extraArgs ...string) error {
+		gotCwd = cwd
+		return nil
+	}
+	defer func() { vendors.LaunchInteractiveFunc = orig }()
+
+	dir := t.TempDir()
+	vendors.SetWorkspaceForPID(313131, dir)
+
+	v := vendors.Vendor{
+		Name:      "agy",
+		Templates: []vendors.CommandTemplate{{Name: "interactive", Mode: "interactive", Args: []string{"{{prompt}}"}}},
+	}
+	out := vendors.ResolveDelegate(context.Background(), v, "interactive", "task", 313131)
+
+	if gotCwd != dir {
+		t.Fatalf("got cwd %q, want the registered workspace %q", gotCwd, dir)
+	}
+	if !strings.Contains(out, dir) {
+		t.Fatalf("got %q, expected the confirmation reply to name the directory it opened in", out)
+	}
+}
+
 // TestResolveDelegate_InteractiveTemplateSurfacesLaunchFailure proves a
 // LaunchInteractiveFunc error becomes a plain reply, not a panic or a
 // silently-empty response.
@@ -400,5 +435,93 @@ func TestResolveDelegate_CleanModeFallsBackWithNoteOnUnparsableOutput(t *testing
 	}
 	if !strings.Contains(out, "couldn't parse a clean result") {
 		t.Fatalf("got %q, expected a visible fallback note", out)
+	}
+}
+
+// TestResolveDelegate_RealConnectionPIDDrivesRealWorkingDirectory answers a
+// real, direct question about how workspace-directory allocation actually
+// works: if a human once tells Glider "this origin process's project is
+// <dir>" (the /workspace flow, or a dashboard-configured default), does a
+// LATER delegate call from that SAME real OS process automatically run in
+// <dir> — not Glider's own directory — with no further action needed?
+//
+// Unlike every other test in this file, this one does NOT use a synthetic
+// PID constant: it opens a real TCP connection to a real local listener
+// (so the "origin process" is this go test binary's own OS process, the
+// same way a real CLI's connection would be) and resolves its PID through
+// the exact same vendors.ResolveOriginPID(r.RemoteAddr) codepath
+// DelegateHandler itself uses — proving the full, real pipeline (live
+// connection -> real OS port/PID lookup -> registered workspace -> actual
+// subprocess cwd), not just that a manually-supplied PID constant works.
+//
+// What this can't and doesn't claim: Glider cannot discover a brand-new
+// origin process's real directory with zero prior information — an
+// earlier, different approach (reading it directly out of the origin
+// process's own memory) was tried and abandoned, confirmed live to be
+// blocked by Windows Defender's default cross-process memory-read
+// protection (see workspace.go's own doc comment). "Automatic" here means
+// "remembered once, applied automatically to every later call from that
+// same process," not "detected out of thin air."
+func TestResolveDelegate_RealConnectionPIDDrivesRealWorkingDirectory(t *testing.T) {
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not found on PATH")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer ln.Close()
+
+	// The "server" side sees this test process's own outbound connection —
+	// its real OS-assigned ephemeral local port, owned by os.Getpid(),
+	// resolvable via the real procinfo lookup exactly like a genuine CLI's
+	// connection to Glider's own MITM listener would be.
+	var serverConn net.Conn
+	accepted := make(chan struct{})
+	go func() {
+		serverConn, _ = ln.Accept()
+		close(accepted)
+	}()
+	clientConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer clientConn.Close()
+	<-accepted
+	defer serverConn.Close()
+
+	remoteAddr := serverConn.RemoteAddr().String() // this test process's own address, from the listener's side
+	pid := vendors.ResolveOriginPID(remoteAddr)
+	if pid == 0 {
+		t.Skip("could not resolve this test process's own PID from a real connection — procinfo lookup unavailable in this environment")
+	}
+	if pid != uint32(os.Getpid()) {
+		t.Fatalf("resolved PID %d, want this test process's own PID %d — real port/PID lookup didn't find itself", pid, os.Getpid())
+	}
+
+	dir := t.TempDir()
+	marker := "workspace-marker-9c2e1b.txt"
+	if err := os.WriteFile(filepath.Join(dir, marker), []byte("found-me"), 0o644); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The human "teaches" Glider this origin process's real project
+	// directory once — the /workspace flow's own effect, replicated
+	// directly here since parsing that flag isn't what this test is about.
+	vendors.SetWorkspaceForPID(pid, dir)
+
+	v := vendors.Vendor{
+		Name: "fake", Path: shPath,
+		Templates: []vendors.CommandTemplate{
+			{Name: "default", Mode: "headless", Args: []string{"-c", "cat " + marker}},
+		},
+	}
+	// No cwd passed explicitly anywhere here — ResolveDelegate must derive
+	// it purely from pid, the same way it would from a real HTTP request's
+	// RemoteAddr inside DelegateHandler.
+	out := vendors.ResolveDelegate(context.Background(), v, "default", "unused", pid)
+	if out != "found-me" {
+		t.Fatalf("got %q, want the marker file's content — the headless run must have executed with dir as its real OS working directory, not Glider's own", out)
 	}
 }
