@@ -101,7 +101,10 @@
     Vendor() string
     Matches(r *http.Request) bool
     ExtractUserInstruction(body []byte) (text, model string, stream, ok bool, err error)
-    WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error
+    // header is written immediately, before replyText resolves — keeps a
+    // slow delegate call (headless run of another vendor's CLI) from
+    // idling the client out, and names what was delegated to whom.
+    WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText &lt;-chan string) error
 }</pre>
       <p>
         <code>internal/mitm/delegate_handler.go</code> calls <code>ngl.ResolveOriginAdapter(r)</code> and

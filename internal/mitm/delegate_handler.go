@@ -89,7 +89,7 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 		vendors.SetWorkspaceForPID(originPID, path)
 		h.logInfo("mitm delegate: workspace set", "pid", originPID, "dir", path)
 		replyText := fmt.Sprintf("Workspace set to %q for this session. Resend your delegate request.", path)
-		if err := adapter.WriteReply(w, model, replyText, stream); err != nil {
+		if err := adapter.WriteReply(w, model, stream, "", instantReply(replyText)); err != nil {
 			h.logInfo("mitm delegate: write reply failed", "vendor", adapter.Vendor(), "err", err)
 		}
 		return true, nil
@@ -102,12 +102,35 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 
 	h.logInfo("mitm delegate: routing to vendor", "front", adapter.Vendor(), "vendor", vendor.Name, "template", templateName, "host", r.Host, "originPID", originPID)
 
-	replyText := vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+	// header names the delegate up front — both so the human reading the
+	// reply knows a *different* CLI actually produced it (WriteReply's own
+	// doc comment covers why a synthesized reply otherwise gives no such
+	// indication), and because writing it immediately is what keeps a
+	// vendor whose client has a stream-idle timeout (cursor-agent,
+	// confirmed live 2026-07-29) from giving up while ResolveDelegate is
+	// still running headless in the background goroutine below — that
+	// call can take up to vendors.RunTimeout (120s).
+	header := fmt.Sprintf("Delegated to %s:\n\n", vendor.Name)
+	replyCh := make(chan string, 1)
+	go func() {
+		defer close(replyCh)
+		replyCh <- vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+	}()
 
-	if err := adapter.WriteReply(w, model, replyText, stream); err != nil {
+	if err := adapter.WriteReply(w, model, stream, header, replyCh); err != nil {
 		h.logInfo("mitm delegate: write reply failed", "vendor", adapter.Vendor(), "err", err)
 	}
 	return true, nil
+}
+
+// instantReply wraps an already-known reply string as the <-chan string
+// shape OriginAdapter.WriteReply expects, for the meta-replies (workspace
+// set, ...) that have nothing to wait on.
+func instantReply(text string) <-chan string {
+	ch := make(chan string, 1)
+	ch <- text
+	close(ch)
+	return ch
 }
 
 func (h *DelegateHandler) logInfo(msg string, args ...any) {

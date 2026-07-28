@@ -86,10 +86,33 @@ type OriginAdapter interface {
 	// vendor, so it gets the identical refusal.
 	ExtractUserInstruction(body []byte) (text, model string, stream, ok bool, err error)
 
-	// WriteReply renders replyText as a synthetic reply in this vendor's
-	// own expected wire shape, writing directly to w in place of
-	// forwarding to the real origin.
-	WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error
+	// WriteReply renders a synthetic reply in this vendor's own expected
+	// wire shape, writing directly to w in place of forwarding to the
+	// real origin.
+	//
+	// header, if non-empty, is meaningful text the caller wants on the
+	// wire before replyText is known — e.g. "Delegated to agy...".
+	// Implementations must write it (or otherwise get real bytes flowing)
+	// as early as possible, before blocking on replyText. This exists
+	// because of a real, live-confirmed bug (2026-07-29): cursor-agent's
+	// own HTTP/2 client abandoned a delegate reply stream
+	// (`http2: stream closed`) that received zero bytes for the whole
+	// duration of a slow delegate call — a headless run of another
+	// vendor's CLI can take far longer than a normal completion, and the
+	// old signature only ever handed WriteReply an already-fully-resolved
+	// string, so there was no way to get anything on the wire early. See
+	// cursorOriginAdapter.WriteReply and
+	// cursorrpc.WriteDelegateReplyWithKeepAlive for the vendor that
+	// actually needs this; the header also doubles as telling the human
+	// what was delegated to whom, since a synthesized reply otherwise
+	// gives no indication a different CLI produced it (DelegateHandler
+	// builds header).
+	//
+	// replyText delivers the final reply text once known — exactly one
+	// value, then closed. Implementations must not assume it is already
+	// closed by the time WriteReply is called; a slow delegate call fills
+	// it asynchronously from a separate goroutine.
+	WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error
 }
 
 var originAdapters []OriginAdapter

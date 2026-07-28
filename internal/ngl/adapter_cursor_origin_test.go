@@ -87,7 +87,7 @@ func TestCursorOriginAdapter_WriteReply_ProducesConnectFramedStream(t *testing.T
 	adapter := ngl.ResolveOriginAdapter(req)
 
 	rw := httptest.NewRecorder()
-	if err := adapter.WriteReply(rw, "", "hello from glider", true); err != nil {
+	if err := adapter.WriteReply(rw, "", true, "", instantReplyChan("hello from glider")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ct := rw.Header().Get("Content-Type"); ct != "application/connect+proto" {

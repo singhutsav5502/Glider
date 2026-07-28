@@ -49,11 +49,17 @@ func (claudeOriginAdapter) ExtractUserInstruction(body []byte) (text, model stri
 	return text, req.Model, req.Stream, true, nil
 }
 
-func (claudeOriginAdapter) WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error {
+func (claudeOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
 	if stream {
-		return writeClaudeSSE(w, model, replyText)
+		return writeClaudeSSE(w, model, header, replyText)
 	}
-	return writeClaudeJSON(w, model, replyText)
+	// Non-streaming: the whole JSON body is one atomic write, so there is
+	// no way to get header on the wire before replyText resolves — no
+	// timeout risk has ever been confirmed for Claude's own client here,
+	// unlike cursor-agent's. header is still folded in for the "delegated
+	// to whom" attribution.
+	text := header + <-replyText
+	return writeClaudeJSON(w, model, text)
 }
 
 // writeClaudeJSON and writeClaudeSSE render a reply in the Anthropic
@@ -75,9 +81,16 @@ func writeClaudeJSON(w http.ResponseWriter, model, text string) error {
 	})
 }
 
-func writeClaudeSSE(w http.ResponseWriter, model, text string) error {
+// writeClaudeSSE sends header as its own text_delta immediately (real
+// bytes on the wire before replyText is known), then blocks on replyText
+// and sends the resolved text as a second text_delta once it arrives — no
+// periodic keep-alive ticker, since no timeout has been confirmed for
+// Claude's own client the way it has for cursor-agent's (see
+// cursorrpc.WriteDelegateReplyWithKeepAlive).
+func writeClaudeSSE(w http.ResponseWriter, model, header string, replyText <-chan string) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		text := header + <-replyText
 		return writeClaudeJSON(w, model, text)
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -103,6 +116,13 @@ func writeClaudeSSE(w http.ResponseWriter, model, text string) error {
 		"type": "content_block_start", "index": 0,
 		"content_block": map[string]any{"type": "text", "text": ""},
 	})
+	if header != "" {
+		send("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "text_delta", "text": header},
+		})
+	}
+	text := <-replyText
 	send("content_block_delta", map[string]any{
 		"type": "content_block_delta", "index": 0,
 		"delta": map[string]any{"type": "text_delta", "text": text},
@@ -111,7 +131,7 @@ func writeClaudeSSE(w http.ResponseWriter, model, text string) error {
 	send("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
-		"usage": map[string]any{"output_tokens": len(text) / 4},
+		"usage": map[string]any{"output_tokens": (len(header) + len(text)) / 4},
 	})
 	send("message_stop", map[string]any{"type": "message_stop"})
 	return nil

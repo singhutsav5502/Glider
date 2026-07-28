@@ -99,40 +99,61 @@ func (agyOriginAdapter) ExtractUserInstruction(body []byte) (text, model string,
 	return "", "", false, false, nil
 }
 
-func (agyOriginAdapter) WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error {
+// WriteReply sends header as its own SSE data: event immediately (real
+// bytes on the wire before replyText is known), then blocks on replyText
+// and sends the resolved text as a second data: event. agy's endpoint is
+// itself named streamGenerateContent, so a real backend emitting more
+// than one frame over the connection's lifetime is consistent with its
+// own protocol, even though the only live capture this codebase has on
+// file (see this file's own doc comment) happened to be a single short
+// frame. No periodic keep-alive ticker — no timeout has been confirmed
+// for agy's own client the way it has for cursor-agent's.
+func (agyOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
 
-	event := map[string]any{
-		"response": map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": replyText}},
+	sendEvent := func(text string) error {
+		event := map[string]any{
+			"response": map[string]any{
+				"candidates": []map[string]any{
+					{
+						"content": map[string]any{
+							"role":  "model",
+							"parts": []map[string]any{{"text": text}},
+						},
 					},
 				},
+				"usageMetadata": map[string]any{
+					"promptTokenCount":     0,
+					"candidatesTokenCount": 0,
+					"totalTokenCount":      0,
+				},
+				"modelVersion": model,
+				"responseId":   "glider_delegate",
 			},
-			"usageMetadata": map[string]any{
-				"promptTokenCount":     0,
-				"candidatesTokenCount": 0,
-				"totalTokenCount":      0,
-			},
-			"modelVersion": model,
-			"responseId":   "glider_delegate",
-		},
-		"traceId":  "glider_delegate",
-		"metadata": map[string]any{},
+			"traceId":  "glider_delegate",
+			"metadata": map[string]any{},
+		}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		// "\r\n\r\n" event boundary matches the real captured response byte
+		// for byte — agy's own client parser was built against that framing.
+		if _, err := fmt.Fprintf(w, "data: %s\r\n\r\n", payload); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
 	}
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
+
+	if header != "" {
+		if err := sendEvent(header); err != nil {
+			return err
+		}
 	}
-	// "\r\n\r\n" event boundary matches the real captured response byte
-	// for byte — agy's own client parser was built against that framing.
-	_, err = fmt.Fprintf(w, "data: %s\r\n\r\n", payload)
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return err
+	return sendEvent(<-replyText)
 }

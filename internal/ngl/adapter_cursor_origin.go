@@ -3,9 +3,16 @@ package ngl
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/glider-ai/glider/internal/cursorrpc"
 )
+
+// cursorDelegateKeepAliveInterval is how often WriteReply sends an extra
+// heartbeat frame while waiting on a slow delegate reply — see
+// cursorrpc.WriteDelegateReplyWithKeepAlive's doc comment for why this is
+// the vendor that actually needs one (unlike claude/agy).
+const cursorDelegateKeepAliveInterval = 10 * time.Second
 
 func init() {
 	RegisterOriginAdapter(cursorOriginAdapter{})
@@ -94,8 +101,14 @@ func (cursorOriginAdapter) ExtractUserInstruction(body []byte) (text, model stri
 // WriteReply ignores model — AgentServerMessage's own frames (text_delta,
 // token_delta, turn_ended, ...) carry no model field; the real origin
 // response doesn't encode one either.
-func (cursorOriginAdapter) WriteReply(w http.ResponseWriter, model, replyText string, stream bool) error {
-	return cursorrpc.WriteRunSSEResponse(w, cursorrpc.CannedCompletionChunks(replyText))
+//
+// Uses cursorrpc.WriteDelegateReplyWithKeepAlive, not WriteRunSSEResponse
+// — real, live-confirmed fix (2026-07-29) for cursor-agent's own HTTP/2
+// client abandoning the stream (`http2: stream closed`) while replyText
+// was resolved synchronously, before any bytes went out. See that
+// function's doc comment for the full frame-order/keep-alive design.
+func (cursorOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
+	return cursorrpc.WriteDelegateReplyWithKeepAlive(w, header, replyText, cursorDelegateKeepAliveInterval)
 }
 
 // findLDField returns the first length-delimited field wantField's payload

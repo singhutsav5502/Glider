@@ -9,6 +9,17 @@ import (
 	"github.com/glider-ai/glider/internal/ngl"
 )
 
+// instantReplyChan wraps an already-known reply string as the <-chan
+// string shape OriginAdapter.WriteReply now expects (2026-07-29 signature
+// change, part of the streaming-reply-keep-alive fix) — shared by every
+// WriteReply test in this package that doesn't care about the async path.
+func instantReplyChan(text string) <-chan string {
+	ch := make(chan string, 1)
+	ch <- text
+	close(ch)
+	return ch
+}
+
 // TestResolveOriginAdapter_ClaudeAndAgyAreDistinctFronts is the real,
 // live-motivated regression test (2026-07-27): a single request must match
 // exactly one registered vendor's own front-CLI shape, and the mitm
@@ -105,7 +116,7 @@ func TestAgyOriginAdapter_ExtractUserInstruction_RefusesUnknownShape(t *testing.
 func TestAgyOriginAdapter_WriteReply_MatchesCapturedShape(t *testing.T) {
 	adapter := ngl.ResolveOriginAdapter(httptest.NewRequest(http.MethodPost, "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent", nil))
 	rw := httptest.NewRecorder()
-	if err := adapter.WriteReply(rw, "gemini-3.6-flash-high", "hello from glider", true); err != nil {
+	if err := adapter.WriteReply(rw, "gemini-3.6-flash-high", true, "", instantReplyChan("hello from glider")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ct := rw.Header().Get("Content-Type"); ct != "text/event-stream" {

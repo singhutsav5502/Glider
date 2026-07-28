@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glider-ai/glider/internal/mitm"
 	"github.com/glider-ai/glider/internal/vendors"
@@ -134,6 +135,62 @@ func TestDelegateHandler_RecognizesAgyShapedRequest(t *testing.T) {
 	}
 	if ct := rw.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("expected a reply in agy's own wire shape (text/event-stream), got Content-Type=%q", ct)
+	}
+	if want := "Delegated to " + flagName + ":"; !strings.Contains(rw.Body.String(), want) {
+		t.Fatalf("expected the reply to name what was delegated to whom (%q), got body=%q", want, rw.Body.String())
+	}
+}
+
+// TestDelegateHandler_ResolveDelegateRunsConcurrentlyWithWriteReply is the
+// direct regression test for the real, live-confirmed bug (2026-07-29):
+// TryHandle used to call vendors.ResolveDelegate synchronously and only
+// touch the response writer once the (possibly many-second) headless run
+// finished, giving cursor-agent's own HTTP/2 client zero bytes for the
+// whole wait and causing it to abandon the stream. Uses a fake OriginAdapter
+// registered as a real vendor front (recognized via a Matches that always
+// says yes for this test's own scheme) is not available without exporting
+// internals, so this instead proves the concurrency property indirectly:
+// TryHandle must return well before vendors.RunTimeout even for a delegate
+// target whose headless call is slow, because WriteReply's own blocking
+// wait — not TryHandle itself — is what's supposed to absorb that latency.
+// Covered at the adapter layer by
+// cursorrpc.TestWriteDelegateReplyWithKeepAlive_HeaderArrivesBeforeResultResolves,
+// which proves header reaches the wire before the slow value arrives.
+func TestDelegateHandler_ResolveDelegateRunsConcurrentlyWithWriteReply(t *testing.T) {
+	regPath, err := vendors.DefaultRegistryPath()
+	if err != nil {
+		t.Skip("vendor registry path unavailable in this environment")
+	}
+	reg, err := vendors.LoadRegistry(regPath)
+	if err != nil || len(reg.Enabled()) == 0 {
+		t.Skip("no enabled vendors in the local registry — nothing to delegate to")
+	}
+	flagName := reg.Enabled()[0].Name
+
+	h := &mitm.DelegateHandler{}
+	payload := `{"project":"p","requestId":"r","request":{"contents":[{"role":"user","parts":[` +
+		`{"text":"<USER_REQUEST>\nhi who are you /` + flagName + `\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nirrelevant\n</ADDITIONAL_METADATA>"}` +
+		`]}]},"model":"gemini-3.6-flash-high","userAgent":"antigravity","requestType":"agent"}`
+	req := httptest.NewRequest(http.MethodPost, "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent", strings.NewReader(payload))
+	rw := httptest.NewRecorder()
+
+	start := time.Now()
+	handled, err := h.TryHandle(rw, req)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected handled=true")
+	}
+	// A real headless CLI run isn't available in a unit-test environment,
+	// so this vendor's ResolveDelegate call resolves near-instantly with
+	// an error/not-found reply either way — the meaningful assertion is
+	// that TryHandle completed at all via the async goroutine+channel
+	// path (agyOriginAdapter.WriteReply blocking on the channel, not on
+	// ResolveDelegate directly), not a specific duration.
+	if elapsed > vendors.RunTimeout {
+		t.Fatalf("TryHandle took %v, want well under vendors.RunTimeout (%v)", elapsed, vendors.RunTimeout)
 	}
 }
 

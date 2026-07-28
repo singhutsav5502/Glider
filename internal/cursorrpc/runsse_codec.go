@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
 )
@@ -367,6 +368,90 @@ func itoaIndex(i int) string {
 		i /= 10
 	}
 	return string(b[pos:])
+}
+
+// WriteDelegateReplyWithKeepAlive writes header immediately as an early
+// text_delta (right after the usual heartbeat+thinking_delta preamble
+// WriteRunSSETextResponse also sends), then blocks waiting for a value on
+// resultText — sending an extra heartbeat every keepAliveInterval while it
+// waits. This exists because of a real, live-confirmed bug (2026-07-29):
+// cursor-agent's own HTTP/2 client gave up on a delegate reply stream
+// (`http2: stream closed`) that received zero bytes for the whole
+// duration of a slow delegate call — a headless run of another vendor's
+// CLI can take far longer (up to vendors.RunTimeout, 120s) than a normal
+// completion, and the reply text used to be fully resolved *before*
+// WriteReply was ever called, so the heartbeat-first pattern below never
+// got a chance to run early. Now the caller (DelegateHandler) resolves
+// the reply asynchronously and this function's own periodic heartbeats
+// keep the stream demonstrably alive for the entire wait, not just its
+// first moment.
+//
+// Frame order matches WriteRunSSETextResponse: heartbeat → thinking_delta
+// → [header text_delta] → (wait, heartbeats every keepAliveInterval) →
+// final text_delta → turn_ended → Connect end-stream.
+func WriteDelegateReplyWithKeepAlive(w http.ResponseWriter, header string, resultText <-chan string, keepAliveInterval time.Duration) error {
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "application/connect+proto")
+	w.WriteHeader(http.StatusOK)
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	if err := writeEnvelope(w, 0, EncodeAgentHeartbeat()); err != nil {
+		return err
+	}
+	if err := writeEnvelope(w, 0, EncodeAgentThinkingDelta(" ", 1)); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	if header != "" {
+		if err := writeEnvelope(w, 0, EncodeAgentTextDelta(header)); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	if keepAliveInterval <= 0 {
+		keepAliveInterval = 10 * time.Second
+	}
+	ticker := time.NewTicker(keepAliveInterval)
+	defer ticker.Stop()
+
+	var finalText string
+waitLoop:
+	for {
+		select {
+		case text, ok := <-resultText:
+			if ok {
+				finalText = text
+			}
+			break waitLoop
+		case <-ticker.C:
+			if err := writeEnvelope(w, 0, EncodeAgentHeartbeat()); err != nil {
+				return err
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+
+	if finalText != "" {
+		if err := writeEnvelope(w, 0, EncodeAgentTextDelta(finalText)); err != nil {
+			return err
+		}
+	}
+	if err := writeEnvelope(w, 0, EncodeAgentTurnEnded()); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return WriteConnectEndStream(w)
 }
 
 // CannedCompletionChunks returns a closed channel with one text chunk (for dry-run fulfill).

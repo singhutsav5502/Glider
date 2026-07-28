@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/cursorrpc"
@@ -104,6 +105,110 @@ func TestWriteRunSSETextResponse(t *testing.T) {
 	}
 	if !foundText {
 		t.Fatalf("frames=%+v", insp.Frames)
+	}
+}
+
+// TestWriteDelegateReplyWithKeepAlive_HeaderArrivesBeforeResultResolves is
+// the direct regression test for the real, live-confirmed bug
+// (2026-07-29): cursor-agent's own HTTP/2 client abandoned a delegate
+// reply stream (`http2: stream closed`) because it received zero bytes
+// for the whole duration of a slow delegate call. Proves header is on the
+// wire (as its own text_delta frame) *before* resultText is ever sent —
+// the function must not block on resultText before writing header.
+func TestWriteDelegateReplyWithKeepAlive_HeaderArrivesBeforeResultResolves(t *testing.T) {
+	resultText := make(chan string)
+	headerWritten := make(chan struct{})
+	rr := httptest.NewRecorder()
+
+	go func() {
+		// Only send the result once we've observed header on the wire —
+		// if WriteDelegateReplyWithKeepAlive were still blocking on
+		// resultText before writing anything (the old, buggy shape this
+		// replaces), this goroutine would deadlock against the assertion
+		// below instead of the test passing.
+		<-headerWritten
+		resultText <- "the real answer"
+		close(resultText)
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cursorrpc.WriteDelegateReplyWithKeepAlive(rr, "Delegated to agy:\n\n", resultText, time.Hour)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(rr.Body.String(), "Delegated to agy") {
+			close(headerWritten)
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !strings.Contains(rr.Body.String(), "Delegated to agy") {
+		t.Fatal("header never appeared on the wire — WriteReply must not block on resultText before writing header")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WriteDelegateReplyWithKeepAlive never returned after resultText resolved")
+	}
+
+	insp := cursorrpc.InspectRunSSEResponseBody(rr.Body.Bytes(), 200, "application/connect+proto")
+	var sawHeader, sawFinal, headerIdx, finalIdx int = 0, 0, -1, -1
+	for i, f := range insp.Frames {
+		if f.Kind == "text_delta" && strings.HasPrefix(f.TextHint, "Delegated to agy:") {
+			sawHeader++
+			headerIdx = i
+		}
+		if f.Kind == "text_delta" && f.TextHint == "the real answer" {
+			sawFinal++
+			finalIdx = i
+		}
+	}
+	if sawHeader != 1 || sawFinal != 1 {
+		t.Fatalf("expected exactly one header frame and one final-text frame, frames=%+v", insp.Frames)
+	}
+	if headerIdx >= finalIdx {
+		t.Fatalf("header frame (index %d) must come before final text frame (index %d)", headerIdx, finalIdx)
+	}
+}
+
+// TestWriteDelegateReplyWithKeepAlive_SendsPeriodicHeartbeatsWhileWaiting
+// proves the keep-alive ticker actually fires more than once during a wait
+// that outlasts keepAliveInterval — the whole point of this function over
+// the old CannedCompletionChunks-fed WriteRunSSEResponse, which only ever
+// sent one heartbeat, at the very start, before the (now-eliminated) long
+// synchronous wait even began.
+func TestWriteDelegateReplyWithKeepAlive_SendsPeriodicHeartbeatsWhileWaiting(t *testing.T) {
+	resultText := make(chan string)
+	rr := httptest.NewRecorder()
+
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		resultText <- "done"
+		close(resultText)
+	}()
+
+	if err := cursorrpc.WriteDelegateReplyWithKeepAlive(rr, "", resultText, 25*time.Millisecond); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	insp := cursorrpc.InspectRunSSEResponseBody(rr.Body.Bytes(), 200, "application/connect+proto")
+	heartbeats := 0
+	for _, f := range insp.Frames {
+		if f.Kind == "heartbeat" {
+			heartbeats++
+		}
+	}
+	// 1 from the fixed preamble + at least 2 more from ~120ms of waiting
+	// at a 25ms interval — a generous floor so this isn't flaky on a
+	// loaded CI box, while still failing if the ticker never fires at all.
+	if heartbeats < 3 {
+		t.Fatalf("got %d heartbeat frames over a 120ms wait at a 25ms interval, want >= 3 — keep-alive ticker did not fire while waiting", heartbeats)
 	}
 }
 
