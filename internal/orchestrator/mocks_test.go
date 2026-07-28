@@ -89,7 +89,14 @@ func errorComplete(err error) func(context.Context, *backend.CompletionRequest) 
 	}
 }
 
+// stubVRAM's reserved map is read/written from two genuinely concurrent
+// goroutines in TestModelLifecycle_IdleUnload: the test itself, and
+// ModelLifecycle's own idle-timeout callback (a real time.AfterFunc,
+// exactly like production). Caught by `go test -race` (2026-07-29) — the
+// mutex here isn't simulating anything, it's the same requirement any
+// real VRAM-tracking implementation given to ModelLifecycle would have.
 type stubVRAM struct {
+	mu       sync.Mutex
 	reserved map[string]int64
 }
 
@@ -102,12 +109,26 @@ func (s *stubVRAM) CanFit(model string, requiredBytes int64) (bool, *orchestrato
 	return true, nil
 }
 func (s *stubVRAM) Reserve(model string, bytes int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.reserved[model] = bytes
 	return nil
 }
 func (s *stubVRAM) Release(model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.reserved, model)
 	return nil
+}
+
+// IsReserved is the synchronized way tests check reservation state — used
+// instead of reaching into the reserved field directly, which is exactly
+// what raced against Release above.
+func (s *stubVRAM) IsReserved(model string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.reserved[model]
+	return ok
 }
 
 func registerModel(reg *backend.Registry, name, backendName string, vramMB int) {

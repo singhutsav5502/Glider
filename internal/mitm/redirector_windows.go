@@ -147,6 +147,19 @@ func (r *WinDivertRedirector) Start(ctx context.Context, cfg RedirectConfig) err
 		r.matchPorts[uint16(p)] = true
 	}
 
+	if skipped := wildcardHosts(cfg.AllowHosts); len(skipped) > 0 {
+		// Not just a comment anymore (2026-07-28 finding: a wildcard host
+		// silently missing from transparent mode's IP-based packet filter
+		// was the actual root cause of cursor-agent's completion call
+		// never being redirected at all, independent of and in addition
+		// to the tcpTable timing fix in ownerPID) — a real, actionable
+		// startup warning naming exactly which patterns are affected, so
+		// this doesn't have to be independently rediscovered by reading
+		// resolveAllowHosts' source next time a wildcard host doesn't
+		// work under transparent mode.
+		r.Log.Warn("mitm transparent: wildcard host pattern(s) cannot be resolved to a fixed IP for the packet filter and will be skipped for transparent mode specifically — traffic to a matching subdomain will never reach Glider's redirect at all unless that exact subdomain is also listed explicitly",
+			"patterns", skipped)
+	}
 	allowIPs := resolveAllowHosts(cfg.AllowHosts)
 	if len(allowIPs) == 0 {
 		return fmt.Errorf("mitm: no resolvable hosts in AllowHosts — refusing to start a filter that would divert every outbound connection")
@@ -259,6 +272,20 @@ func detectPrimaryLocalIP() (net.IP, error) {
 // resolveAllowHosts resolves each concrete hostname in hosts to its current
 // IPv4 addresses. "*.domain" wildcard entries are skipped (no single
 // concrete IP to resolve). Unresolvable hosts are skipped, not fatal.
+// wildcardHosts returns the "*.domain" entries in hosts — the ones
+// resolveAllowHosts below silently skips, since a wildcard has no single
+// concrete IP to add to the packet filter's allowlist.
+func wildcardHosts(hosts []string) []string {
+	var out []string
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if strings.HasPrefix(h, "*.") {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 func resolveAllowHosts(hosts []string) []string {
 	var ips []string
 	seen := make(map[string]bool)

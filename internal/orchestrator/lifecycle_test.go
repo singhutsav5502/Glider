@@ -83,7 +83,7 @@ func TestModelLifecycle_IdleUnload(t *testing.T) {
 	if err := lc.EnsureWarm(ctx, "codellama:7b"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := vram.reserved["codellama:7b"]; !ok {
+	if !vram.IsReserved("codellama:7b") {
 		t.Fatal("VRAM not reserved after load")
 	}
 
@@ -96,7 +96,7 @@ func TestModelLifecycle_IdleUnload(t *testing.T) {
 	if ollama.unloadCalls.Load() != 1 {
 		t.Fatalf("UnloadModel calls = %d, want 1", ollama.unloadCalls.Load())
 	}
-	if _, ok := vram.reserved["codellama:7b"]; ok {
+	if vram.IsReserved("codellama:7b") {
 		t.Fatal("VRAM not released after unload")
 	}
 }

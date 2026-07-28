@@ -43,7 +43,7 @@ func (agyOriginAdapter) Matches(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
 	}
-	if !strings.HasSuffix(r.Host, "cloudcode-pa.googleapis.com") {
+	if !strings.HasSuffix(HostWithoutPort(r), "cloudcode-pa.googleapis.com") {
 		return false
 	}
 	return strings.Contains(r.URL.Path, ":streamGenerateContent")

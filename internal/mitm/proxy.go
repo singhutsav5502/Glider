@@ -103,8 +103,6 @@ func (p *Proxy) Start() error {
 				"interception (the gateway and CONNECT-based MITM proxy still work normally)", "err", err)
 			return nil
 		}
-		p.transpLn = transpLn
-		go p.serveTransparent()
 
 		ports := p.TransparentPorts
 		if len(ports) == 0 {
@@ -119,10 +117,22 @@ func (p *Proxy) Start() error {
 			p.Log.Warn("mitm: transparent redirector failed to start — continuing without OS-level transparent "+
 				"interception (the gateway and CONNECT-based MITM proxy still work normally); if this is "+
 				"WinDivertOpen failing, run Glider as Administrator to enable it", "err", err)
-			_ = p.transpLn.Close()
-			p.transpLn = nil
+			_ = transpLn.Close()
 			return nil
 		}
+		// Only assign p.transpLn and start serveTransparent's Accept loop
+		// once the redirector has actually, successfully armed — real bug,
+		// caught by TestProxyStart_TransparentRedirectorFailureIsNonFatal
+		// itself (2026-07-29): the earlier version of this function started
+		// serveTransparent() BEFORE knowing whether Redirector.Start would
+		// succeed, then set p.transpLn = nil on failure — an unsynchronized
+		// write racing serveTransparent's own concurrent read of the same
+		// field, causing a real, live nil-pointer panic in that goroutine's
+		// Accept() call. Ordering it this way removes the race entirely:
+		// nothing reads p.transpLn until after this line, and nothing sets
+		// it to nil after that point during Start.
+		p.transpLn = transpLn
+		go p.serveTransparent()
 	}
 	return nil
 }

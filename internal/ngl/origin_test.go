@@ -35,6 +35,20 @@ func TestResolveOriginAdapter_ClaudeAndAgyAreDistinctFronts(t *testing.T) {
 	}
 }
 
+// TestResolveOriginAdapter_AgyMatchesWithPortInHost is agy's side of the
+// same real bug internal/ngl/adapter_cursor_origin_test.go's
+// _HostIncludesPort test guards for cursor-agent — Matches() must strip a
+// ":port" suffix before comparing r.Host, not just work when it happens to
+// be absent.
+func TestResolveOriginAdapter_AgyMatchesWithPortInHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent", nil)
+	req.Host = "daily-cloudcode-pa.googleapis.com:443"
+	a := ngl.ResolveOriginAdapter(req)
+	if a == nil || a.Vendor() != "agy" {
+		t.Fatalf("expected agy adapter to match even with an explicit :443 in Host, got %v", a)
+	}
+}
+
 // agyStreamGenerateContentBody is the real captured shape (2026-07-27, via
 // tools/wirecapture against agy's own live traffic), trimmed to the fields
 // ExtractUserInstruction actually reads.

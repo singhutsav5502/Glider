@@ -1,6 +1,32 @@
 package ngl
 
-import "net/http"
+import (
+	"net"
+	"net/http"
+)
+
+// HostWithoutPort strips a trailing ":port" from r.Host before an
+// adapter's own Matches compares it against a bare hostname suffix/pattern.
+//
+// Real, live-confirmed bug (2026-07-28): cursor-agent's and agy's own
+// OriginAdapters both compared r.Host directly against a bare hostname
+// suffix (e.g. ".cursor.sh") — correct for the CONNECT-based/gateway path,
+// where Go's http.Client conventionally omits a :443 port for the default
+// HTTPS port, but wrong for transparent interception, where the client's
+// own HTTP/2 :authority pseudo-header (which net/http maps to r.Host) is
+// NOT guaranteed to omit it — cursor-agent's real client includes it
+// explicitly (confirmed live: r.Host was literally
+// "agentn.global.api5.cursor.sh:443", not the bare hostname), so
+// Matches() silently never fired even though the request genuinely
+// reached Glider — traffic fell through to origin passthrough instead of
+// ever reaching ExtractUserInstruction, no error, no log line pointing at
+// why, just an unclaimed request.
+func HostWithoutPort(r *http.Request) string {
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		return h
+	}
+	return r.Host // already bare (SplitHostPort errors when there's no ":port" to split)
+}
 
 // OriginAdapter is the interception-boundary counterpart of the existing
 // outgoing-direction ParseXTurn family (which parses a vendor's own

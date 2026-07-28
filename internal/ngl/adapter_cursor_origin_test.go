@@ -26,6 +26,27 @@ func TestResolveOriginAdapter_CursorAgentRun(t *testing.T) {
 	}
 }
 
+// TestResolveOriginAdapter_CursorAgentRun_HostIncludesPort is the direct
+// regression test for a real, live-confirmed bug (2026-07-28): under
+// transparent interception, cursor-agent's own HTTP/2 client sends an
+// :authority pseudo-header that includes the port explicitly
+// ("agentn.global.api5.cursor.sh:443", not the bare hostname) — unlike
+// httptest.NewRequest's own default, and unlike what the CONNECT-based
+// gateway path happens to see. Matches() used to compare r.Host directly
+// against a bare-hostname suffix, so it silently never fired for real
+// transparent traffic even though the request genuinely reached Glider —
+// no error, just an unclaimed request falling through to origin
+// passthrough. This test sets Host explicitly to the with-port form the
+// existing test above never exercises.
+func TestResolveOriginAdapter_CursorAgentRun_HostIncludesPort(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://agentn.global.api5.cursor.sh/agent.v1.AgentService/Run", nil)
+	req.Host = "agentn.global.api5.cursor.sh:443"
+	a := ngl.ResolveOriginAdapter(req)
+	if a == nil || a.Vendor() != "cursor-agent" {
+		t.Fatalf("expected cursor-agent adapter to match even with an explicit :443 in Host, got %v", a)
+	}
+}
+
 func TestCursorOriginAdapter_ExtractUserInstruction_RealCapturedBytes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://agentn.global.api5.cursor.sh/agent.v1.AgentService/Run", nil)
 	adapter := ngl.ResolveOriginAdapter(req)

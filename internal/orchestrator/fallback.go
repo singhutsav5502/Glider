@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,8 +36,15 @@ type fallbackStep struct {
 
 // FallbackChain tries backends in order with circuit breaking and health checks.
 type FallbackChain struct {
-	registry         *backend.Registry
-	lifecycle        *ModelLifecycle
+	registry  *backend.Registry
+	lifecycle *ModelLifecycle
+	// breakersMu guards breakers — real, live-confirmed data race
+	// (2026-07-29, caught by `go test -race`, not by any specific code
+	// change this session): every concurrent request through
+	// PipelineCompleter reaches breaker() for the same FallbackChain
+	// instance, and the plain map read-check-then-maybe-insert here had
+	// no synchronization at all.
+	breakersMu       sync.Mutex
 	breakers         map[string]*CircuitBreaker
 	failureThreshold int
 	cooldown         time.Duration
@@ -100,6 +108,8 @@ func (f *FallbackChain) SetDisableCloudFallback(disable bool) {
 }
 
 func (f *FallbackChain) breaker(name string) *CircuitBreaker {
+	f.breakersMu.Lock()
+	defer f.breakersMu.Unlock()
 	if cb, ok := f.breakers[name]; ok {
 		return cb
 	}

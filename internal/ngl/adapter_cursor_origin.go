@@ -57,7 +57,7 @@ func (cursorOriginAdapter) Matches(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
 	}
-	if !strings.HasSuffix(r.Host, ".cursor.sh") {
+	if !strings.HasSuffix(HostWithoutPort(r), ".cursor.sh") {
 		return false
 	}
 	return r.URL.Path == "/agent.v1.AgentService/Run"

@@ -259,6 +259,11 @@ mitm:
         - api3.cursor.sh
         - api4.cursor.sh
         - '*.api5.cursor.sh'
+        # See configs/glider.yaml's identical entry for why this is listed
+        # both as the wildcard above and explicitly here — transparent
+        # mode's WinDivert filter can't resolve a wildcard to a concrete
+        # IP, so it's silently skipped for that filter specifically.
+        - agentn.global.api5.cursor.sh
         # Claude Code's completion plane (confirmed live via ANTHROPIC_BASE_URL
         # and, separately, TLS-trust of a forged leaf — planning/native_glider_orchestration.md §7).
         - api.anthropic.com
