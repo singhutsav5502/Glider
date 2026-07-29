@@ -85,6 +85,65 @@ func TestDelegateHandler_ScaffoldedFlagDoesNotTriggerDelegation(t *testing.T) {
 	}
 }
 
+// realCursorAgentRunRequestFirstEnvelope is the first Connect envelope from
+// a real, live-captured cursor-agent AgentService/Run request (byte-for-byte
+// identical to the fixture in internal/ngl/adapter_cursor_origin_test.go —
+// duplicated here rather than imported, since it's an unexported test var in
+// a different package). Decodes to the prompt "reply with exactly:
+// CURSORCAP_OK" — no delegate flag, so DelegateHandler must fall through.
+var realCursorAgentRunRequestFirstEnvelope = []byte("\x00\x00\x00\x02n\n\xeb\x04\n\x00\x12P\nN\nL\n reply with exactly: CURSORCAP_OK\x12$ba5ebf39-21c4-47c8-bc09-e1bee5311657\x1a\x00 \x01\"\x00*$7b4fffae-309e-4dd7-bb36-4be380112b17J\t\n\adefault`\x00r\t\n\adefaultr(\n\bgrok-4.5\x1a\x0e\n\x06effort\x12\x04high\x1a\f\n\x04fast\x12\x04truer\x1c\n\fcomposer-2.5\x1a\f\n\x04fast\x12\x04truerQ\n\rclaude-opus-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04high\x1a\r\n\x04fast\x12\x05falserB\n\vgpt-5.6-sol\x1a\x0f\n\acontext\x12\x04272k\x1a\x13\n\treasoning\x12\x06medium\x1a\r\n\x04fast\x12\x05falserC\n\x0eclaude-fable-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04highrD\n\x0fclaude-sonnet-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04highrD\n\rgpt-5.6-terra\x1a\x0f\n\acontext\x12\x04272k\x1a\x13\n\treasoning\x12\x06medium\x1a\r\n\x04fast\x12\x05false\x82\x01$7b4fffae-309e-4dd7-bb36-4be380112b17")
+
+// TestDelegateHandler_PreservesFullStreamOnFallThroughForCursorRun is the
+// direct regression test for a real bug this session's own bidi-streaming
+// read fix introduced and then had to fix again (2026-07-29): DelegateHandler
+// (and Interceptor.handleAgentRPC downstream) read only the first Connect
+// envelope for cursor-agent's AgentService/Run — correct and necessary for
+// the *handled* (delegate-flag-found) case, since Glider answers locally and
+// never forwards the request anywhere. But every non-delegate request also
+// passes through here first, and naively replacing r.Body with just the
+// bytes already read permanently discarded the rest of the real client's
+// stream (its later bidi-streaming keepalive envelopes) even on the "not my
+// concern, let origin handle it" fall-through path — so origin passthrough
+// forwarded an artificially truncated request to the real cursor.sh origin
+// instead of what the client actually sent. Confirmed live: plain
+// (non-delegate) cursor-agent passthrough worked cleanly at an earlier
+// commit (before the fast-read fix existed) and broke immediately after —
+// this test reproduces that with a real io.Pipe standing in for the live
+// client connection, proving r.Body, once restored on the fall-through path,
+// yields the ENTIRE reconstructed stream (first envelope + whatever arrives
+// after), not just the truncated first part.
+func TestDelegateHandler_PreservesFullStreamOnFallThroughForCursorRun(t *testing.T) {
+	laterKeepalive := []byte{0x00, 0x00, 0x00, 0x00, 0x02, ':', 0x00}
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write(realCursorAgentRunRequestFirstEnvelope)
+		_, _ = pw.Write(laterKeepalive) // simulates the real client's later keepalive envelope
+		pw.Close()
+	}()
+
+	h := &mitm.DelegateHandler{}
+	req := httptest.NewRequest(http.MethodPost, "https://agentn.global.api5.cursor.sh/agent.v1.AgentService/Run", pr)
+	req.Header.Set("Content-Type", "application/connect+proto")
+	rw := httptest.NewRecorder()
+
+	handled, err := h.TryHandle(rw, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if handled {
+		t.Fatal("expected handled=false — no delegate flag in this prompt")
+	}
+
+	restored, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("reading restored body: %v", err)
+	}
+	want := append(append([]byte{}, realCursorAgentRunRequestFirstEnvelope...), laterKeepalive...)
+	if len(restored) != len(want) {
+		t.Fatalf("restored body is %d bytes, want %d (first envelope + later keepalive) — the fall-through path must not truncate the real client's stream", len(restored), len(want))
+	}
+}
+
 func TestDelegateHandler_IgnoresNonMessagesPath(t *testing.T) {
 	h := &mitm.DelegateHandler{}
 	req := httptest.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/other", strings.NewReader(`{}`))

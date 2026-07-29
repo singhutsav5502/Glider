@@ -67,7 +67,25 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	if err != nil {
 		return false, fmt.Errorf("mitm delegate: read body: %w", err)
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
+	// io.MultiReader(buffered-first-bytes, r.Body) — NOT
+	// io.NopCloser(bytes.NewReader(body)) alone. Real, live-confirmed
+	// regression (2026-07-29): for cursor-agent, adapter.ReadRequestBody
+	// only reads the FIRST Connect envelope, not the whole body — correct
+	// and necessary for the *handled* (delegate-flag-found) case, since
+	// Glider answers locally and never forwards the request anywhere. But
+	// every non-delegate request also passes through here first, and the
+	// naive "replace r.Body with just what I read" left the *rest* of the
+	// real client's stream (its later keepalive envelopes) permanently
+	// discarded even on the "not my concern, let origin handle it"
+	// fall-through path — so origin passthrough forwarded an artificially
+	// truncated request to the real cursor.sh backend instead of what the
+	// client actually sent, which is what broke plain (non-delegate)
+	// passthrough after the read-side fix below this comment landed.
+	// io.MultiReader replays the already-consumed bytes first, then
+	// continues reading from the still-live original body — reconstructing
+	// the exact original stream for every vendor (a no-op for claude/agy,
+	// whose ReadRequestBody already drains r.Body to EOF via io.ReadAll).
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
 	userText, model, stream, ok, err := adapter.ExtractUserInstruction(body)
 	if err != nil {

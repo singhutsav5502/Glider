@@ -269,9 +269,10 @@ func (i *Interceptor) handleAgentRPC(w http.ResponseWriter, r *http.Request, hos
 	// prompt is always the first envelope on this call shape, so reading
 	// only it is not lossy — other AgentRPC shapes keep the plain
 	// io.ReadAll since they don't share this bidi-streaming concern.
+	isRunPath := cursorrpc.IsAgentServiceRunPath(path)
 	var body []byte
 	var err error
-	if cursorrpc.IsAgentServiceRunPath(path) {
+	if isRunPath {
 		body, err = cursorrpc.ReadFirstEnvelope(r.Body)
 	} else {
 		body, err = io.ReadAll(r.Body)
@@ -280,11 +281,35 @@ func (i *Interceptor) handleAgentRPC(w http.ResponseWriter, r *http.Request, hos
 		i.observe("error", host, path, "", "", "", 0, start)
 		return false, err
 	}
-	_ = r.Body.Close()
-	// Always restore original bytes for origin passthrough.
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
-	r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	// io.MultiReader(buffered-first-envelope, r.Body) for the fast-read
+	// path — NOT r.Body.Close() + bytes.NewReader(body) alone. Real,
+	// live-confirmed regression (2026-07-29, same incident as
+	// DelegateHandler.TryHandle's identical fix, which runs before this
+	// handler in the chain and needed the same correction): replacing
+	// r.Body with *only* the first envelope permanently discarded the
+	// real client's later bytes (its periodic bidi-streaming keepalive
+	// envelopes) even on this handler's own "opaque, no schema decode →
+	// origin" fall-through, so origin passthrough forwarded an
+	// artificially truncated request to the real cursor.sh backend
+	// instead of what the client actually sent — breaking plain
+	// (non-delegate) passthrough that worked before this fast-read
+	// existed. Closing r.Body first (the old code) would have made
+	// continuing to read from it impossible, so that call is gone too.
+	// Content-Length must NOT be set for the fast-read path: the
+	// reconstructed body's total size isn't known upfront (more of the
+	// real client's stream is still to come), matching how a genuine
+	// bidi-streaming request is framed over HTTP/2 in the first place
+	// (no explicit length; sized-by-DATA-frames-until-END_STREAM). The
+	// plain io.ReadAll path is unaffected — r.Body is already fully
+	// drained there, so this is a correct no-op either way.
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	if isRunPath {
+		r.ContentLength = -1
+		r.Header.Del("Content-Length")
+	} else {
+		r.ContentLength = int64(len(body))
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
 
 	decoded, err := cursorrpc.DecodeChatRequest(path, body)
 	if err != nil {
