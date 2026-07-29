@@ -65,6 +65,22 @@ type OriginAdapter interface {
 	// read — must be side-effect-free and must not consume r.Body.
 	Matches(r *http.Request) bool
 
+	// ReadRequestBody reads this vendor's own request body in whatever way
+	// is safe for its wire protocol. Most vendors are simple request/
+	// response and can just io.ReadAll(r.Body) — but doing that
+	// unconditionally caused a real, live-confirmed bug (2026-07-29):
+	// cursor-agent's agent.v1.AgentService/Run is a genuine bidi-streaming
+	// RPC whose real client keeps its request stream's send side open for
+	// roughly 30 seconds (periodic keepalive envelopes) even for a single
+	// headless turn, so io.ReadAll(r.Body) silently blocked the whole
+	// handler for that entire window before it could write back a single
+	// byte — by which point the client had already given up and reset the
+	// stream. cursorOriginAdapter reads only the first Connect envelope
+	// instead (see cursorrpc.ReadFirstEnvelope's own doc comment for the
+	// full incident writeup); claude/agy keep the plain io.ReadAll, since
+	// their traffic is genuinely simple request/response.
+	ReadRequestBody(r *http.Request) ([]byte, error)
+
 	// ExtractUserInstruction parses this vendor's own request body and
 	// returns the newest human-authored instruction text, with this
 	// vendor's own auto-injected scaffolding already stripped, plus the

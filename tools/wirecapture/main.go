@@ -61,10 +61,20 @@ import (
 
 var decryptHosts []string
 
+// singleWrite gates the ServeHTTP experiment mode added 2026-07-29 — see
+// its own doc comment at the call site. singleWriteWindow bounds how long
+// it accumulates reads before issuing the one combined Write.
+var (
+	singleWrite       bool
+	singleWriteWindow time.Duration
+)
+
 func main() {
 	port := flag.Int("port", 18082, "listen port for the CONNECT proxy")
 	dumpDir := flag.String("dumpdir", filepath.Join(os.Getenv("USERPROFILE"), ".glider", "wirecapture"), "directory to write raw request/response dumps to")
 	hosts := flag.String("hosts", "", "comma-separated host suffixes to decrypt (e.g. api.anthropic.com,cursor.sh) — everything else is a blind tunnel, same as Glider's own default-passthrough behavior. Empty means decrypt everything (only safe for a short, targeted capture).")
+	flag.BoolVar(&singleWrite, "singlewrite", false, "experiment: relay the response as one Write with no intermediate flush, instead of streaming — see ServeHTTP's doc comment")
+	flag.DurationVar(&singleWriteWindow, "singlewrite-window", 500*time.Millisecond, "how long -singlewrite accumulates reads before issuing the one combined Write")
 	flag.Parse()
 	if *hosts != "" {
 		decryptHosts = strings.Split(*hosts, ",")
@@ -185,10 +195,81 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
 	flusher, _ := w.(http.Flusher)
-	if flusher != nil {
-		flusher.Flush()
+
+	if singleWrite {
+		// No WriteHeader/Flush before the body: an explicit early flush
+		// forces the HEADERS frame out as its own separate network write
+		// before any body bytes are ready, which is itself a second
+		// distinct flush point (headers, then body) — exactly the pattern
+		// under suspicion. Letting the single w.Write(body) call below
+		// trigger an implicit WriteHeader(200) lets Go's own buffering
+		// coalesce headers+body into as few underlying writes as it can.
+		w.WriteHeader(resp.StatusCode)
+		// Experiment (2026-07-29): the streaming path below (io.Copy,
+		// flush after every chunk) failed 4/4 times at exactly 9 bytes —
+		// the size of the first AgentServerMessage envelope — suggesting
+		// cursor-agent's client tolerates exactly one write/flush over a
+		// MITM'd connection to this host and resets on the second. This
+		// mode tests that directly: accumulate every Read() (the origin
+		// delivers the two envelopes as two separate reads, confirmed by
+		// an earlier run of this same experiment) until singleWriteWindow
+		// passes with *no new data* (not a fixed deadline from the start —
+		// a fixed deadline either fires before the origin even responds,
+		// as a first attempt at this found, or is needlessly slow) or a
+		// real EOF arrives — a bidi RPC's response body may never reach
+		// EOF on its own — then issue exactly one Write, no intermediate
+		// flush.
+		type readResult struct {
+			chunk []byte
+			err   error
+		}
+		// Buffered so the reader goroutine can still deliver its final
+		// (possibly error) result and exit cleanly even if this handler
+		// has already stopped listening (idle timeout fired first) — a
+		// throwaway diagnostic tool, not worth a full cancellation path.
+		reads := make(chan readResult, 4)
+		go func() {
+			buf := make([]byte, 64<<10)
+			for {
+				n, err := resp.Body.Read(buf)
+				chunk := append([]byte(nil), buf[:n]...)
+				reads <- readResult{chunk: chunk, err: err}
+				if err != nil {
+					return
+				}
+			}
+		}()
+
+		var respBody bytes.Buffer
+		var readErr error
+		idle := time.NewTimer(singleWriteWindow)
+		defer idle.Stop()
+	accumulate:
+		for {
+			select {
+			case rr := <-reads:
+				respBody.Write(rr.chunk)
+				if rr.err != nil {
+					readErr = rr.err
+					break accumulate
+				}
+				if !idle.Stop() {
+					<-idle.C
+				}
+				idle.Reset(singleWriteWindow)
+			case <-idle.C:
+				readErr = fmt.Errorf("idle for %s with no new data", singleWriteWindow)
+				break accumulate
+			}
+		}
+		dumpResponse(h.dumpDir, h.host, r.URL.Path, resp.StatusCode, resp.Header, respBody.Bytes())
+		if _, writeErr := w.Write(respBody.Bytes()); writeErr != nil {
+			log.Printf("wirecapture: single-write response for %s%s failed after accumulating %d bytes (readErr=%v): %v", h.host, r.URL.Path, respBody.Len(), readErr, writeErr)
+			return
+		}
+		log.Printf("wirecapture: single-write response for %s%s succeeded, %d bytes (readErr=%v)", h.host, r.URL.Path, respBody.Len(), readErr)
+		return
 	}
 
 	// Stream response bytes to the client as they arrive, flushing after

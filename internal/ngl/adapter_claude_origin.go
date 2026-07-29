@@ -3,6 +3,7 @@ package ngl
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -23,6 +24,13 @@ func (claudeOriginAdapter) Vendor() string { return "claude" }
 
 func (claudeOriginAdapter) Matches(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == "/v1/messages"
+}
+
+// ReadRequestBody: plain request/response, no bidi-streaming concern — see
+// OriginAdapter.ReadRequestBody's doc comment for why this differs from
+// cursorOriginAdapter's.
+func (claudeOriginAdapter) ReadRequestBody(r *http.Request) ([]byte, error) {
+	return io.ReadAll(r.Body)
 }
 
 type claudeWireRequest struct {

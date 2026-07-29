@@ -70,6 +70,24 @@ func (cursorOriginAdapter) Matches(r *http.Request) bool {
 	return r.URL.Path == "/agent.v1.AgentService/Run"
 }
 
+// ReadRequestBody reads only the first Connect envelope, not the whole
+// body via io.ReadAll — real, live-confirmed root cause (2026-07-29, via
+// an isolated tools/wirecapture HTTP/2 frame trace): AgentService/Run is a
+// genuine bidi-streaming RPC, and cursor-agent's real client keeps its
+// request stream's send side open for roughly 30 seconds — sending a
+// small periodic keepalive envelope every ~5s — before finally sending
+// END_STREAM, even for one headless -p turn. io.ReadAll(r.Body) blocks
+// for that entire ~30s window before the server can write back a single
+// byte, and the client, having received nothing at all by the time it
+// finishes its own send side, fires RST_STREAM(CANCEL) at essentially
+// that same moment — dooming every subsequent write regardless of its
+// shape or timing. See cursorrpc.ReadFirstEnvelope's own doc comment for
+// the full incident writeup and why reading only the first envelope is
+// not lossy for this call shape.
+func (cursorOriginAdapter) ReadRequestBody(r *http.Request) ([]byte, error) {
+	return cursorrpc.ReadFirstEnvelope(r.Body)
+}
+
 func (cursorOriginAdapter) ExtractUserInstruction(body []byte) (text, model string, stream, ok bool, err error) {
 	payload, uerr := cursorrpc.UnwrapProtoPayload(body)
 	if uerr != nil {

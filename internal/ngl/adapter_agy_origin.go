@@ -3,6 +3,7 @@ package ngl
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -47,6 +48,13 @@ func (agyOriginAdapter) Matches(r *http.Request) bool {
 		return false
 	}
 	return strings.Contains(r.URL.Path, ":streamGenerateContent")
+}
+
+// ReadRequestBody: plain request/response, no bidi-streaming concern — see
+// OriginAdapter.ReadRequestBody's doc comment for why this differs from
+// cursorOriginAdapter's.
+func (agyOriginAdapter) ReadRequestBody(r *http.Request) ([]byte, error) {
+	return io.ReadAll(r.Body)
 }
 
 type agyWireRequest struct {

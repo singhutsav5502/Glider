@@ -1,10 +1,12 @@
 package ngl_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glider-ai/glider/internal/ngl"
 )
@@ -44,6 +46,75 @@ func TestResolveOriginAdapter_CursorAgentRun_HostIncludesPort(t *testing.T) {
 	a := ngl.ResolveOriginAdapter(req)
 	if a == nil || a.Vendor() != "cursor-agent" {
 		t.Fatalf("expected cursor-agent adapter to match even with an explicit :443 in Host, got %v", a)
+	}
+}
+
+// TestCursorOriginAdapter_ReadRequestBody_StopsAtFirstEnvelope is the
+// direct regression test for the real, live-confirmed root cause behind a
+// night of chased http2-stream-closed symptoms (2026-07-29, found via an
+// isolated tools/wirecapture HTTP/2 frame trace): agent.v1.AgentService/Run
+// is a genuine bidi-streaming RPC, and cursor-agent's real client sends
+// periodic small keepalive envelopes on its own request stream — visible
+// here in realCursorAgentRunRequestBody's own trailing bytes, captured live
+// back on 2026-07-27 but not connected to the eventual symptom until this
+// investigation — for up to ~30s before actually closing the stream.
+// io.ReadAll(r.Body) blocked the whole handler for that entire window
+// before it could write back a single byte, long enough for the client to
+// give up and reset the stream first. ReadRequestBody must read only the
+// first envelope and return promptly, proven here with a real io.Pipe
+// where the "rest" of the stream (the keepalive envelopes) arrives late —
+// io.ReadAll on the same source would hang until that arrived.
+func TestCursorOriginAdapter_ReadRequestBody_StopsAtFirstEnvelope(t *testing.T) {
+	// realCursorAgentRunRequestBody's own first 5 bytes declare the first
+	// envelope's payload length (BigEndian uint32 at offset 1..5).
+	firstEnvelopeLen := 5 + int(realCursorAgentRunRequestBody[4])<<0 |
+		int(realCursorAgentRunRequestBody[3])<<8 |
+		int(realCursorAgentRunRequestBody[2])<<16 |
+		int(realCursorAgentRunRequestBody[1])<<24
+	if firstEnvelopeLen >= len(realCursorAgentRunRequestBody) {
+		t.Fatalf("fixture no longer has trailing bytes after the first envelope (len=%d, fixture=%d) — this test needs the real keepalive tail to be meaningful", firstEnvelopeLen, len(realCursorAgentRunRequestBody))
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write(realCursorAgentRunRequestBody[:firstEnvelopeLen])
+		time.Sleep(2 * time.Second) // simulates a client's later keepalive envelope
+		_, _ = pw.Write(realCursorAgentRunRequestBody[firstEnvelopeLen:])
+		pw.Close()
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "https://agentn.global.api5.cursor.sh/agent.v1.AgentService/Run", pr)
+	adapter := ngl.ResolveOriginAdapter(req)
+	if adapter == nil {
+		t.Fatal("expected cursor-agent adapter to be resolved")
+	}
+
+	done := make(chan struct{})
+	var got []byte
+	var err error
+	go func() {
+		got, err = adapter.ReadRequestBody(req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ReadRequestBody did not return promptly — it must not block waiting for the client's later keepalive envelopes")
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != firstEnvelopeLen {
+		t.Fatalf("got %d bytes, want exactly %d (the first envelope only)", len(got), firstEnvelopeLen)
+	}
+
+	text, _, _, ok, extractErr := adapter.ExtractUserInstruction(got)
+	if extractErr != nil || !ok {
+		t.Fatalf("ExtractUserInstruction on the truncated-to-first-envelope body: ok=%v err=%v", ok, extractErr)
+	}
+	if text != "reply with exactly: CURSORCAP_OK" {
+		t.Fatalf("got text %q, want the real human prompt — truncating to one envelope must not corrupt it", text)
 	}
 }
 

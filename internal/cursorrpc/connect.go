@@ -20,6 +20,47 @@ const (
 	flagEndStream  = 0b00000010
 )
 
+// ReadFirstEnvelope reads exactly one Connect envelope (5-byte header +
+// payload) from r and returns it, without reading anything further from r.
+//
+// Real, live-confirmed root cause (2026-07-29, via an isolated
+// tools/wirecapture HTTP/2 frame trace): agent.v1.AgentService/Run is a
+// genuine bidi-streaming RPC (`rpc Run(stream AgentClientMessage) returns
+// (stream AgentServerMessage)`), and cursor-agent's real client keeps its
+// own request stream's send side open for roughly 30 seconds — sending a
+// small periodic keepalive envelope (~7 bytes) every ~5 seconds — before
+// finally sending END_STREAM, even for a single headless `-p` turn.
+// io.ReadAll(r.Body) blocks until that END_STREAM arrives, meaning the
+// server silently sits for the full ~30s before it can write back a
+// single byte — and cursor-agent, having received nothing at all in that
+// window, fires RST_STREAM(ErrCode=CANCEL) at essentially the same moment
+// it finishes its own send side. Every subsequent write attempt then
+// fails against an already-reset stream — the actual mechanism behind the
+// `http2: stream closed` errors chased through several earlier, narrower
+// fixes (encoder frame shape, write ordering) that were real but never
+// the underlying cause.
+//
+// The human's actual prompt is always the FIRST envelope on this call
+// shape (confirmed field path: AgentClientMessage.run_request -> ... ->
+// UserMessage.text, cursorOriginAdapter.ExtractUserInstruction) — later
+// envelopes on a headless -p call are periodic keepalive noise, never a
+// second real instruction, so reading only the first is not lossy for
+// this call shape and lets the caller respond within the client's actual
+// patience window instead of after it has already expired.
+func ReadFirstEnvelope(r io.Reader) ([]byte, error) {
+	var header [5]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
+		return nil, fmt.Errorf("read connect envelope header: %w", err)
+	}
+	n := binary.BigEndian.Uint32(header[1:5])
+	out := make([]byte, 5+int(n))
+	copy(out, header[:])
+	if _, err := io.ReadFull(r, out[5:]); err != nil {
+		return nil, fmt.Errorf("read connect envelope payload (%d bytes): %w", n, err)
+	}
+	return out, nil
+}
+
 // UnwrapProtoPayload returns the protobuf message bytes from a Connect/gRPC-style
 // HTTP body. Unary Connect uses raw protobuf; some clients wrap a single envelope.
 func UnwrapProtoPayload(body []byte) ([]byte, error) {

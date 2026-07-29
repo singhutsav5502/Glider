@@ -53,7 +53,17 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	// before doing anything else, so every return path — including "not
 	// our concern" — leaves the request exactly as any other handler
 	// downstream would expect to find it.
-	body, err := io.ReadAll(r.Body)
+	//
+	// adapter.ReadRequestBody, not a blanket io.ReadAll(r.Body): for most
+	// vendors these are identical, but cursor-agent's AgentService/Run is
+	// a genuine bidi-streaming RPC whose real client keeps sending
+	// periodic keepalive envelopes on the SAME request stream for up to
+	// ~30s before actually closing it — io.ReadAll would block this whole
+	// handler for that entire window before a single reply byte could go
+	// out, long enough for the client to give up and reset the stream
+	// first. See OriginAdapter.ReadRequestBody's doc comment for the full,
+	// live-confirmed incident writeup.
+	body, err := adapter.ReadRequestBody(r)
 	if err != nil {
 		return false, fmt.Errorf("mitm delegate: read body: %w", err)
 	}
