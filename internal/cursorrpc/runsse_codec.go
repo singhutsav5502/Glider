@@ -3,6 +3,7 @@ package cursorrpc
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -398,17 +399,29 @@ func WriteDelegateReplyWithKeepAlive(w http.ResponseWriter, header string, resul
 	}
 
 	if err := writeEnvelope(w, 0, EncodeAgentHeartbeat()); err != nil {
-		return err
+		return fmt.Errorf("keepalive preamble heartbeat: %w", err)
 	}
 	if err := writeEnvelope(w, 0, EncodeAgentThinkingDelta(" ", 1)); err != nil {
-		return err
+		return fmt.Errorf("keepalive preamble thinking_delta: %w", err)
+	}
+	// token_delta after thinking_delta, and after every text_delta below,
+	// matches WriteRunSSETextResponse's own established shape exactly —
+	// missing here originally (2026-07-29 live testing), which line up
+	// with cursor-agent's real client abandoning the exchange even once
+	// every write started succeeding: its RunSSE state machine appears to
+	// track progress via token_delta, not just text_delta/turn_ended.
+	if err := writeEnvelope(w, 0, EncodeAgentTokenDelta(1)); err != nil {
+		return fmt.Errorf("keepalive preamble token_delta: %w", err)
 	}
 	if flusher != nil {
 		flusher.Flush()
 	}
 	if header != "" {
 		if err := writeEnvelope(w, 0, EncodeAgentTextDelta(header)); err != nil {
-			return err
+			return fmt.Errorf("keepalive header text_delta: %w", err)
+		}
+		if err := writeEnvelope(w, 0, EncodeAgentTokenDelta(approxTokens(header))); err != nil {
+			return fmt.Errorf("keepalive header token_delta: %w", err)
 		}
 		if flusher != nil {
 			flusher.Flush()
@@ -432,7 +445,7 @@ waitLoop:
 			break waitLoop
 		case <-ticker.C:
 			if err := writeEnvelope(w, 0, EncodeAgentHeartbeat()); err != nil {
-				return err
+				return fmt.Errorf("keepalive ticker heartbeat: %w", err)
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -440,18 +453,43 @@ waitLoop:
 		}
 	}
 
+	// finalText + turn_ended + the Connect end-stream trailer are written as
+	// one combined Write, not three separate ones — a real, live-confirmed
+	// race (2026-07-29): cursor-agent's own client closes its read side the
+	// instant it sees turn_ended, and a *separate* subsequent write for the
+	// end-stream trailer routinely lost that race
+	// (`keepalive end-stream: http2: stream closed`), even though the
+	// content itself had already gone out successfully — cursor-agent still
+	// treated the abrupt close as a failure and retried. One Write call
+	// closes the window to effectively zero.
+	var tail bytes.Buffer
 	if finalText != "" {
-		if err := writeEnvelope(w, 0, EncodeAgentTextDelta(finalText)); err != nil {
-			return err
+		if err := writeEnvelope(&tail, 0, EncodeAgentTextDelta(finalText)); err != nil {
+			return fmt.Errorf("keepalive final text_delta: %w", err)
+		}
+		if err := writeEnvelope(&tail, 0, EncodeAgentTokenDelta(approxTokens(finalText))); err != nil {
+			return fmt.Errorf("keepalive final token_delta: %w", err)
 		}
 	}
-	if err := writeEnvelope(w, 0, EncodeAgentTurnEnded()); err != nil {
-		return err
+	if err := writeEnvelope(&tail, 0, EncodeAgentTurnEnded()); err != nil {
+		return fmt.Errorf("keepalive turn_ended: %w", err)
+	}
+	if err := writeEnvelope(&tail, flagEndStream, []byte("{}")); err != nil {
+		return fmt.Errorf("keepalive end-stream: %w", err)
+	}
+	if _, err := w.Write(tail.Bytes()); err != nil {
+		return fmt.Errorf("keepalive combined tail write: %w", err)
 	}
 	if flusher != nil {
 		flusher.Flush()
 	}
-	return WriteConnectEndStream(w)
+	return nil
+}
+
+// approxTokens is the same rough, cosmetic (not billed) token-count
+// approximation WriteRunSSETextResponse uses for its own token_delta frames.
+func approxTokens(s string) int32 {
+	return int32(len([]rune(s))/4 + 1)
 }
 
 // CannedCompletionChunks returns a closed channel with one text chunk (for dry-run fulfill).

@@ -175,6 +175,29 @@ func TestWriteDelegateReplyWithKeepAlive_HeaderArrivesBeforeResultResolves(t *te
 	if headerIdx >= finalIdx {
 		t.Fatalf("header frame (index %d) must come before final text frame (index %d)", headerIdx, finalIdx)
 	}
+
+	// Regression for a real bug found via live testing (2026-07-29): this
+	// function originally never wrote any token_delta frame at all, unlike
+	// WriteRunSSETextResponse (one after thinking_delta, one after every
+	// text_delta) — every write still succeeded (no I/O error), but a real
+	// cursor-agent client still abandoned the exchange, consistent with its
+	// RunSSE state machine tracking progress via token_delta. Frame order
+	// must be: heartbeat, thinking_delta, token_delta, text_delta(header),
+	// token_delta, text_delta(final), token_delta, turn_ended, end-stream.
+	wantKinds := []string{
+		"heartbeat", "thinking_delta", "token_delta",
+		"text_delta", "token_delta",
+		"text_delta", "token_delta",
+		"turn_ended", "server_other",
+	}
+	if len(insp.Frames) != len(wantKinds) {
+		t.Fatalf("got %d frames, want %d: %+v", len(insp.Frames), len(wantKinds), insp.Frames)
+	}
+	for i, want := range wantKinds {
+		if insp.Frames[i].Kind != want {
+			t.Fatalf("frame[%d].Kind = %q, want %q (full sequence: %+v)", i, insp.Frames[i].Kind, want, insp.Frames)
+		}
+	}
 }
 
 // TestWriteDelegateReplyWithKeepAlive_SendsPeriodicHeartbeatsWhileWaiting
