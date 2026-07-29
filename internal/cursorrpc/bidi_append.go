@@ -247,6 +247,22 @@ func IsRunSSEPath(path string) bool {
 	return strings.Contains(lower, "runsse") || strings.Contains(lower, "agent.v1.agentservice/run")
 }
 
+// IsAgentServiceRunPath reports the bare agent.v1.AgentService/Run RPC
+// specifically (case-insensitive) — distinct from IsRunSSEPath, which
+// (deliberately, for response-shape classification) also matches this same
+// path since Run and RunSSE return the identical AgentServerMessage stream
+// type. This narrower check exists because Run and RunSSE differ on the
+// *request* side in a way that matters for how the request body must be
+// read: Run is genuine bidi-streaming (`rpc Run(stream AgentClientMessage)
+// returns (stream AgentServerMessage)`) — see ReadFirstEnvelope's own doc
+// comment for why that means the request body must not be read via a
+// blocking io.ReadAll — while RunSSE takes a single unary BidiRequestId,
+// with no equivalent concern.
+func IsAgentServiceRunPath(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, "agent.v1.agentservice/run")
+}
+
 func guessInnerRole(topField, innerBytes int, innerWire string) string {
 	switch {
 	case innerBytes == 0:

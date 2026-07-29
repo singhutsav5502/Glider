@@ -255,7 +255,27 @@ func (i *Interceptor) handleAgentRPC(w http.ResponseWriter, r *http.Request, hos
 	log := i.log()
 	ct := r.Header.Get("Content-Type")
 
-	body, err := io.ReadAll(r.Body)
+	// agent.v1.AgentService/Run specifically (not RunSSE, BidiAppend, or
+	// StreamChat*) is a genuine bidi-streaming RPC whose real client keeps
+	// its request stream's send side open for ~30s, sending periodic
+	// keepalive envelopes — a blocking io.ReadAll(r.Body) here silently
+	// eats that whole window before this handler (or origin passthrough
+	// below) can respond at all, long enough for the client to give up
+	// and reset the stream first. Real, live-confirmed incident (see
+	// cursorrpc.ReadFirstEnvelope's own doc comment) — DelegateHandler,
+	// which runs before this handler in the chain, was fixed the same
+	// way (2026-07-29); this fixes the same latent issue for the plain,
+	// non-delegate passthrough path this handler covers. The human's
+	// prompt is always the first envelope on this call shape, so reading
+	// only it is not lossy — other AgentRPC shapes keep the plain
+	// io.ReadAll since they don't share this bidi-streaming concern.
+	var body []byte
+	var err error
+	if cursorrpc.IsAgentServiceRunPath(path) {
+		body, err = cursorrpc.ReadFirstEnvelope(r.Body)
+	} else {
+		body, err = io.ReadAll(r.Body)
+	}
 	if err != nil {
 		i.observe("error", host, path, "", "", "", 0, start)
 		return false, err

@@ -182,6 +182,23 @@ func TestIsRunSSEPath(t *testing.T) {
 	}
 }
 
+// TestIsAgentServiceRunPath is the direct regression test distinguishing
+// the bare Run RPC (bidi-streaming, needs cursorrpc.ReadFirstEnvelope) from
+// RunSSE (server-streaming, no such concern) — see
+// IsAgentServiceRunPath's own doc comment for why this narrower check
+// exists alongside IsRunSSEPath, which deliberately matches both.
+func TestIsAgentServiceRunPath(t *testing.T) {
+	if !cursorrpc.IsAgentServiceRunPath("/agent.v1.AgentService/Run") {
+		t.Fatal("expected true for the bare Run path")
+	}
+	if cursorrpc.IsAgentServiceRunPath("/agent.v1.AgentService/RunSSE") {
+		t.Fatal("RunSSE must not match — it doesn't share Run's bidi-streaming request-read concern")
+	}
+	if cursorrpc.IsAgentServiceRunPath("/aiserver.v1.BidiService/BidiAppend") {
+		t.Fatal("BidiAppend must not match")
+	}
+}
+
 func TestInspectBidiAppendContextEnvelopePromptHints(t *testing.T) {
 	// Live Capture 4 shape under inner top field 1:
 	// nested 1:ld(meta), 2:ld(conversation), 14:ld(section labels)…
