@@ -59,6 +59,12 @@ type Proxy struct {
 	transpLn net.Listener
 	mu       sync.Mutex
 	closed   bool
+
+	// passthroughTransport is a single, long-lived, shared http.Transport
+	// used by every passthroughHTTPS call — see sharedPassthroughTransport's
+	// own doc comment for why this replaced a fresh-Transport-per-call design.
+	passthroughTransport     *http.Transport
+	passthroughTransportOnce sync.Once
 }
 
 // Start begins listening for CONNECT (and plain HTTP proxy) requests.
@@ -158,10 +164,65 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 	if p.transpLn != nil {
 		_ = p.transpLn.Close()
 	}
+	if p.passthroughTransport != nil {
+		p.passthroughTransport.CloseIdleConnections()
+	}
 	if p.ln != nil {
 		return p.ln.Close()
 	}
 	return nil
+}
+
+// sharedPassthroughTransport returns the one http.Transport every
+// passthroughHTTPS call reuses — NOT a fresh Transport per call, which was
+// the design until a real, live-confirmed issue (2026-07-29): a fresh
+// dial+TLS handshake on every single request adds meaningful, variable
+// latency (typically under 200ms, but occasionally much more) that a
+// client talking directly to the same origin doesn't pay, since it
+// naturally reuses its own warm connection — a gap that remained the last
+// plausible explanation for a real client (cursor-agent) occasionally
+// giving up on plain passthrough after every simpler cause (a blocking
+// request-body read, WinDivert packet-queue congestion, a body-truncation
+// bug in the fall-through path) was independently ruled out or fixed in
+// the same investigation. Verified this wasn't a regression from any of
+// those other fixes first: built and live-tested the last pre-regression
+// commit with the current, correct config — it failed identically, so the
+// missing connection reuse (present in this codebase's very first version
+// of this function, never a "removed" feature) is the remaining lead, not
+// a fix for something that used to work.
+//
+// Go's own http.Transport already implements connection pooling
+// internally (MaxIdleConnsPerHost, IdleConnTimeout, etc.) — the old code
+// discarded that entirely by constructing a brand-new Transport, using it
+// once, and immediately calling CloseIdleConnections on it, for every
+// single request. This is the standard, idiomatic way to use
+// http.Transport: construct once, reuse concurrently (it's safe for
+// concurrent use by design), let it manage its own connection pool.
+//
+// TLSClientConfig here deliberately has no fixed ServerName (unlike the
+// old per-call config, which set cfg.ServerName = host for that one call)
+// — Go's Transport derives SNI correctly per request from the outbound
+// request's own destination host, which is what lets ONE shared Transport
+// correctly pool connections to many different origins (cursor.sh,
+// anthropic.com, googleapis.com, ...) at once, exactly how Transport is
+// designed to be used. sync.Once makes first-use initialization safe
+// under concurrent passthroughHTTPS calls without needing p.mu.
+func (p *Proxy) sharedPassthroughTransport() *http.Transport {
+	p.passthroughTransportOnce.Do(func() {
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if p.TLSClientConfig != nil {
+			cfg = p.TLSClientConfig.Clone()
+		}
+		p.passthroughTransport = &http.Transport{
+			TLSClientConfig:     cfg,
+			ForceAttemptHTTP2:   true,
+			DialContext:         (&net.Dialer{Timeout: p.DialTimeout}).DialContext,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+	})
+	return p.passthroughTransport
 }
 
 func (p *Proxy) serve() {
@@ -467,26 +528,11 @@ func (t *trackedResponseWriter) Flush() {
 // against any genuinely HTTP/2-only origin (this function's sibling fix in
 // mitmSession's own doc comment has the live-confirmed example).
 func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host, hostport string) error {
-	cfg := &tls.Config{
-		ServerName: host,
-		MinVersion: tls.VersionTLS12,
-	}
-	if p.TLSClientConfig != nil {
-		cfg = p.TLSClientConfig.Clone()
-		if cfg.ServerName == "" {
-			cfg.ServerName = host
-		}
-	}
-
-	// One fresh Transport (and therefore one fresh outbound connection) per
-	// call, matching the original's one-dial-per-request behavior — no
-	// cross-request connection pooling here, deliberately unchanged scope.
-	transport := &http.Transport{
-		TLSClientConfig:   cfg,
-		ForceAttemptHTTP2: true,
-		DialContext:       (&net.Dialer{Timeout: p.DialTimeout}).DialContext,
-	}
-	defer transport.CloseIdleConnections()
+	// sharedPassthroughTransport, not a fresh Transport per call — see its
+	// own doc comment for the full reasoning and the live investigation
+	// that led here. ServerName is intentionally not set per-call anymore;
+	// the shared Transport derives it correctly per request on its own.
+	transport := p.sharedPassthroughTransport()
 
 	outReq := req.Clone(req.Context())
 	outReq.RequestURI = ""
@@ -498,6 +544,31 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 	// the actual HTTP Host header, matching the original's split behavior.
 	outReq.URL.Host = hostport
 	outReq.Host = host
+
+	// GetBody, not just Body — real, live-confirmed fallout from switching
+	// to a shared, pooled Transport (2026-07-29): a pooled connection can
+	// go stale between uses (the origin closed it, a NAT/firewall dropped
+	// it, etc.), and Go's Transport automatically retries such a failure
+	// on a fresh connection *if* it can rewind the request body — which it
+	// can't for a plain io.ReadCloser with no GetBody set, surfacing as
+	// "net/http: cannot rewind body after connection loss" instead of a
+	// transparent retry. Every caller by this point has already fully
+	// buffered req.Body in memory (either a plain io.ReadAll, or — for
+	// cursor-agent's AgentService/Run — a deliberately truncated single
+	// Connect envelope, a few hundred bytes; see DelegateHandler and
+	// handleAgentRPC's own doc comments), so reading it once here to set
+	// GetBody costs nothing that wasn't already paid.
+	if req.Body != nil && req.Body != http.NoBody {
+		bodyBytes, readErr := io.ReadAll(req.Body)
+		if readErr != nil {
+			return fmt.Errorf("mitm passthrough: read request body: %w", readErr)
+		}
+		outReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		outReq.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+		outReq.ContentLength = int64(len(bodyBytes))
+	}
 
 	resp, err := transport.RoundTrip(outReq)
 	if err != nil {

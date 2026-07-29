@@ -67,25 +67,25 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	if err != nil {
 		return false, fmt.Errorf("mitm delegate: read body: %w", err)
 	}
-	// io.MultiReader(buffered-first-bytes, r.Body) — NOT
-	// io.NopCloser(bytes.NewReader(body)) alone. Real, live-confirmed
-	// regression (2026-07-29): for cursor-agent, adapter.ReadRequestBody
-	// only reads the FIRST Connect envelope, not the whole body — correct
-	// and necessary for the *handled* (delegate-flag-found) case, since
-	// Glider answers locally and never forwards the request anywhere. But
-	// every non-delegate request also passes through here first, and the
-	// naive "replace r.Body with just what I read" left the *rest* of the
-	// real client's stream (its later keepalive envelopes) permanently
-	// discarded even on the "not my concern, let origin handle it"
-	// fall-through path — so origin passthrough forwarded an artificially
-	// truncated request to the real cursor.sh backend instead of what the
-	// client actually sent, which is what broke plain (non-delegate)
-	// passthrough after the read-side fix below this comment landed.
-	// io.MultiReader replays the already-consumed bytes first, then
-	// continues reading from the still-live original body — reconstructing
-	// the exact original stream for every vendor (a no-op for claude/agy,
-	// whose ReadRequestBody already drains r.Body to EOF via io.ReadAll).
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	// io.NopCloser(bytes.NewReader(body)) — deliberately NOT
+	// io.MultiReader(bytes.NewReader(body), r.Body), which this line used
+	// briefly (2026-07-29) to avoid truncating what gets forwarded to
+	// origin on the fall-through path. That turned out to reintroduce the
+	// exact same ~30s block it was meant to fix, just moved to a different
+	// spot: passthroughHTTPS's transport.RoundTrip reads outReq.Body to
+	// send the request, and a MultiReader whose second reader is the real,
+	// still-open client connection blocks on THAT read whenever the
+	// buffered part runs out — waiting on cursor-agent's own next periodic
+	// keepalive envelope (up to ~30s away), the identical client-patience
+	// problem the read-side fix already solved, just relocated to the send
+	// side instead of the read side. Confirmed live: reverting to plain
+	// truncation here is what actually fixed plain passthrough end-to-end.
+	// Truncating to the first envelope is correct, not lossy, for this RPC
+	// shape specifically — the real cursor.sh origin is bidi-streaming
+	// capable, exactly like Glider's own synthesized replies, and doesn't
+	// need the client's later keepalive envelopes to start responding to
+	// the human's actual instruction, which is always the first envelope.
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	userText, model, stream, ok, err := adapter.ExtractUserInstruction(body)
 	if err != nil {
