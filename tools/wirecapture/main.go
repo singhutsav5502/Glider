@@ -179,8 +179,6 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	dumpResponse(h.dumpDir, h.host, r.URL.Path, resp.StatusCode, resp.Header, respBody)
 
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -188,7 +186,44 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(respBody)
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	// Stream response bytes to the client as they arrive, flushing after
+	// every chunk — matches Glider's own passthroughHTTPS design
+	// (io.Copy, not a full buffer-then-write). The original version of
+	// this handler did io.ReadAll(resp.Body) before writing anything back
+	// at all, which for a genuinely long-lived streaming RPC (this tool
+	// exists specifically to investigate agent.v1.AgentService/Run, a
+	// real bidi-streaming RPC per agent_v1.proto) would make the client
+	// wait for the *entire* turn to finish before seeing a single byte —
+	// a confound this rewrite removes so a client giving up here isn't
+	// conflated with wirecapture's own prior buffering limitation.
+	var captured bytes.Buffer
+	tee := io.TeeReader(resp.Body, &captured)
+	n, copyErr := io.Copy(&flushWriter{w: w, flusher: flusher}, tee)
+	dumpResponse(h.dumpDir, h.host, r.URL.Path, resp.StatusCode, resp.Header, captured.Bytes())
+	if copyErr != nil {
+		log.Printf("wirecapture: streaming response for %s%s failed after %d bytes: %v", h.host, r.URL.Path, n, copyErr)
+	}
+}
+
+// flushWriter flushes after every Write so a streaming response's bytes
+// reach the client as they arrive instead of sitting in Go's own internal
+// buffering until enough accumulates.
+type flushWriter struct {
+	w       io.Writer
+	flusher http.Flusher
+}
+
+func (f *flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if f.flusher != nil {
+		f.flusher.Flush()
+	}
+	return n, err
 }
 
 // singleConnListener adapts one already-accepted net.Conn (the raw,
