@@ -27,9 +27,25 @@ const (
 	windivertAddrBufSize  = 80 // WINDIVERT_ADDRESS; generously sized, only Recv/Send need it intact
 	flowEntryTTL          = 2 * time.Minute
 	numWorkers            = 8
-	workerQueueSize       = 256
-	tcpTableRefresh       = 2 * time.Second
-	statsLogInterval      = 15 * time.Second
+	// workerQueueSize was 256 until a real, live-confirmed capacity issue
+	// (2026-07-29): recvLoop is a single goroutine reading from WinDivert,
+	// and its "queue full" fallback blocks that same goroutine until the
+	// congested shard's channel has room — so a packet burst on ONE
+	// connection (e.g. one large HTTPS response) can stall recvLoop from
+	// reading *any* packets at all, including ones that would hash to a
+	// completely idle shard, for as long as that one shard stays full.
+	// Observed live: a single large (~2MB) HTTPS message pushed
+	// queue_full into the thousands during a run that also had a
+	// separate real client (cursor-agent, on a different shard in the
+	// same window) experiencing connection resets — consistent with,
+	// though not conclusively proven to be caused by, this head-of-line
+	// blocking. Raising the buffer doesn't change the blocking fallback's
+	// existence (still needed — dropping a packet here breaks that
+	// connection outright) but makes hitting it far less frequent for
+	// any realistic single-connection burst.
+	workerQueueSize  = 4096
+	tcpTableRefresh  = 2 * time.Second
+	statsLogInterval = 15 * time.Second
 )
 
 type flowEntry struct {
