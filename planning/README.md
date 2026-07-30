@@ -1,6 +1,6 @@
 # Planning docs — index
 
-Design rationale and architecture notes. Code + tests are the authority on current behavior; these docs explain *why* it's built this way. User-facing docs live under [`../docs/`](../docs/README.md); current build status is [`../STATUS.md`](../STATUS.md).
+Design rationale and architecture notes. Code + tests are the authority on current behavior; these docs explain *why* it's built this way. User-facing docs live under [`../docs/`](../docs/README.md); for the current system-level view, start with [glider_high_level_design.md](glider_high_level_design.md).
 
 ## Core design
 

@@ -159,7 +159,7 @@ Check reload status: dashboard **Config** tab hot-swap module list, or response 
 | Local completions hang or truncate | Raise `thresholds.request_timeout` / `default_max_tokens` |
 | Tools write into the Glider repo itself | `orchestration.tools.workspace` should be `~/.glider/workspace`, not `.` |
 | MITM Agent+tools broken via Cursor | Use gateway mode for tool-heavy Agent work; the MITM tool codec is opt-in/partial |
-| Delegated CLI keeps re-describing an already-granted action instead of doing it | Known limitation for `agy`'s resume path — see `STATUS.md` |
+| Delegated CLI keeps re-describing an already-granted action instead of doing it | Known limitation for `agy`'s resume path — see `planning/permission_relay_design.md` |
 | `mitm.transparent: true` has no effect | Check `windivert_dll_path` points at a real `WinDivert.dll`/`WinDivertNN.sys` pair, and that you're on Windows |
 
 Still stuck: run with `log_level: debug` and check the dashboard's **Overview** tab and process logs.

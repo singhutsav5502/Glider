@@ -1,6 +1,6 @@
 # Glider — High-Level Design
 
-A system-level architecture reference: what Glider is, how its subsystems fit together, and how a request actually moves through it end to end. Deep design rationale for any one subsystem lives in its own `planning/*.md` doc (indexed in `planning/README.md`) or `docs/site/*.html`; current build status per subsystem is `STATUS.md`. This doc is the map between all of those, not a replacement for any of them.
+A system-level architecture reference: what Glider is, how its subsystems fit together, and how a request actually moves through it end to end. Deep design rationale for any one subsystem lives in its own `planning/*.md` doc (indexed in `planning/README.md`) or `docs/site/*.html`. This doc is the map between all of those, not a replacement for any of them.
 
 ## 1. What Glider is
 

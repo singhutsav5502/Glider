@@ -234,7 +234,7 @@ StickyLocal works similarly for `/local` families. Explicit `/local` can beat St
 | HTTP/2 via proxy | Fragile; disable HTTP/2 in the CLI when using cooperative MITM mode |
 | Transparent interception scope | Windows/WinDivert only; live-verified end-to-end for Claude Code, not yet for cursor-agent/agy in that same zero-cooperation mode |
 
-See [STATUS.md](../STATUS.md) for the current gap list.
+See [planning/glider_high_level_design.md](../planning/glider_high_level_design.md) for the current gap list.
 
 ---
 
