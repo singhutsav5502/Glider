@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,11 +47,8 @@ const (
 	statsLogInterval = 15 * time.Second
 )
 
-type flowEntry struct {
-	host       string // original real destination, dotted-quad
-	port       int
-	insertedAt time.Time
-}
+// flowEntry is defined in packet_classify.go, shared with every
+// platform's redirector implementation.
 
 type packetJob struct {
 	pkt  []byte // owned copy — safe to hand to a worker, buf gets reused immediately
@@ -237,35 +233,6 @@ func (r *WinDivertRedirector) Start(ctx context.Context, cfg RedirectConfig) err
 	return nil
 }
 
-func mapKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-// expandProcessNameCandidates lowercases each configured process name and,
-// for script-wrapped CLIs (.cmd/.bat/.ps1 — cursor-agent.cmd is the known
-// live case), also adds "node.exe" as a best-effort fallback: a wrapper
-// script doesn't itself own the TCP connection, the interpreter it spawns
-// does, and for a Node-based CLI that's node.exe. Documented as an
-// approximation, not a general solution for arbitrary wrapper chains.
-func expandProcessNameCandidates(names []string) map[string]bool {
-	out := make(map[string]bool, len(names))
-	for _, n := range names {
-		n = strings.ToLower(strings.TrimSpace(n))
-		if n == "" {
-			continue
-		}
-		out[n] = true
-		if strings.HasSuffix(n, ".cmd") || strings.HasSuffix(n, ".bat") || strings.HasSuffix(n, ".ps1") {
-			out["node.exe"] = true
-		}
-	}
-	return out
-}
-
 // detectPrimaryLocalIP finds this machine's real, routable local IP (not
 // 127.0.0.1) by asking the OS which interface it would use to reach an
 // external address — no packet is actually sent (UDP "connect" only sets
@@ -283,48 +250,6 @@ func detectPrimaryLocalIP() (net.IP, error) {
 		return nil, fmt.Errorf("unexpected local addr type %T", conn.LocalAddr())
 	}
 	return udpAddr.IP, nil
-}
-
-// resolveAllowHosts resolves each concrete hostname in hosts to its current
-// IPv4 addresses. "*.domain" wildcard entries are skipped (no single
-// concrete IP to resolve). Unresolvable hosts are skipped, not fatal.
-// wildcardHosts returns the "*.domain" entries in hosts — the ones
-// resolveAllowHosts below silently skips, since a wildcard has no single
-// concrete IP to add to the packet filter's allowlist.
-func wildcardHosts(hosts []string) []string {
-	var out []string
-	for _, h := range hosts {
-		h = strings.TrimSpace(h)
-		if strings.HasPrefix(h, "*.") {
-			out = append(out, h)
-		}
-	}
-	return out
-}
-
-func resolveAllowHosts(hosts []string) []string {
-	var ips []string
-	seen := make(map[string]bool)
-	for _, h := range hosts {
-		h = strings.TrimSpace(h)
-		if h == "" || strings.HasPrefix(h, "*.") {
-			continue
-		}
-		addrs, err := net.LookupIP(h)
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			if v4 := a.To4(); v4 != nil {
-				s := v4.String()
-				if !seen[s] {
-					seen[s] = true
-					ips = append(ips, s)
-				}
-			}
-		}
-	}
-	return ips
 }
 
 // Stop must fully undo Start — no leftover kernel state. A process that
@@ -513,97 +438,46 @@ func (r *WinDivertRedirector) worker(ctx context.Context, idx int) {
 // already removed this packet from the stack, so failing to resend it
 // drops that connection's traffic, and a bug here must never silently
 // swallow a packet.
+//
+// The actual routing decision lives in classifyPacket (packet_classify.go,
+// shared with every platform's redirector) — this function is now just
+// parse, dispatch on the decision, and do the platform-specific byte
+// rewrite + reinject. Kept separate from classifyPacket deliberately:
+// classifyPacket's flow-sticky behavior (deciding process-allowed once per
+// flow, not once per packet) was the real fix for a live 2026-07-30
+// incident — cursor-agent needing several silent reconnects before a
+// plain completion call got through, traced to a racy per-packet
+// ownerPID recheck — and it's exactly the kind of logic that needs
+// ordinary go test coverage, not just live/admin-required WinDivert
+// testing, to stay fixed.
 func (r *WinDivertRedirector) handlePacket(pkt []byte, addr []byte) {
-	if len(pkt) < 20 || pkt[0]>>4 != 4 {
-		r.reinject(pkt, addr)
-		return
-	}
-	ihl := int(pkt[0]&0x0f) * 4
-	if len(pkt) < ihl+20 {
-		r.reinject(pkt, addr)
-		return
-	}
-	const tcpProto = 6
-	if pkt[9] != tcpProto {
-		r.reinject(pkt, addr)
-		return
-	}
+	parsed := parseIPv4TCP(pkt)
+	decision := classifyPacket(parsed, r.listenPort, r.localIP.String(), r.matchPorts, r.allowIPs, r.flows, &r.mu, time.Now(), func() bool {
+		return r.processAllowed(parsed.srcPort)
+	})
 
-	srcIP := net.IP(append([]byte(nil), pkt[12:16]...)).String()
-	dstIP := net.IP(append([]byte(nil), pkt[16:20]...)).String()
-	srcPort := binary.BigEndian.Uint16(pkt[ihl : ihl+2])
-	dstPort := binary.BigEndian.Uint16(pkt[ihl+2 : ihl+4])
-
-	switch {
-	case int(srcPort) == r.listenPort && srcIP == r.localIP.String():
-		key := dstIP + ":" + strconv.Itoa(int(dstPort))
-		r.mu.Lock()
-		entry, ok := r.flows[key]
-		if ok {
-			entry.insertedAt = time.Now() // refresh TTL on every use, not just the initial forward packet
-			r.flows[key] = entry
-		}
-		r.mu.Unlock()
-		if !ok {
-			r.reinject(pkt, addr)
-			return
-		}
-		copy(pkt[12:16], net.ParseIP(entry.host).To4())
-		binary.BigEndian.PutUint16(pkt[ihl:ihl+2], uint16(entry.port))
+	switch decision.Action {
+	case actionReturn:
+		copy(pkt[12:16], net.ParseIP(decision.ReturnHost).To4())
+		binary.BigEndian.PutUint16(pkt[parsed.ihl:parsed.ihl+2], uint16(decision.ReturnPort))
 		r.statReturned.Add(1)
 		r.recalcAndReinject(pkt, addr)
 
-	case r.matchPorts[dstPort] && r.allowIPs[dstIP]:
-		// processAllowed is gated per FLOW, not per packet. It used to run
-		// on every single forward packet, which live-diagnosed 2026-07-30
-		// as the real cause of cursor-agent needing several silent
-		// reconnects before a plain (non-delegate) completion call finally
-		// got through: ownerPID's answer comes from a 2s time-windowed,
-		// port-keyed OS TCP-table snapshot, and a single transient miss on
-		// ANY mid-connection packet (not just the opening SYN) flipped
-		// processAllowed to false for that one packet, which then got
-		// reinjected unredirected — sent straight to the real origin
-		// instead of the local listener Glider had already accepted the
-		// connection on. That one misrouted packet vanishes from Glider's
-		// side of an already-established TCP stream, which is exactly
-		// what a client sees as a dropped connection. Fix: decide once,
-		// at the first packet of a flow (keyed by client ip:port, same
-		// key the return path already uses), and trust that decision for
-		// every later packet on the same flow — a real client can't
-		// switch owning processes mid-connection, so re-checking
-		// ownerPID's racy, time-windowed cache on every packet was pure
-		// risk with no correctness benefit. The existing flowEntryTTL
-		// (2min, matching Windows' own default TIME_WAIT) already bounds
-		// how long a stale entry could theoretically outlive a closed
-		// connection and its port being reused by a different process —
-		// this reuses that same accepted tradeoff, not a new one.
-		key := srcIP + ":" + strconv.Itoa(int(srcPort))
-		r.mu.Lock()
-		entry, known := r.flows[key]
-		if known {
-			entry.insertedAt = time.Now()
-			r.flows[key] = entry
-		}
-		r.mu.Unlock()
-
-		if !known {
-			if !r.processAllowed(srcPort) {
-				r.statRejectedProc.Add(1)
-				r.reinject(pkt, addr) // matched by IP/port, rejected by owning process — pass through untouched
-				return
-			}
-			r.mu.Lock()
-			r.flows[key] = flowEntry{host: dstIP, port: int(dstPort), insertedAt: time.Now()}
-			r.mu.Unlock()
-		}
-
+	case actionRedirect:
 		copy(pkt[16:20], r.localIP.To4())
-		binary.BigEndian.PutUint16(pkt[ihl+2:ihl+4], uint16(r.listenPort))
+		binary.BigEndian.PutUint16(pkt[parsed.ihl+2:parsed.ihl+4], uint16(r.listenPort))
 		r.statRedirected.Add(1)
 		r.recalcAndReinject(pkt, addr)
 
-	default:
+	case actionRejectProcess:
+		r.statRejectedProc.Add(1)
+		r.reinject(pkt, addr) // matched by IP/port, rejected by owning process — pass through untouched
+
+	case actionUnmatched:
 		r.statUnmatched.Add(1)
+		r.reinject(pkt, addr)
+
+	default: // actionReinjectUnchanged: malformed packet, or a return packet for an unknown/expired flow
 		r.reinject(pkt, addr)
 	}
 }
