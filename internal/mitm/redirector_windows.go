@@ -554,16 +554,48 @@ func (r *WinDivertRedirector) handlePacket(pkt []byte, addr []byte) {
 		r.recalcAndReinject(pkt, addr)
 
 	case r.matchPorts[dstPort] && r.allowIPs[dstIP]:
-		if !r.processAllowed(srcPort) {
-			r.statRejectedProc.Add(1)
-			r.reinject(pkt, addr) // matched by IP/port, rejected by owning process — pass through untouched
-			return
-		}
-
+		// processAllowed is gated per FLOW, not per packet. It used to run
+		// on every single forward packet, which live-diagnosed 2026-07-30
+		// as the real cause of cursor-agent needing several silent
+		// reconnects before a plain (non-delegate) completion call finally
+		// got through: ownerPID's answer comes from a 2s time-windowed,
+		// port-keyed OS TCP-table snapshot, and a single transient miss on
+		// ANY mid-connection packet (not just the opening SYN) flipped
+		// processAllowed to false for that one packet, which then got
+		// reinjected unredirected — sent straight to the real origin
+		// instead of the local listener Glider had already accepted the
+		// connection on. That one misrouted packet vanishes from Glider's
+		// side of an already-established TCP stream, which is exactly
+		// what a client sees as a dropped connection. Fix: decide once,
+		// at the first packet of a flow (keyed by client ip:port, same
+		// key the return path already uses), and trust that decision for
+		// every later packet on the same flow — a real client can't
+		// switch owning processes mid-connection, so re-checking
+		// ownerPID's racy, time-windowed cache on every packet was pure
+		// risk with no correctness benefit. The existing flowEntryTTL
+		// (2min, matching Windows' own default TIME_WAIT) already bounds
+		// how long a stale entry could theoretically outlive a closed
+		// connection and its port being reused by a different process —
+		// this reuses that same accepted tradeoff, not a new one.
 		key := srcIP + ":" + strconv.Itoa(int(srcPort))
 		r.mu.Lock()
-		r.flows[key] = flowEntry{host: dstIP, port: int(dstPort), insertedAt: time.Now()}
+		entry, known := r.flows[key]
+		if known {
+			entry.insertedAt = time.Now()
+			r.flows[key] = entry
+		}
 		r.mu.Unlock()
+
+		if !known {
+			if !r.processAllowed(srcPort) {
+				r.statRejectedProc.Add(1)
+				r.reinject(pkt, addr) // matched by IP/port, rejected by owning process — pass through untouched
+				return
+			}
+			r.mu.Lock()
+			r.flows[key] = flowEntry{host: dstIP, port: int(dstPort), insertedAt: time.Now()}
+			r.mu.Unlock()
+		}
 
 		copy(pkt[16:20], r.localIP.To4())
 		binary.BigEndian.PutUint16(pkt[ihl+2:ihl+4], uint16(r.listenPort))

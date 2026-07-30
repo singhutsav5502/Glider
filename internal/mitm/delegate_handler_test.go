@@ -94,26 +94,31 @@ func TestDelegateHandler_ScaffoldedFlagDoesNotTriggerDelegation(t *testing.T) {
 // CURSORCAP_OK" — no delegate flag, so DelegateHandler must fall through.
 var realCursorAgentRunRequestFirstEnvelope = []byte("\x00\x00\x00\x02n\n\xeb\x04\n\x00\x12P\nN\nL\n reply with exactly: CURSORCAP_OK\x12$ba5ebf39-21c4-47c8-bc09-e1bee5311657\x1a\x00 \x01\"\x00*$7b4fffae-309e-4dd7-bb36-4be380112b17J\t\n\adefault`\x00r\t\n\adefaultr(\n\bgrok-4.5\x1a\x0e\n\x06effort\x12\x04high\x1a\f\n\x04fast\x12\x04truer\x1c\n\fcomposer-2.5\x1a\f\n\x04fast\x12\x04truerQ\n\rclaude-opus-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04high\x1a\r\n\x04fast\x12\x05falserB\n\vgpt-5.6-sol\x1a\x0f\n\acontext\x12\x04272k\x1a\x13\n\treasoning\x12\x06medium\x1a\r\n\x04fast\x12\x05falserC\n\x0eclaude-fable-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04highrD\n\x0fclaude-sonnet-5\x1a\x10\n\bthinking\x12\x04true\x1a\x0f\n\acontext\x12\x04300k\x1a\x0e\n\x06effort\x12\x04highrD\n\rgpt-5.6-terra\x1a\x0f\n\acontext\x12\x04272k\x1a\x13\n\treasoning\x12\x06medium\x1a\r\n\x04fast\x12\x05false\x82\x01$7b4fffae-309e-4dd7-bb36-4be380112b17")
 
-// TestDelegateHandler_TruncatesToFirstEnvelopeOnFallThroughForCursorRun
-// documents a real design decision this session got wrong once and had to
-// correct (2026-07-29): a brief attempt to preserve the *entire* real client
-// stream on the fall-through path (via io.MultiReader, so origin passthrough
-// would forward exactly what the client sent instead of just the first
-// envelope) turned out to reintroduce the identical problem it was meant to
-// fix. passthroughHTTPS's transport.RoundTrip reads the request body to send
-// it; once the buffered first envelope is exhausted, a MultiReader whose
-// second reader is the real, still-open client connection blocks on THAT
-// read — waiting on cursor-agent's own next periodic keepalive envelope, up
-// to ~30s away. Confirmed live: reverting to plain truncation is what
-// actually fixed plain (non-delegate) passthrough end-to-end. Truncating to
-// the first envelope is correct here, not lossy — the real cursor.sh origin
-// is bidi-streaming capable, exactly like Glider's own synthesized replies,
-// and doesn't need the client's later keepalives to respond to the human's
-// actual instruction, which is always the first envelope. This test locks in
-// that r.Body, once restored on the fall-through path, is exactly the first
-// envelope — not the full stream, and not empty either (the original
-// 2026-07-26 bug this whole restoration mechanism exists to prevent).
-func TestDelegateHandler_TruncatesToFirstEnvelopeOnFallThroughForCursorRun(t *testing.T) {
+// TestDelegateHandler_PreservesFullStreamOnFallThroughForCursorRun documents
+// the final shape of a real back-and-forth this investigation went through
+// (2026-07-29/30): preserving the client's full stream on the fall-through
+// path (via io.MultiReader) was tried, reverted because it reintroduced a
+// ~30s block, then correctly re-applied once the actual cause of that block
+// was found and fixed elsewhere: passthroughHTTPS used to clone the outbound
+// request with req.Context() — cursor-agent's OWN inbound connection
+// context — so cursor-agent's real client resetting its own stream almost
+// immediately (confirmed live via an isolated wirecapture HTTP/2 frame
+// trace) poisoned Glider's entire outbound relay to the real origin,
+// blocking reads included, regardless of how fast or slow that relay
+// actually was. Separately confirmed live: truncating the request to just
+// the first envelope (this test's own prior behavior) broke plain
+// (non-delegate) passthrough outright — the real cursor.sh origin, given
+// only a truncated, artificially-closed request instead of the ongoing bidi
+// exchange a real client sends, never finished generating a response at
+// all, even given a full 120s independent timeout to do so. With
+// passthroughHTTPS's outbound leg now on its own independent context (see
+// that function's own doc comment), relaying the live stream here is safe
+// again. This test locks in that r.Body, once restored on the fall-through
+// path, is the full reconstructed stream (first envelope + whatever the
+// real client sends after) — not truncated, and not empty either (the
+// original 2026-07-26 bug this whole restoration mechanism exists to
+// prevent).
+func TestDelegateHandler_PreservesFullStreamOnFallThroughForCursorRun(t *testing.T) {
 	laterKeepalive := []byte{0x00, 0x00, 0x00, 0x00, 0x02, ':', 0x00}
 	pr, pw := io.Pipe()
 	go func() {
@@ -139,11 +144,12 @@ func TestDelegateHandler_TruncatesToFirstEnvelopeOnFallThroughForCursorRun(t *te
 	if err != nil {
 		t.Fatalf("reading restored body: %v", err)
 	}
-	if len(restored) != len(realCursorAgentRunRequestFirstEnvelope) {
-		t.Fatalf("restored body is %d bytes, want exactly %d (the first envelope, no more, no less)", len(restored), len(realCursorAgentRunRequestFirstEnvelope))
+	want := append(append([]byte{}, realCursorAgentRunRequestFirstEnvelope...), laterKeepalive...)
+	if len(restored) != len(want) {
+		t.Fatalf("restored body is %d bytes, want %d (first envelope + later keepalive) — the fall-through path must not truncate the real client's stream", len(restored), len(want))
 	}
-	if !bytes.Equal(restored, realCursorAgentRunRequestFirstEnvelope) {
-		t.Fatal("restored body does not match the first envelope's real bytes")
+	if !bytes.Equal(restored, want) {
+		t.Fatal("restored body does not match first-envelope+keepalive bytes")
 	}
 }
 

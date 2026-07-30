@@ -534,7 +534,29 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 	// the shared Transport derives it correctly per request on its own.
 	transport := p.sharedPassthroughTransport()
 
-	outReq := req.Clone(req.Context())
+	// An independent context, NOT req.Context() — the actual root cause of
+	// a long-chased ~29-30s hang-then-"context canceled" pattern
+	// (2026-07-30, via net/http/httptrace instrumentation pinpointing the
+	// block to io.Copy(w, resp.Body), not the dial or the request write,
+	// which both complete in well under a second). req.Context() is
+	// cursor-agent's OWN inbound connection's context, and cursor-agent's
+	// real client sends RST_STREAM(CANCEL) on its own request stream
+	// almost immediately after sending it (confirmed live via an isolated
+	// wirecapture HTTP/2 frame trace earlier the same investigation) —
+	// independent of how fast or slow Glider's own response ends up
+	// being. Cloning the outbound request with that same, already-doomed
+	// context means cursor-agent's own early self-cancellation poisons
+	// Glider's entire relay to the real origin, including the response
+	// body copy — even when that relay is otherwise proceeding
+	// correctly and would complete fine left alone. A generous, bounded,
+	// independent timeout (matching vendors.RunTimeout's own ceiling for
+	// a real completion call) lets the outbound leg live or die on its
+	// own merits instead of inheriting a client-side cancellation that
+	// may have nothing to do with whether the real origin can actually
+	// answer.
+	outCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	outReq := req.Clone(outCtx)
 	outReq.RequestURI = ""
 	if outReq.URL.Scheme == "" {
 		outReq.URL.Scheme = "https"
@@ -552,22 +574,34 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 	// on a fresh connection *if* it can rewind the request body — which it
 	// can't for a plain io.ReadCloser with no GetBody set, surfacing as
 	// "net/http: cannot rewind body after connection loss" instead of a
-	// transparent retry. Every caller by this point has already fully
-	// buffered req.Body in memory (either a plain io.ReadAll, or — for
-	// cursor-agent's AgentService/Run — a deliberately truncated single
-	// Connect envelope, a few hundred bytes; see DelegateHandler and
-	// handleAgentRPC's own doc comments), so reading it once here to set
-	// GetBody costs nothing that wasn't already paid.
+	// transparent retry.
+	//
+	// Only for a body with a KNOWN length (req.ContentLength >= 0) — a
+	// body with an unknown length (cursor-agent's AgentService/Run,
+	// reconstructed upstream as a live stream: buffered first envelope +
+	// the real client's still-arriving bytes, see DelegateHandler and
+	// handleAgentRPC's own doc comments) must NOT be read eagerly here.
+	// Doing so would block this whole call on the client's own pace
+	// again — exactly the blocking-read problem this investigation
+	// already fixed once, just relocated here. For that case, Body is
+	// relayed live and GetBody is left unset; a stale pooled connection
+	// on a bidi-streaming relay is a rare-enough edge case not worth
+	// paying for with a reintroduced block on every request.
 	if req.Body != nil && req.Body != http.NoBody {
-		bodyBytes, readErr := io.ReadAll(req.Body)
-		if readErr != nil {
-			return fmt.Errorf("mitm passthrough: read request body: %w", readErr)
+		if req.ContentLength >= 0 {
+			bodyBytes, readErr := io.ReadAll(req.Body)
+			if readErr != nil {
+				return fmt.Errorf("mitm passthrough: read request body: %w", readErr)
+			}
+			outReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			outReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+			outReq.ContentLength = int64(len(bodyBytes))
+		} else {
+			outReq.Body = req.Body
+			outReq.ContentLength = -1
 		}
-		outReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		outReq.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-		}
-		outReq.ContentLength = int64(len(bodyBytes))
 	}
 
 	resp, err := transport.RoundTrip(outReq)
@@ -586,8 +620,8 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, err = io.Copy(w, resp.Body)
-	return err
+	_, copyErr := io.Copy(w, resp.Body)
+	return copyErr
 }
 
 // singleConnListener adapts one already-accepted net.Conn to the

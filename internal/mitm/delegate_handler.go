@@ -67,25 +67,30 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	if err != nil {
 		return false, fmt.Errorf("mitm delegate: read body: %w", err)
 	}
-	// io.NopCloser(bytes.NewReader(body)) — deliberately NOT
-	// io.MultiReader(bytes.NewReader(body), r.Body), which this line used
-	// briefly (2026-07-29) to avoid truncating what gets forwarded to
-	// origin on the fall-through path. That turned out to reintroduce the
-	// exact same ~30s block it was meant to fix, just moved to a different
-	// spot: passthroughHTTPS's transport.RoundTrip reads outReq.Body to
-	// send the request, and a MultiReader whose second reader is the real,
-	// still-open client connection blocks on THAT read whenever the
-	// buffered part runs out — waiting on cursor-agent's own next periodic
-	// keepalive envelope (up to ~30s away), the identical client-patience
-	// problem the read-side fix already solved, just relocated to the send
-	// side instead of the read side. Confirmed live: reverting to plain
-	// truncation here is what actually fixed plain passthrough end-to-end.
-	// Truncating to the first envelope is correct, not lossy, for this RPC
-	// shape specifically — the real cursor.sh origin is bidi-streaming
-	// capable, exactly like Glider's own synthesized replies, and doesn't
-	// need the client's later keepalive envelopes to start responding to
-	// the human's actual instruction, which is always the first envelope.
-	r.Body = io.NopCloser(bytes.NewReader(body))
+	// io.MultiReader(buffered-first-bytes, r.Body), restored 2026-07-30
+	// after a real back-and-forth this same investigation: replacing
+	// r.Body with only the first envelope (bytes.NewReader alone) is
+	// right for the *handled* delegate case (Glider never forwards the
+	// request anywhere), but wrong for the fall-through-to-origin case —
+	// the real cursor.sh backend, when relayed only a truncated,
+	// artificially-closed request instead of the full ongoing bidi
+	// exchange a real client sends, appears to simply never finish
+	// generating its own response (confirmed live: a relay given a full
+	// 120s independent timeout still only received ~200 bytes total and
+	// timed out, never the actual answer). A MultiReader was tried once
+	// before this and reverted, because it reintroduced a ~30s block —
+	// but that block turned out to be caused by passthroughHTTPS sharing
+	// req.Context() with this inbound request, so cursor-agent's own
+	// early self-cancellation (it resets its own stream almost
+	// immediately, independent of server speed) poisoned the *entire*
+	// outbound relay, blocking read included. Now that passthroughHTTPS
+	// gives the outbound leg its own independent context (see that
+	// function's own doc comment), relaying the live stream is safe:
+	// blocking on the client's next keepalive no longer aborts early,
+	// it just proceeds at the client's own pace like a normal bidi relay
+	// should. A no-op for claude/agy, whose ReadRequestBody already
+	// drains r.Body to EOF via io.ReadAll.
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
 	userText, model, stream, ok, err := adapter.ExtractUserInstruction(body)
 	if err != nil {

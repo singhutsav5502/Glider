@@ -281,28 +281,33 @@ func (i *Interceptor) handleAgentRPC(w http.ResponseWriter, r *http.Request, hos
 		i.observe("error", host, path, "", "", "", 0, start)
 		return false, err
 	}
-	// io.NopCloser(bytes.NewReader(body)) — deliberately NOT
-	// io.MultiReader(bytes.NewReader(body), r.Body), which this line used
-	// briefly (2026-07-29): see DelegateHandler.TryHandle's identical fix
-	// (and its own doc comment) for the full incident. Reconstructing the
-	// live client stream here and forwarding it as-is to origin passthrough
-	// reintroduced the exact ~30s block this whole fast-read fix exists to
-	// avoid — transport.RoundTrip blocks reading outReq.Body to send the
-	// request, and once the buffered part is exhausted, that read falls
-	// through to the still-open real client connection, waiting on
-	// cursor-agent's own next periodic keepalive envelope. Truncating to
-	// the first envelope is correct here, not lossy: the real cursor.sh
-	// origin is bidi-streaming capable, exactly like Glider's own
-	// synthesized replies, and doesn't need the client's later keepalives
-	// to start responding to the human's actual instruction (always the
-	// first envelope). _ = r.Body.Close() is intentionally not restored —
-	// closing before the handler returns risks signaling the real client's
-	// stream is unwanted mid-flight; letting it be garbage-collected once
-	// this request's goroutine exits is simpler and was never the actual
-	// problem here.
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
-	r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	// io.MultiReader(buffered-first-envelope, r.Body), restored 2026-07-30
+	// — see DelegateHandler.TryHandle's identical fix and its own doc
+	// comment for the full back-and-forth this same investigation went
+	// through. Truncating to just the first envelope broke plain
+	// (non-delegate) passthrough: the real cursor.sh origin, given only a
+	// truncated, artificially-closed request instead of the full ongoing
+	// bidi exchange a real client sends, appears to never finish
+	// generating a response at all. A MultiReader was tried, reverted
+	// (it reintroduced a ~30s block), then understood: that block was
+	// actually caused by passthroughHTTPS sharing this request's own
+	// context, so the real client's own early self-cancellation poisoned
+	// the whole outbound relay. passthroughHTTPS now uses an independent
+	// context for the outbound leg, so relaying the live stream here is
+	// safe again — blocking on the client's next keepalive just proceeds
+	// at the client's own pace instead of getting aborted early.
+	// Content-Length is deliberately NOT set for the Run path: the
+	// reconstructed body's total size isn't known upfront, matching how
+	// a genuine bidi-streaming request is framed over HTTP/2 in the
+	// first place (sized by DATA frames until END_STREAM, not a header).
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	if isRunPath {
+		r.ContentLength = -1
+		r.Header.Del("Content-Length")
+	} else {
+		r.ContentLength = int64(len(body))
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
 
 	decoded, err := cursorrpc.DecodeChatRequest(path, body)
 	if err != nil {
