@@ -280,6 +280,32 @@ func (p *Proxy) handleTransparent(conn net.Conn) {
 		}
 	}
 
+	// ProcessFilter is Windows' packet-level AllowProcessNames check,
+	// relocated to run here instead — see ProcessFilter's own doc comment
+	// for why a Linux/iptables-REDIRECT redirector needs this post-accept
+	// step at all, unlike WinDivertRedirector (which never implements
+	// this interface, since a disallowed connection never reaches this
+	// listener in the first place on that platform). A disallowed
+	// connection here has already completed a real TCP handshake against
+	// Glider's own socket — there's no packet to "reinject unchanged" the
+	// way there is on Windows, so the equivalent is an unconditional
+	// blind-tunnel to the real destination, bypassing host-allowlist MITM
+	// entirely, same as the existing "not allowlisted" path below.
+	if p.Redirector != nil {
+		if filter, ok := p.Redirector.(ProcessFilter); ok && !filter.ConnectionAllowed(conn) {
+			if resolveErr != nil || origHost == "" {
+				p.Log.Debug("mitm transparent: process not allowed and original destination unresolvable, dropping", "resolve_err", resolveErr)
+				return
+			}
+			p.Log.Debug("mitm transparent: process not allowed, blind-tunneling unconditionally", "dial", net.JoinHostPort(origHost, fmt.Sprintf("%d", origPort)))
+			if p.Metrics != nil {
+				p.Metrics.IncAction("mitm", "blind_tunnel")
+			}
+			p.blindTunnel(conn, bufio.NewReaderSize(conn, 8192), net.JoinHostPort(origHost, fmt.Sprintf("%d", origPort)))
+			return
+		}
+	}
+
 	// bufio.NewReader's default 4096-byte buffer would make a blind
 	// Peek(4096) block until either 4096 bytes arrive or the deadline hits —
 	// a real TLS client sends one ClientHello record then waits for the

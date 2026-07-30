@@ -12,6 +12,7 @@ require (
 	github.com/qri-io/starlib v0.5.0
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	go.starlark.net v0.0.0-20260708150628-5395d018f003
+	golang.org/x/sys v0.42.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -27,5 +28,4 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/errors v0.8.1 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 )

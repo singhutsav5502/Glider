@@ -1,6 +1,6 @@
 # Transparent redirector — interface design and mechanics
 
-How Glider intercepts a CLI's HTTPS traffic without that CLI cooperating in any way — no proxy setting, no env var, no relaunch — and why the interface is split the way it is. Windows implementation shipped (WinDivert); Linux/macOS designed but not built. Code: `internal/mitm/redirector_windows.go`, `internal/mitm/redirector_other.go` (stub).
+How Glider intercepts a CLI's HTTPS traffic without that CLI cooperating in any way — no proxy setting, no env var, no relaunch — and why the interface is split the way it is. Windows (WinDivert) and Linux (iptables + `SO_ORIGINAL_DST`) both shipped and live-verified; macOS designed but not built. Code: `internal/mitm/redirector_windows.go`, `internal/mitm/redirector_linux.go`, `internal/mitm/redirector_other.go` (macOS/other stub).
 
 ## The one-paragraph mental model
 
@@ -100,15 +100,23 @@ Windows has no OS-native "original destination" lookup, unlike Linux — the flo
 
 Live-verified: a sniff-mode capture (`WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY`, no packets touched) caught 712 real outbound TLS segments system-wide in 25s, including an already-running Claude Code session's own traffic — proving visibility into pre-existing connections with zero app cooperation. `Stop()` was verified to leave no trace (`sc query` confirms the driver service is fully gone after `sc delete`).
 
-## Linux (iptables/nftables + `SO_ORIGINAL_DST`) — designed, not proven
+## Linux (iptables + `SO_ORIGINAL_DST`) — shipped, live-verified 2026-07-30
 
 ```
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port <ListenPort>
+iptables -t nat -N GLIDER_TRANSPARENT
+iptables -t nat -A GLIDER_TRANSPARENT -d <allowlisted-ip> -p tcp --dport 443 -j REDIRECT --to-port <ListenPort>
+iptables -t nat -A OUTPUT -j GLIDER_TRANSPARENT
 ```
 
-`REDIRECT` is a first-class netfilter target — the kernel rewrites the destination before the packet leaves the machine, no userspace rewrite-and-reinject round trip. `OriginResolver` becomes `getsockopt(fd, SOL_IP, SO_ORIGINAL_DST)` on the accepted socket — the kernel hands back the pre-NAT destination directly, no flow table or eviction policy needed. This is the same mechanism mitmproxy's own transparent mode and most corporate MITM appliances run in production.
+`REDIRECT` is a first-class netfilter target — the kernel rewrites the destination before the packet leaves the machine, no userspace rewrite-and-reinject round trip. `OriginResolver` is `getsockopt(fd, SOL_IP, SO_ORIGINAL_DST)` on the accepted socket — the kernel hands back the pre-NAT destination directly, no flow table or eviction policy needed (unlike Windows). `redirector_linux.go` implements this.
 
-Not independently proven yet: an attempt inside WSL2 Ubuntu 24.04 installed `iptables` and accepted the rule with no error, but a `curl` from an uncooperating process failed to connect at all. Root cause: the stock Microsoft-built WSL2 kernel ships without netfilter's NAT modules compiled in (`lsmod`/`/proc/net/ip_tables_names` both empty) — a documented WSL2 packaging limitation, not evidence against the technique. Needs a real Linux host or cloud VM to actually verify.
+Genuinely, architecturally different from Windows, not just a different syscall set for the same shape: WinDivert operates per-*packet*, so `handlePacket` has to make (and, on 2026-07-30, got wrong once — see that function's own doc comment in `redirector_windows.go` for the live incident) a redirect decision on every single packet of a connection. `REDIRECT` operates per-*connection* — the kernel commits to the redirect once, before Glider's listener ever sees anything, so there is no packet-level decision to make at all on this platform, and therefore no equivalent of that bug class is even possible here by construction.
+
+One real capability gap this creates: Netfilter's `REDIRECT` target has no "match by owning process image name" condition the way WinDivert's own packet filter can express directly, so `AllowProcessNames` can't be enforced by the firewall rule itself. It's enforced instead in `internal/mitm/proxy.go`'s shared `handleTransparent`, via the new optional `ProcessFilter` interface (`ConnectionAllowed(conn) bool`) — checked once per accepted connection, using the exact same `/proc/net/tcp` + `/proc/<pid>/fd` technique `ss`/`netstat` use (`internal/procinfo/procinfo_linux.go`) to answer "who owns the other end of this socket," mirroring Windows' `GetExtendedTcpTable`-based `ownerPID` (same bounded-retry-on-cold-cache defense against the same kernel-propagation-delay race documented above, ported proactively rather than re-discovered live on this platform too). A connection whose owning process isn't allowlisted gets blind-tunneled to the real destination unconditionally — Linux has no way to "un-redirect" a connection after the kernel already completed the handshake against Glider's own socket, so this is the connection-oriented equivalent of Windows reinjecting a rejected packet unchanged.
+
+Live-verified inside WSL2 Ubuntu 24.04, kernel `6.6.87.2-microsoft-standard-WSL2`: a real `iptables -t nat` `REDIRECT` rule against a real local listener correctly diverted a real outbound `net.Dial` connection before it ever reached the real destination (confirmed by the "real destination" listener never receiving a direct connection), and `SO_ORIGINAL_DST` correctly recovered the original address — including the network-byte-order port fix (the same `MIB_TCPROW_OWNER_PID`-style byte-swap issue Windows' owner-table parsing already has to handle, ported here for the analogous reason). Self-traffic exclusion (Glider's own outbound dials never redirected back into itself) verified against a real connection too. This directly contradicts an earlier note in this doc claiming WSL2's stock kernel ships without netfilter's NAT modules compiled in — either that was true of an older WSL2 kernel build and has since been fixed upstream, or it was a misdiagnosis of a different problem at the time; either way, the current kernel demonstrably has full NAT support. `Stop()`'s teardown (chain flush + delete, OUTPUT jump removal) verified to leave no trace via `iptables -t nat -L`.
+
+A real, more severe risk than WinDivert's, documented directly in `redirector_linux.go`: iptables rules are persistent kernel state, not tied to the process the way a WinDivert handle is. If Glider crashes before `Stop()` runs, the `REDIRECT` rule stays active indefinitely — silently blackholing traffic to a port nothing is listening on anymore — until something manually clears it. `setupIPTables` defends against a stale rule from a *previous* crashed run (idempotent cleanup before creating anything), but there's no defense against *this* run crashing uncleanly. Same category of incident as the WinDivert orphaned-rule postmortem elsewhere in this project's history, worse in that there's no OS-level handle-close-on-exit to fall back on at all — anyone touching this code needs the same watchdog/cleanup/network-health-check discipline WinDivert testing already requires, not implicit trust that a crash is safe.
 
 ## macOS — documented only, no hardware tested
 
@@ -116,13 +124,13 @@ Apple's Network Extension framework (`NETransparentProxyProvider`/`NEFilterDataP
 
 ## Side-by-side
 
-| | `Start`/`Stop` | `ResolveOriginalDestination` | Confidence |
-|---|---|---|---|
-| **Windows** | WinDivert: rewrite + checksum + reinject; `Stop` closes the handle and verifies the driver service is gone | In-process flow table keyed by client `ip:port` | **Proven live** |
-| **Linux** | `iptables`/`nftables` `REDIRECT`; `Stop` flushes the rule | `SO_ORIGINAL_DST` — free from the kernel | Designed, industry-standard elsewhere, blocked from live proof by WSL2's stripped kernel |
-| **macOS** | Network Extension framework, or `pfctl` `rdr` | Provided by the framework, or BSD original-destination lookup | Documented only |
+| | `Start`/`Stop` | `ResolveOriginalDestination` | `AllowProcessNames` | Confidence |
+|---|---|---|---|---|
+| **Windows** | WinDivert: rewrite + checksum + reinject; `Stop` closes the handle and verifies the driver service is gone | In-process flow table keyed by client `ip:port` | Packet-level, pre-accept (`ownerPID`/`processAllowed` in `handlePacket`) | **Proven live** |
+| **Linux** | `iptables` `REDIRECT` in a dedicated chain; `Stop` flushes and deletes it | `SO_ORIGINAL_DST` — free from the kernel | Connection-level, post-accept (`ProcessFilter`/`ConnectionAllowed`, since `REDIRECT` has no process-match condition) | **Proven live** (WSL2 Ubuntu 24.04, kernel 6.6.87.2) |
+| **macOS** | Network Extension framework, or `pfctl` `rdr` | Provided by the framework, or BSD original-destination lookup | Not designed yet | Documented only |
 
-Selected by Go build tag (`redirector_windows.go` / a future `redirector_linux.go`), not runtime dispatch — a platform without an implementation simply doesn't compile that code in.
+Selected by Go build tag (`redirector_windows.go` / `redirector_linux.go`), not runtime dispatch — a platform without an implementation simply doesn't compile that code in. `redirector_other.go` (`!windows && !linux`) is the honest macOS-and-anything-else stub — it errors clearly rather than silently no-opping.
 
 ## Does the CLI actually trust Glider's forged cert?
 

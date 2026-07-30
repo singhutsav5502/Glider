@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package mitm
 
@@ -9,9 +9,13 @@ import (
 	"net"
 )
 
-// unsupportedRedirector is the non-Windows stand-in until a Linux/macOS
-// implementation lands (see planning/transparent_redirector_design.md §6-7 —
-// iptables/nftables REDIRECT + SO_ORIGINAL_DST is designed, not yet built).
+// unsupportedRedirector is the stand-in for platforms with neither
+// redirector_windows.go's nor redirector_linux.go's implementation
+// (macOS today — see planning/transparent_redirector_design.md §6-7 for
+// the pf-based design that would close this gap, not yet built; no
+// verifiable macOS environment was available to build and test it
+// against, and shipping unverified kernel-adjacent networking code isn't
+// something this project does).
 type unsupportedRedirector struct{}
 
 // NewRedirector returns the platform's TransparentRedirector implementation.

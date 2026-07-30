@@ -9,7 +9,7 @@
 | Capability | Summary |
 |---|---|
 | **Dual-mode proxy** | Gateway (`:8080`, OpenAI-compatible BYOK) + HTTPS MITM forward proxy (`:8082`) that decrypts allowlisted CLI-cloud traffic |
-| **Transparent OS-level interception** | Windows-only, WinDivert-based: redirects a CLI's outbound HTTPS to Glider without the CLI cooperating (no env var, no proxy setting) — works even on a session that's already running |
+| **Transparent OS-level interception** | Windows (WinDivert) and Linux (iptables + `SO_ORIGINAL_DST`): redirects a CLI's outbound HTTPS to Glider without the CLI cooperating (no env var, no proxy setting) — works even on a session that's already running. macOS not yet implemented |
 | **Smart routing** | Explicit commands, turn-family sticky, task classifier, Starlark scripts, token ceiling — routes each request to local or cloud |
 | **Cross-CLI delegation** | Send a prompt from your current CLI to another installed CLI (`/claude`, `/cursor-agent`, `/agy …`); Glider runs it headless, detects when it pauses for a permission prompt, relays that prompt back to you, and resumes on your answer. A clean final answer comes back by default, not the raw transcript — flip to raw from the dashboard when debugging. `/vendor:interactive` hands the task to that CLI's own native session in a new window instead |
 | **NGL (Native Glider Language)** | A canonical `Turn`/`Part` envelope every vendor's wire format is translated through (outgoing), plus an `OriginAdapter` per vendor that recognizes and replies to that vendor's own live traffic (incoming) — so core routing/delegation code never branches on which CLI is talking. See [docs/site/ngl.html](docs/site/ngl.html) |
@@ -99,7 +99,7 @@ Cloud keys via env: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Copy [`.env.example`]
 |---|---|
 | `cmd/glider` | Entrypoint — wires all subsystems, tray |
 | `internal/api` | OpenAI + Responses gateway, SSE streaming |
-| `internal/mitm` | HTTPS MITM forward proxy (CONNECT, CA, transparent WinDivert redirector, delegation handler) |
+| `internal/mitm` | HTTPS MITM forward proxy (CONNECT, CA, transparent redirector — WinDivert on Windows, iptables on Linux, delegation handler) |
 | `internal/vendors` | Vendor registry/discovery, headless CLI execution, permission-relay resume flow, workspace-per-PID resolution |
 | `internal/ngl` | Native Glider Language — canonical `Turn`/`Part` envelope + per-vendor wire-format adapters |
 | `internal/backend` | Ollama, vLLM, OpenAI, Anthropic clients |

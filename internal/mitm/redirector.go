@@ -51,3 +51,27 @@ type RedirectConfig struct {
 type OriginResolver interface {
 	ResolveOriginalDestination(conn net.Conn) (host string, port int, err error)
 }
+
+// ProcessFilter is an optional capability a TransparentRedirector can
+// implement when AllowProcessNames enforcement can't happen at the OS's
+// own packet-filtering layer, and has to happen instead on each already-
+// accepted connection. WinDivertRedirector (Windows) doesn't implement
+// this: it filters by owning process at the packet level, before a
+// disallowed connection is ever redirected to Glider's listener at all,
+// so handleTransparent never even sees it. A Linux implementation built
+// on iptables REDIRECT has no equivalent primitive — Netfilter's REDIRECT
+// target has no "match by owning process image name" condition, so every
+// connection matching the IP/port criteria lands on Glider's listener
+// regardless of which process opened it, and AllowProcessNames has to be
+// enforced here, after accept, using the connection's local port to look
+// up its owning process the same way the packet-level filter does.
+type ProcessFilter interface {
+	// ConnectionAllowed reports whether conn's owning process is allowed
+	// to be MITM'd. false means handleTransparent must blind-tunnel to
+	// the real destination unconditionally — the same "reinject
+	// unchanged" outcome a rejected packet gets on Windows, just
+	// implemented as a real dial+splice since a Linux REDIRECT can't be
+	// un-redirected after the kernel already completed the handshake
+	// against Glider's own listening socket.
+	ConnectionAllowed(conn net.Conn) bool
+}
