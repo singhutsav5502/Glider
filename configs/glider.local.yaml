@@ -143,7 +143,6 @@ backends:
 
 dashboard:
   enabled: true
-  auth: false
 
 transform:
   enabled: false

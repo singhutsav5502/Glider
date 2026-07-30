@@ -417,7 +417,6 @@ type BackendConfig struct {
 
 type DashboardConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
-	Auth    bool `yaml:"auth" json:"auth"`
 }
 
 type TransformConfig struct {

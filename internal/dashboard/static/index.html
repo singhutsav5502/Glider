@@ -24,6 +24,7 @@
         <button class="tab" data-tab="mcp">MCP</button>
         <button class="tab" data-tab="vendors">Vendors</button>
         <button class="tab" data-tab="workspace">Workspace</button>
+        <button class="tab" data-tab="playground">Playground</button>
         <button class="tab" data-tab="settings">Config</button>
         <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
       </nav>
@@ -103,6 +104,36 @@
           <legend>Module manager (hot-swap)</legend>
           <p class="hint" style="margin:0 0 12px">Enable/disable routing and infra modules. Live generation counters update while this tab is open.</p>
           <div id="hotswap-list" class="hotswap-list"></div>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Config health</legend>
+          <p class="hint" style="margin:0 0 10px">
+            Advisory checks over your saved rules — two rules racing on the same trigger, or a rule that can never
+            be reached. Never blocks a save; some shadowing is intentional (a deliberate fallback pair).
+          </p>
+          <div id="rules-lint-list"><p class="hint">Loading…</p></div>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Explain</legend>
+          <p class="hint" style="margin:0 0 10px">
+            Dry-run a message against your actual saved rules — no completion is issued. Shows every rule that was
+            considered, in the same order Route itself uses, including ones that would also have matched if a
+            higher-priority rule hadn't already won.
+          </p>
+          <textarea id="rules-explain-input" class="pg-input" rows="2" spellcheck="false"
+            placeholder="e.g. refactor this across the whole repo"></textarea>
+          <div class="rules-explain-extra">
+            <label class="rules-explain-field">Tools (comma-separated)
+              <input type="text" id="rules-explain-tools" placeholder="e.g. bash, read_file">
+            </label>
+            <label class="rules-explain-field">Estimated tokens
+              <input type="number" id="rules-explain-tokens" min="0" placeholder="0">
+            </label>
+            <button type="button" id="rules-explain-run" class="primary">Explain</button>
+          </div>
+          <div id="rules-explain-result"></div>
         </fieldset>
       </section>
 
@@ -274,6 +305,40 @@
         </div>
       </section>
 
+      <section id="panel-playground" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Command playground</h2>
+            <p class="hint" style="margin:6px 0 0">
+              Learn Glider's chat-typed commands by trying them. Type a message the way you would into
+              Claude Code, cursor-agent, or agy below — this never actually runs a CLI, grants a permission,
+              or changes any real setting, so try anything you like.
+            </p>
+          </div>
+        </div>
+
+        <fieldset class="cfg-section">
+          <legend>Try it</legend>
+          <textarea id="pg-input" class="pg-input" rows="3" spellcheck="false"
+            placeholder="e.g. summarize recent commits /agy"></textarea>
+          <div class="pg-examples" id="pg-examples"></div>
+          <div id="pg-result" class="pg-result">
+            <p class="hint">Type a message above to see what Glider would do with it.</p>
+          </div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Lessons <span id="pg-progress" class="graph-hint"></span></legend>
+          <p class="hint" style="margin:0 0 10px">Work through these in order — each one checks your message above against what it's actually looking for. Nothing is graded except by you; skip around freely.</p>
+          <div id="pg-lessons" class="pg-lessons"></div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Reference</legend>
+          <div class="pg-reference" id="pg-reference"></div>
+        </fieldset>
+      </section>
+
       <section id="panel-settings" class="panel">
         <div class="cfg-toolbar">
           <p class="hint cfg-reload-note">Structured form is the primary editor. Save writes the config file and hot-reloads routing, aliases, context threshold, log level, and backend/model clients (Ollama/vLLM/cloud). Restart Glider to apply listen ports or MITM CA/hosts. In-flight completions keep the old backend client until the cycle ends — see Hoops → hot-swap <code>backends</code> (<code>last_ok</code> / gen) or <code>X-Glider-Backend-Reload</code> on save.</p>
@@ -342,7 +407,6 @@
             <legend title="Dashboard process settings.">Dashboard</legend>
             <div class="cfg-grid">
               <label class="check" data-tip-key="cfg-dash-enabled"><input type="checkbox" id="cfg-dash-enabled" /> Enabled</label>
-              <label class="check" data-tip-key="cfg-dash-auth"><input type="checkbox" id="cfg-dash-auth" /> Auth</label>
             </div>
           </fieldset>
 

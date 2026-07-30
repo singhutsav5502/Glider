@@ -8,6 +8,7 @@
     mcp: document.getElementById("panel-mcp"),
     vendors: document.getElementById("panel-vendors"),
     workspace: document.getElementById("panel-workspace"),
+    playground: document.getElementById("panel-playground"),
     settings: document.getElementById("panel-settings"),
   };
 
@@ -36,11 +37,13 @@
     if (name === "rules") {
       renderRulesEditor(currentCfg);
       loadHotSwap();
+      loadRulesLint();
     }
     if (name === "overview") loadSessions();
     if (name === "mcp") refreshMCPPanel();
     if (name === "vendors") refreshVendorsPanel();
     if (name === "workspace") refreshWorkspacePanel();
+    if (name === "playground") refreshPlaygroundPanel();
   }
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -274,7 +277,6 @@
     "cfg-vram-max": { title: "Max loaded models", body: "Soft cap on concurrently loaded local models." },
     "cfg-vram-gpus": { title: "GPU assignments", body: "JSON map of model name → GPU index. Prefer the VRAM & Models tab." },
     "cfg-dash-enabled": { title: "Dashboard enabled", body: "Serve this UI. Restart required to toggle." },
-    "cfg-dash-auth": { title: "Dashboard auth", body: "Reserved for future dashboard auth." },
     "cfg-xform-enabled": { title: "Transforms enabled", body: "Master switch for prompt transforms." },
     "cfg-xform-trim": { title: "Trim context", body: "Trim oversized context toward max local tokens." },
     "cfg-xform-prepend": { title: "Augment prepend", body: "Text prepended when transforms are enabled." },
@@ -817,7 +819,6 @@
     document.getElementById("cfg-vram-gpus").value = yamlDump(cfg.vram?.gpu_assignments || {});
 
     document.getElementById("cfg-dash-enabled").checked = !!cfg.dashboard?.enabled;
-    document.getElementById("cfg-dash-auth").checked = !!cfg.dashboard?.auth;
 
     document.getElementById("cfg-xform-enabled").checked = !!cfg.transform?.enabled;
     document.getElementById("cfg-xform-trim").checked = !!cfg.transform?.trim_context;
@@ -865,7 +866,6 @@
       },
       dashboard: {
         enabled: document.getElementById("cfg-dash-enabled").checked,
-        auth: document.getElementById("cfg-dash-auth").checked,
       },
       transform: {
         enabled: document.getElementById("cfg-xform-enabled").checked,
@@ -1181,6 +1181,7 @@
         fillForm(saved);
         ok.hidden = false;
         setTimeout(() => { ok.hidden = true; }, 2500);
+        loadRulesLint();
       } else {
         err.hidden = false;
         err.textContent = document.getElementById("cfg-error").textContent || "Save failed";
@@ -6582,6 +6583,384 @@
       }
     } catch (_) {}
   };
+
+  // ---- Rules Engine: config health (lint) + explain dry-run --------
+  // Predictability/debuggability tools for the routing rule chain
+  // itself — distinct from the Playground tab, which teaches chat-typed
+  // *commands*, not the implicit rule evaluation every request goes
+  // through. Both call real backend logic (router.LintConfig,
+  // router.Engine.RouteExplain) against the operator's own live config;
+  // neither ever issues a real completion.
+
+  async function loadRulesLint() {
+    const container = document.getElementById("rules-lint-list");
+    if (!container) return;
+    try {
+      const res = await fetch("/api/router/lint");
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const findings = Array.isArray(data.findings) ? data.findings : [];
+      if (!findings.length) {
+        container.innerHTML = `<p class="hint">No ambiguity found in your saved rules.</p>`;
+        return;
+      }
+      container.innerHTML = findings.map((f) => `
+        <div class="lint-finding">
+          <p style="margin:0">${escapeHtml(f.message)}</p>
+          ${f.example ? `<button type="button" class="linkish" data-lint-example="${escapeAttr(f.example)}">Show me in Explain →</button>` : ""}
+        </div>`).join("");
+    } catch (err) {
+      container.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
+    }
+  }
+
+  function explainStatusClass(e) {
+    if (e.err) return "explain-err";
+    if (!e.matched) return "explain-nomatch";
+    return e.shadowed ? "explain-shadowed" : "explain-matched";
+  }
+
+  function explainStatusLabel(e) {
+    if (e.err) return "error";
+    if (!e.matched) return "no match";
+    return e.shadowed ? "matched — shadowed" : "matched — winner";
+  }
+
+  function renderExplainTrace(resp) {
+    const container = document.getElementById("rules-explain-result");
+    if (!container) return;
+
+    const skippedNote = (resp.skippedRules && resp.skippedRules.length)
+      ? `<p class="cfg-warn" style="display:block">Not evaluated: ${resp.skippedRules.map(escapeHtml).join("; ")}</p>`
+      : "";
+
+    const winner = resp.decision
+      ? `<p class="cfg-ok" style="display:block">Winner: <strong>${escapeHtml(resp.decision.ruleName || "")}</strong> → ${escapeHtml(resp.decision.target || "")}${resp.decision.model ? " · " + escapeHtml(resp.decision.model) : ""}${resp.decision.reason ? ` (${escapeHtml(resp.decision.reason)})` : ""}</p>`
+      : `<p class="hint">No rule matched — a real request here would fail with "no routing rule matched."</p>`;
+
+    const rows = (resp.entries || []).map((e) => {
+      let detail = "";
+      if (e.err) {
+        detail = `<span class="cfg-error" style="display:inline">${escapeHtml(e.err)}</span>`;
+      } else if (e.decision) {
+        const bits = [e.decision.target, e.decision.backendName, e.decision.model];
+        if (e.decision.reason) bits.push(`reason: ${e.decision.reason}`);
+        detail = escapeHtml(bits.filter(Boolean).join(" · "));
+      }
+      return `<div class="explain-row ${explainStatusClass(e)}">
+        <div class="explain-row-head">
+          <span class="explain-rule-name">${escapeHtml(e.ruleName)}</span>
+          <span class="explain-kind">${escapeHtml(e.kind)}</span>
+          <span class="explain-priority">priority ${e.priority}</span>
+          <span class="explain-status">${escapeHtml(explainStatusLabel(e))}</span>
+        </div>
+        ${detail ? `<div class="explain-row-detail">${detail}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    container.innerHTML = skippedNote + winner + `<div class="explain-rows">${rows}</div>`;
+  }
+
+  async function runRulesExplain() {
+    const input = document.getElementById("rules-explain-input");
+    const container = document.getElementById("rules-explain-result");
+    if (!input || !container) return;
+    const text = input.value;
+    if (!text.trim()) {
+      container.innerHTML = `<p class="hint">Type a message above and click Explain.</p>`;
+      return;
+    }
+    const toolsInput = document.getElementById("rules-explain-tools");
+    const tokensInput = document.getElementById("rules-explain-tokens");
+    const tools = (toolsInput?.value || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const estimatedTokens = parseInt(tokensInput?.value || "0", 10) || 0;
+    container.innerHTML = `<p class="hint">Running…</p>`;
+    try {
+      const res = await fetch("/api/router/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, tools, estimatedTokens }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      renderExplainTrace(await res.json());
+    } catch (err) {
+      container.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
+    }
+  }
+
+  document.getElementById("rules-explain-run")?.addEventListener("click", runRulesExplain);
+  document.getElementById("rules-lint-list")?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-lint-example]");
+    if (!btn) return;
+    const input = document.getElementById("rules-explain-input");
+    if (!input) return;
+    input.value = btn.getAttribute("data-lint-example");
+    runRulesExplain();
+    input.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+
+  // ---- Playground -------------------------------------------------
+  // Teaches Glider's chat-typed command syntax by classifying whatever
+  // the user types through the REAL Go parsers (POST /api/playground/parse)
+  // instead of a JS reimplementation, so what's shown here can never
+  // drift out of sync with what Glider actually does. Purely read-only
+  // server-side: no CLI run, no permission grant, no workspace write —
+  // safe to try anything. Lesson progress is local-only (localStorage),
+  // not graded or synced anywhere.
+
+  let playgroundInited = false;
+  let playgroundInfo = { vendors: [], routingCommands: [], scriptRules: [] };
+  let playgroundDebounceTimer = null;
+  const PLAYGROUND_PROGRESS_KEY = "glider-playground-progress";
+
+  function playgroundVendorExample() {
+    return playgroundInfo.vendors[0] || "agy";
+  }
+
+  const PLAYGROUND_LESSONS = [
+    {
+      id: "delegate-run",
+      title: "1. Delegate a task",
+      goal: "Hand a task to another CLI. The flag has to be the very last thing in your message — a leading \"/name\" gets swallowed by the CLI's own slash-command handling before Glider ever sees it.",
+      hint: () => `<your prompt> /${playgroundVendorExample()}`,
+      example: () => `summarize recent commits /${playgroundVendorExample()}`,
+      check: (r) => r.delegate.matched && r.delegate.kind === "run",
+    },
+    {
+      id: "delegate-template",
+      title: "2. Pick a named template",
+      goal: "Some CLIs have more than one launch shape (e.g. a fully interactive one). Add \":template-name\" right after the vendor name.",
+      hint: () => `<your prompt> /${playgroundVendorExample()}:interactive`,
+      example: () => `fix the auth bug /${playgroundVendorExample()}:interactive`,
+      check: (r) => r.delegate.matched && r.delegate.template && r.delegate.template !== "default",
+    },
+    {
+      id: "workspace",
+      title: "3. Set your workspace",
+      goal: "A delegated CLI needs to know which real folder to run in. \"/workspace\" is not vendor-specific — one flag, a property of your own session.",
+      hint: () => `<path> /workspace`,
+      example: () => `. /workspace`,
+      check: (r) => r.workspace.matched,
+    },
+    {
+      id: "permission",
+      title: "4. Answer a permission prompt",
+      goal: "When a delegated CLI needs your OK mid-task, it hands back a short token in its reply. Send that token back with \":allow\" or \":deny\".",
+      hint: () => `<token> /${playgroundVendorExample()}:allow`,
+      example: () => `abc123 /${playgroundVendorExample()}:allow`,
+      check: (r) => r.delegate.matched && (r.delegate.kind === "allow" || r.delegate.kind === "deny"),
+    },
+    {
+      id: "routing",
+      title: "5. Force local or cloud routing",
+      goal: "A different subsystem from the delegate flags above — this matches anywhere in the message, not just at the end, and the exact words are configured on the Rules Engine tab, not fixed.",
+      hint: () => (playgroundInfo.routingCommands.length
+        ? `${playgroundInfo.routingCommands[0]} <your message>`
+        : "(no routing override commands configured yet — add one on Rules Engine, or skip this one)"),
+      example: () => (playgroundInfo.routingCommands.length ? `${playgroundInfo.routingCommands[0]} keep this on-device` : ""),
+      check: (r) => r.routing.matched,
+    },
+  ];
+
+  const PLAYGROUND_REFERENCE = [
+    {
+      family: "Delegate",
+      syntax: "<prompt> /vendor[:template]",
+      body: "Runs prompt headlessly against another CLI (or opens it interactively, for an \"interactive\"-mode template) and relays the answer back into this chat. Must be the trailing token — a leading \"/vendor\" is eaten by the front CLI's own slash-command handling first.",
+    },
+    {
+      family: "Workspace",
+      syntax: "<path> /workspace",
+      body: "Records which real folder a delegated CLI should run in for this session. Not vendor-specific — one flag, used by every delegate call from this origin.",
+    },
+    {
+      family: "Permission grant / deny",
+      syntax: "<token> /vendor:allow   or   <token> /vendor:deny",
+      body: "Answers a pending permission prompt a delegated CLI raised mid-task. The token identifies which run and which vendor — it's issued to you in the denial message itself, never typed from scratch.",
+    },
+    {
+      family: "Routing override",
+      syntax: "/local, /fast, /cloud, /heavy (configurable)",
+      body: "Forces this turn's model target; matches anywhere in the message, not just at the end — a different subsystem from the three above (request routing, not CLI delegation). The exact words are config, not fixed: see the Rules Engine tab.",
+    },
+    {
+      family: "Script-triggered rules",
+      syntax: "whatever a .star rule looks for",
+      body: "Rules Engine rules with a script trigger can match any phrase your own Starlark code checks for (e.g. \"/swarm\"). Not a fixed grammar, so this playground can't classify against it directly — check the Rules Engine tab for what's configured.",
+    },
+  ];
+
+  function playgroundProgress() {
+    try {
+      return JSON.parse(localStorage.getItem(PLAYGROUND_PROGRESS_KEY) || "[]");
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function markPlaygroundLessonDone(id) {
+    const done = new Set(playgroundProgress());
+    if (done.has(id)) return;
+    done.add(id);
+    localStorage.setItem(PLAYGROUND_PROGRESS_KEY, JSON.stringify([...done]));
+    renderPlaygroundLessons();
+  }
+
+  function checkPlaygroundLessons(result) {
+    PLAYGROUND_LESSONS.forEach((lesson) => {
+      if (lesson.check(result)) markPlaygroundLessonDone(lesson.id);
+    });
+  }
+
+  function renderPlaygroundLessons() {
+    const container = document.getElementById("pg-lessons");
+    if (!container) return;
+    const done = new Set(playgroundProgress());
+    const progressLabel = document.getElementById("pg-progress");
+    if (progressLabel) progressLabel.textContent = `${done.size}/${PLAYGROUND_LESSONS.length} complete`;
+    container.innerHTML = PLAYGROUND_LESSONS.map((lesson) => {
+      const complete = done.has(lesson.id);
+      const hint = lesson.hint();
+      const example = lesson.example();
+      return `<div class="pg-lesson${complete ? " complete" : ""}">
+        <div class="pg-lesson-head">
+          <span class="pg-lesson-check" aria-hidden="true">${complete ? "✓" : ""}</span>
+          <span class="pg-lesson-title">${escapeHtml(lesson.title)}</span>
+        </div>
+        <p class="hint" style="margin:4px 0 8px">${escapeHtml(lesson.goal)}</p>
+        <div class="pg-lesson-actions">
+          <code class="pg-lesson-hint">${escapeHtml(hint)}</code>
+          ${example ? `<button type="button" class="linkish" data-pg-fill="${escapeAttr(example)}">Try this</button>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderPlaygroundReference() {
+    const container = document.getElementById("pg-reference");
+    if (!container) return;
+    container.innerHTML = PLAYGROUND_REFERENCE.map((r) => `
+      <div class="pg-ref-card">
+        <div class="pg-ref-family">${escapeHtml(r.family)}</div>
+        <code class="pg-ref-syntax">${escapeHtml(r.syntax)}</code>
+        <p class="hint" style="margin:6px 0 0">${escapeHtml(r.body)}</p>
+      </div>`).join("");
+  }
+
+  function renderPlaygroundExamples() {
+    const container = document.getElementById("pg-examples");
+    if (!container) return;
+    const vendor = playgroundVendorExample();
+    const examples = [
+      `summarize recent commits /${vendor}`,
+      `. /workspace`,
+      `abc123 /${vendor}:allow`,
+    ];
+    if (playgroundInfo.routingCommands.length) {
+      examples.push(`${playgroundInfo.routingCommands[0]} keep this on-device`);
+    }
+    container.innerHTML = examples.map((ex) =>
+      `<button type="button" class="linkish pg-example-chip" data-pg-fill="${escapeAttr(ex)}">${escapeHtml(ex)}</button>`
+    ).join("");
+  }
+
+  function playgroundBadge(label, cls) {
+    return `<span class="pg-badge pg-badge-${cls}">${escapeHtml(label)}</span>`;
+  }
+
+  function renderPlaygroundResult(result, text) {
+    const container = document.getElementById("pg-result");
+    if (!container) return;
+    if (!text.trim()) {
+      container.innerHTML = `<p class="hint">Type a message above to see what Glider would do with it.</p>`;
+      return;
+    }
+
+    const rows = [];
+    if (result.delegate.matched) {
+      const d = result.delegate;
+      const descriptions = {
+        run: `Delegates to <strong>${escapeHtml(d.vendor)}</strong> — runs headlessly with prompt "${escapeHtml(d.prompt)}", answer relayed back here.`,
+        interactive: `Delegates to <strong>${escapeHtml(d.vendor)}</strong> (interactive template "${escapeHtml(d.template)}") — opens a real window with "${escapeHtml(d.prompt)}" seeded in; nothing relayed back.`,
+        allow: `Grants the pending permission for token <code>${escapeHtml(d.prompt)}</code>, then resumes <strong>${escapeHtml(d.vendor)}</strong>.`,
+        deny: `Denies the pending permission for token <code>${escapeHtml(d.prompt)}</code> — the run is abandoned.`,
+        unknown_template: `<strong>${escapeHtml(d.vendor)}</strong> has no ":${escapeHtml(d.template)}" template configured — this comes back as an error message, not a real run.`,
+      };
+      rows.push(`<div class="pg-result-row">${playgroundBadge("Delegate", "delegate")} ${descriptions[d.kind] || ""}</div>`);
+    }
+    if (result.workspace.matched) {
+      rows.push(`<div class="pg-result-row">${playgroundBadge("Workspace", "workspace")} Sets this session's working directory to <code>${escapeHtml(result.workspace.path)}</code>.</div>`);
+    }
+    if (result.routing.matched) {
+      const r = result.routing;
+      const ruleNote = r.ruleName ? ` (rule "${escapeHtml(r.ruleName)}"${r.target ? `, forces target "${escapeHtml(r.target)}"` : ""})` : "";
+      rows.push(`<div class="pg-result-row">${playgroundBadge("Routing override", "routing")} Matched <code>${escapeHtml(r.command)}</code>${ruleNote}. Rest of the message: "${escapeHtml(r.remainder)}".</div>`);
+    }
+    if (!rows.length) {
+      let note = "No command recognized — this would be sent through as an ordinary chat message.";
+      if (result.scriptRules && result.scriptRules.length) {
+        note += ` (Your Rules Engine also has ${result.scriptRules.length} script-triggered rule(s) — e.g. "${escapeHtml(result.scriptRules[0])}" — that could still match on phrases this playground can't check.)`;
+      }
+      rows.push(`<div class="pg-result-row pg-result-empty">${note}</div>`);
+    }
+    container.innerHTML = rows.join("");
+  }
+
+  async function playgroundCheck() {
+    const input = document.getElementById("pg-input");
+    if (!input) return;
+    const text = input.value;
+    try {
+      const res = await fetch("/api/playground/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      playgroundInfo = {
+        vendors: Array.isArray(result.vendors) ? result.vendors : [],
+        routingCommands: Array.isArray(result.routing && result.routing.configuredCommands) ? result.routing.configuredCommands : [],
+        scriptRules: Array.isArray(result.scriptRules) ? result.scriptRules : [],
+      };
+      renderPlaygroundResult(result, text);
+      if (text.trim()) checkPlaygroundLessons(result);
+    } catch (err) {
+      const container = document.getElementById("pg-result");
+      if (container) container.innerHTML = `<p class="cfg-error">${escapeHtml(String(err.message || err))}</p>`;
+    }
+  }
+
+  function debouncePlaygroundCheck() {
+    clearTimeout(playgroundDebounceTimer);
+    playgroundDebounceTimer = setTimeout(playgroundCheck, 250);
+  }
+
+  async function refreshPlaygroundPanel() {
+    renderPlaygroundReference();
+    renderPlaygroundLessons();
+    if (playgroundInited) return;
+    playgroundInited = true;
+
+    const input = document.getElementById("pg-input");
+    input?.addEventListener("input", debouncePlaygroundCheck);
+
+    document.getElementById("panel-playground")?.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-pg-fill]");
+      if (!btn || !input) return;
+      input.value = btn.getAttribute("data-pg-fill");
+      playgroundCheck();
+      input.focus();
+    });
+
+    // Prime vendor/routing-command context with one harmless empty-text
+    // classification before the user has typed anything, then re-render
+    // lessons/examples so their hints use real vendor names instead of
+    // the "agy" fallback.
+    await playgroundCheck();
+    renderPlaygroundLessons();
+    renderPlaygroundExamples();
+  }
 
   loadConfig();
   loadVRAM();

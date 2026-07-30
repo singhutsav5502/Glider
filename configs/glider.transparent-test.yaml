@@ -235,7 +235,6 @@ backends:
     #   health_check_interval: 30s
 dashboard:
     enabled: true
-    auth: false
 transform:
     enabled: false
     trim_context: false

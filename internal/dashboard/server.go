@@ -222,6 +222,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/mcp/github/", s.handleMCPGitHub)
 	mux.HandleFunc("/api/vendors", s.handleVendors)
 	mux.HandleFunc("/api/vendors/", s.handleVendors)
+	mux.HandleFunc("/api/playground/parse", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handlePlaygroundParse(w, r)
+	})
+	mux.HandleFunc("/api/router/explain", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleRouterExplain(w, r)
+	})
+	mux.HandleFunc("/api/router/lint", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleRouterLint(w, r)
+	})
 	mux.HandleFunc("/oauth/callback", s.handleGitHubOAuthCallback)
 	mux.HandleFunc("/ws", s.handleWS)
 
