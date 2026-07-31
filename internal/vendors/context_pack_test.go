@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func samplePack() ContextPack {
@@ -18,262 +17,182 @@ func samplePack() ContextPack {
 	}
 }
 
-func TestInstallContextPack_CreatesThenRemovesWhenFileDidNotExist(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "CLAUDE.md")
+func TestPrepareContextDir_WritesPackThenCleansUp(t *testing.T) {
+	withTempHome(t)
 
-	revert, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
+	dir, file, cleanup, err := PrepareContextDir("AGENTS.md", samplePack())
 	if err != nil {
-		t.Fatalf("install: %v", err)
+		t.Fatalf("prepare: %v", err)
+	}
+	if dir == "" || file == "" {
+		t.Fatal("expected a real dir and file")
+	}
+	if filepath.Base(file) != "AGENTS.md" {
+		t.Fatalf("context file must use the vendor's expected name, got %q", filepath.Base(file))
 	}
 
-	got, err := os.ReadFile(path)
+	body, err := os.ReadFile(file)
 	if err != nil {
-		t.Fatalf("expected the context file to exist during the run: %v", err)
+		t.Fatalf("context file unreadable: %v", err)
 	}
-	if !strings.Contains(string(got), "add a refresh path") {
-		t.Fatalf("task missing from written pack:\n%s", got)
-	}
-	if !strings.Contains(string(got), "keep the existing token shape") {
-		t.Fatalf("prior turns missing from written pack:\n%s", got)
+	for _, want := range []string{"add a refresh path", "keep the existing token shape", "You are already the delegate"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("context missing %q:\n%s", want, body)
+		}
 	}
 
-	if err := revert(); err != nil {
-		t.Fatalf("revert: %v", err)
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("a file Glider created must be removed on revert, not left behind")
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("the per-delegate directory must be removed on cleanup")
 	}
 }
 
-// TestInstallContextPack_PreservesExistingFileByteForByte is the important
-// one: CLAUDE.md / AGENTS.md is a file the USER owns and fills with their own
-// instructions. Clobbering it would both misdirect the delegate and destroy
-// real work.
-func TestInstallContextPack_PreservesExistingFileByteForByte(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "AGENTS.md")
-	original := "# House rules\n\nAlways run `go test ./...` before claiming done.\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// TestPrepareContextDir_IsolatesConcurrentDelegates is the property the whole
+// per-delegate design exists for. The previous shared-file design needed a
+// lock held for each delegate's entire subprocess lifetime, plus byte-exact
+// restore, stale-block healing, and bounded acquisition to avoid deadlock.
+// With a private directory each, concurrent delegates simply cannot interact.
+func TestPrepareContextDir_IsolatesConcurrentDelegates(t *testing.T) {
+	withTempHome(t)
 
-	revert, err := InstallContextPack(dir, "AGENTS.md", samplePack())
-	if err != nil {
-		t.Fatalf("install: %v", err)
-	}
+	const n = 8
+	dirs := make([]string, n)
+	cleanups := make([]func() error, n)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-	during, _ := os.ReadFile(path)
-	if !strings.Contains(string(during), "Always run `go test ./...`") {
-		t.Fatalf("the user's own instructions must survive alongside the pack:\n%s", during)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			pack := samplePack()
+			pack.Task = "task number " + string(rune('a'+i))
+			dir, file, cleanup, err := PrepareContextDir("AGENTS.md", pack)
+			if err != nil {
+				t.Errorf("prepare %d: %v", i, err)
+				return
+			}
+			body, err := os.ReadFile(file)
+			if err != nil {
+				t.Errorf("read %d: %v", i, err)
+				return
+			}
+			// Each delegate must see ONLY its own task — the exact failure
+			// a shared file would produce.
+			if !strings.Contains(string(body), pack.Task) {
+				t.Errorf("delegate %d lost its own task", i)
+			}
+			for j := 0; j < n; j++ {
+				if j == i {
+					continue
+				}
+				if strings.Contains(string(body), "task number "+string(rune('a'+j))) {
+					t.Errorf("delegate %d saw delegate %d's task — directories are not isolated", i, j)
+				}
+			}
+			mu.Lock()
+			dirs[i], cleanups[i] = dir, cleanup
+			mu.Unlock()
+		}(i)
 	}
-	if !strings.Contains(string(during), "add a refresh path") {
-		t.Fatalf("pack not appended:\n%s", during)
-	}
+	wg.Wait()
 
-	if err := revert(); err != nil {
-		t.Fatalf("revert: %v", err)
+	seen := map[string]bool{}
+	for i, d := range dirs {
+		if d == "" {
+			t.Fatalf("delegate %d produced no directory", i)
+		}
+		if seen[d] {
+			t.Fatalf("two delegates shared directory %q", d)
+		}
+		seen[d] = true
 	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("the user's file must still exist after revert: %v", err)
-	}
-	if string(after) != original {
-		t.Fatalf("file not restored byte-for-byte.\nwant: %q\ngot:  %q", original, after)
+	for _, c := range cleanups {
+		if c != nil {
+			_ = c()
+		}
 	}
 }
 
-// TestInstallContextPack_SelfHealsStaleBlock covers the crash path: if
-// glider.exe is force-killed mid-run, no revert executes and a block is left
-// in the user's file. The next delegate to that file must clean it up rather
-// than let blocks accumulate forever.
-func TestInstallContextPack_SelfHealsStaleBlock(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "CLAUDE.md")
-	userContent := "# House rules\n"
-	stale := userContent + "\n" + ContextPack{Task: "an abandoned earlier run"}.Render()
-	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	revert, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
-	if err != nil {
-		t.Fatalf("install: %v", err)
-	}
-
-	during, _ := os.ReadFile(path)
-	if strings.Contains(string(during), "an abandoned earlier run") {
-		t.Fatalf("stale block from a crashed run should have been stripped:\n%s", during)
-	}
-	if strings.Count(string(during), contextPackBegin) != 1 {
-		t.Fatalf("expected exactly one Glider block, got %d:\n%s",
-			strings.Count(string(during), contextPackBegin), during)
-	}
-
-	if err := revert(); err != nil {
-		t.Fatalf("revert: %v", err)
-	}
-	after, _ := os.ReadFile(path)
-	if strings.Contains(string(after), contextPackBegin) {
-		t.Fatalf("revert must leave no Glider block at all:\n%s", after)
-	}
-	if !strings.Contains(string(after), "# House rules") {
-		t.Fatalf("user content lost while cleaning a stale block:\n%s", after)
-	}
-}
-
-func TestStripContextPack_ToleratesTruncatedBlock(t *testing.T) {
-	// A crash mid-write can leave a BEGIN marker with no END.
-	content := []byte("# Rules\n\n" + contextPackBegin + "\n\n## Delegated task context\n\ncut off here")
-	got := string(stripContextPack(content))
-	if strings.Contains(got, contextPackBegin) {
-		t.Fatalf("truncated block not stripped: %q", got)
-	}
-	if !strings.Contains(got, "# Rules") {
-		t.Fatalf("user content lost: %q", got)
-	}
-}
-
-func TestInstallContextPack_NoopWhenNothingToInstall(t *testing.T) {
-	dir := t.TempDir()
+func TestPrepareContextDir_NoopWhenNothingToWrite(t *testing.T) {
+	withTempHome(t)
 	cases := map[string]struct {
-		cwd, file string
-		pack      ContextPack
+		contextFile string
+		pack        ContextPack
 	}{
-		"no context file configured": {dir, "", samplePack()},
-		"no workspace resolved":      {"", "CLAUDE.md", samplePack()},
-		"empty pack":                 {dir, "CLAUDE.md", ContextPack{}},
+		"vendor declares no context file": {"", samplePack()},
+		"empty pack":                      {"AGENTS.md", ContextPack{}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			revert, err := InstallContextPack(c.cwd, c.file, c.pack)
+			dir, file, cleanup, err := PrepareContextDir(c.contextFile, c.pack)
 			if err != nil {
-				t.Fatalf("expected a quiet no-op, got: %v", err)
+				t.Fatalf("expected a quiet no-op: %v", err)
 			}
-			if err := revert(); err != nil {
-				t.Fatalf("no-op revert should never error: %v", err)
+			if dir != "" || file != "" {
+				t.Fatalf("expected empty paths, got dir=%q file=%q", dir, file)
 			}
-			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-				t.Fatalf("nothing should have been written, found %d entries", len(entries))
+			if err := cleanup(); err != nil {
+				t.Fatalf("no-op cleanup must never error: %v", err)
 			}
 		})
 	}
 }
 
-// TestInstallContextPack_SerializesSameFile pins the concurrency contract.
-// Two delegates to the same vendor in the same workspace target the same
-// file and each holds it for a whole subprocess lifetime; without
-// serialization the second write lands on the first, and the first's revert
-// then wipes the second's context.
-func TestInstallContextPack_SerializesSameFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "CLAUDE.md")
+// TestSubstituteTemplateArgs_DropsContextArgsWhenAbsent pins the graceful
+// degradation: substituting empty would leave "--add-dir=" or an
+// --append-system-prompt-file pointing nowhere, which is a hard CLI argument
+// error rather than simply running without context.
+func TestSubstituteTemplateArgs_DropsContextArgsWhenAbsent(t *testing.T) {
+	tmpl := []string{"-p", "--add-dir={{context_dir}}", "--append-system-prompt-file={{context_file}}", "{{prompt}}"}
 
-	var mu sync.Mutex
-	overlaps := 0
-	inside := 0
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			revert, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
-			if err != nil {
-				t.Errorf("install: %v", err)
-				return
-			}
-
-			mu.Lock()
-			inside++
-			if inside > 1 {
-				overlaps++
-			}
-			mu.Unlock()
-
-			// While held, exactly one Glider block must be present.
-			if b, err := os.ReadFile(path); err == nil {
-				if n := strings.Count(string(b), contextPackBegin); n != 1 {
-					t.Errorf("saw %d concurrent blocks in the file, want 1", n)
-				}
-			}
-
-			mu.Lock()
-			inside--
-			mu.Unlock()
-
-			if err := revert(); err != nil {
-				t.Errorf("revert: %v", err)
-			}
-		}()
+	got := substituteTemplateArgs(tmpl, "do the thing", "", "D:/repo", "", "")
+	for _, a := range got {
+		if strings.Contains(a, "context_dir") || strings.Contains(a, "context_file") ||
+			a == "--add-dir=" || a == "--append-system-prompt-file=" {
+			t.Fatalf("dangling context arg survived: %q (all args: %v)", a, got)
+		}
 	}
-	wg.Wait()
-
-	if overlaps != 0 {
-		t.Fatalf("%d overlapping installs on one path — writes are not serialized", overlaps)
+	if len(got) != 2 || got[0] != "-p" || got[1] != "do the thing" {
+		t.Fatalf("got %v, want just the non-context args", got)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("after every revert the created file should be gone")
+
+	withCtx := substituteTemplateArgs(tmpl, "do the thing", "", "D:/repo", "C:/ctx", "C:/ctx/AGENTS.md")
+	if len(withCtx) != 4 {
+		t.Fatalf("got %v, want all four args when context exists", withCtx)
+	}
+	if withCtx[1] != "--add-dir=C:/ctx" || withCtx[2] != "--append-system-prompt-file=C:/ctx/AGENTS.md" {
+		t.Fatalf("context paths not substituted: %v", withCtx)
 	}
 }
 
-// TestInstallContextPack_DegradesRatherThanBlockingForever pins the
-// liveness property. The lock is necessarily held for a delegate's whole
-// subprocess lifetime, and RunTimeout no longer bounds that lifetime — so
-// without a bounded acquisition, one wedged delegate would block every
-// later delegate to the same vendor and workspace forever.
-func TestInstallContextPack_DegradesRatherThanBlockingForever(t *testing.T) {
-	orig := ContextPackLockWait
-	ContextPackLockWait = 120 * time.Millisecond
-	defer func() { ContextPackLockWait = orig }()
+func TestSweepDelegateContextDirs_RemovesLeftovers(t *testing.T) {
+	withTempHome(t)
 
-	dir := t.TempDir()
-
-	// Hold the file as a "wedged" delegate would: acquired and never released.
-	held, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
+	// A directory a force-killed run never cleaned up.
+	_, _, _, err := PrepareContextDir("AGENTS.md", samplePack())
 	if err != nil {
-		t.Fatalf("first install: %v", err)
+		t.Fatalf("prepare: %v", err)
+	}
+	root, _ := DelegateContextRoot()
+	if entries, _ := os.ReadDir(root); len(entries) == 0 {
+		t.Fatal("expected a leftover directory to exist before the sweep")
 	}
 
-	start := time.Now()
-	revert, err := InstallContextPack(dir, "CLAUDE.md", ContextPack{Task: "a second, contending delegate"})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("contention must degrade quietly, not error: %v", err)
+	if err := SweepDelegateContextDirs(); err != nil {
+		t.Fatalf("sweep: %v", err)
 	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("waited %v — acquisition is not bounded", elapsed)
-	}
-	if err := revert(); err != nil {
-		t.Fatalf("the degraded revert must be a safe no-op: %v", err)
-	}
-
-	// The holder's own block must be untouched by the contender.
-	body, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if strings.Contains(string(body), "a second, contending delegate") {
-		t.Fatal("a contender that gave up must not have written anything")
-	}
-	if !strings.Contains(string(body), "add a refresh path") {
-		t.Fatal("the holder's block was damaged by a contender")
-	}
-
-	if err := held(); err != nil {
-		t.Fatalf("holder revert: %v", err)
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 0 {
+		t.Fatalf("sweep left %d directories behind", len(entries))
 	}
 }
 
-// TestInstallContextPack_LockIsReleasedForTheNextDelegate confirms the
-// bounded acquisition doesn't leak the semaphore on the normal path.
-func TestInstallContextPack_LockIsReleasedForTheNextDelegate(t *testing.T) {
-	dir := t.TempDir()
-	for i := 0; i < 3; i++ {
-		revert, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
-		if err != nil {
-			t.Fatalf("install %d: %v", i, err)
-		}
-		if err := revert(); err != nil {
-			t.Fatalf("revert %d: %v", i, err)
-		}
+func TestSweepDelegateContextDirs_NoRootIsNotAnError(t *testing.T) {
+	withTempHome(t)
+	if err := SweepDelegateContextDirs(); err != nil {
+		t.Fatalf("a missing root is normal on first run, got: %v", err)
 	}
 }

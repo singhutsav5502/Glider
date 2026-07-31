@@ -489,7 +489,18 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 			return RunResult{}, fmt.Errorf("vendors: could not determine working directory to substitute {{cwd}}: %w", err)
 		}
 	}
-	args := substituteTemplateArgs(tmpl.Args, prompt, opts.Resume, cwd)
+	// A private context directory for this one run — see ContextPack. No
+	// lock, no restore, nothing shared: it belongs to this delegate alone
+	// and is removed when the run ends. A failure here is non-fatal by
+	// design; losing context degrades the answer, refusing to run would be
+	// worse, and PrepareContextDir leaves nothing behind on its error paths.
+	contextDir, contextFile, cleanupContext, ctxErr := PrepareContextDir(v.ContextFile, opts.ContextPack)
+	if ctxErr != nil {
+		contextDir, contextFile = "", ""
+	}
+	defer func() { _ = cleanupContext() }()
+
+	args := substituteTemplateArgs(tmpl.Args, prompt, opts.Resume, cwd, contextDir, contextFile)
 	args = append(args, opts.ExtraArgs...)
 
 	// Only wrap when a ceiling is actually configured — see RunTimeout.
@@ -515,20 +526,6 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
-
-	// Install the delegate context pack into the vendor's own context file
-	// for exactly the duration of this run — see ContextPack's doc comment
-	// for why the file (not the prompt) is the right channel. Installed
-	// before Start and reverted after Wait, so the CLI reads it during its
-	// own session startup. A failure here is deliberately non-fatal: losing
-	// context degrades the delegate's answer, but refusing to run at all
-	// over it would be worse, and the original file is left untouched on
-	// the error path.
-	revertContext, ctxErr := InstallContextPack(cwd, v.ContextFile, opts.ContextPack)
-	if ctxErr != nil {
-		revertContext = func() error { return nil }
-	}
-	defer func() { _ = revertContext() }()
 
 	// Start (not Run) so the process can be enrolled in the kill-on-close
 	// job object between start and wait — see AssignToKillOnCloseJob's own
@@ -580,13 +577,29 @@ func templateNeedsSessionID(args []string) bool {
 	return false
 }
 
-func substituteTemplateArgs(args []string, prompt, resumeID, cwd string) []string {
-	out := make([]string, len(args))
-	for i, a := range args {
+func substituteTemplateArgs(args []string, prompt, resumeID, cwd, contextDir, contextFile string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		// An arg referencing context is DROPPED ENTIRELY when there is no
+		// context for this run (no context_file configured for the vendor,
+		// or an empty pack). Substituting empty would leave a dangling
+		// "--add-dir=" or an --append-system-prompt-file pointing at
+		// nothing, which is a hard argument error from the CLI rather than
+		// a graceful degradation. Every vendor's context flag is written in
+		// the single-arg "=" form precisely so it can be dropped as a unit
+		// (all three confirmed live 2026-07-31 to accept that form).
+		if strings.Contains(a, "{{context_dir}}") && contextDir == "" {
+			continue
+		}
+		if strings.Contains(a, "{{context_file}}") && contextFile == "" {
+			continue
+		}
 		a = strings.ReplaceAll(a, "{{prompt}}", prompt)
 		a = strings.ReplaceAll(a, "{{session_id}}", resumeID)
 		a = strings.ReplaceAll(a, "{{cwd}}", cwd)
-		out[i] = a
+		a = strings.ReplaceAll(a, "{{context_dir}}", contextDir)
+		a = strings.ReplaceAll(a, "{{context_file}}", contextFile)
+		out = append(out, a)
 	}
 	return out
 }

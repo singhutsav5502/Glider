@@ -200,7 +200,7 @@ func ResolveDelegateWithContext(ctx context.Context, vendor Vendor, templateName
 // relay, no correlation back into this chat, no way for Glider to see or
 // act on anything that happens in that window from here on.
 func resolveInteractive(vendor Vendor, tmpl CommandTemplate, prompt, cwd string) string {
-	args := substituteTemplateArgs(tmpl.Args, prompt, "", cwd)
+	args := substituteTemplateArgs(tmpl.Args, prompt, "", cwd, "", "")
 	if err := LaunchInteractiveFunc(vendor, cwd, args...); err != nil {
 		return fmt.Sprintf("Could not open %s interactively: %s", vendor.Name, err.Error())
 	}

@@ -108,6 +108,12 @@ func runGlider(ctx context.Context, cfgPath string) {
 	if err := runstate.MarkStarted(); err != nil {
 		log.Debug("runstate: could not write startup marker", "err", err)
 	}
+	// Remove per-delegate context directories a previous run left behind.
+	// Safe here specifically: a live delegate can only exist inside a
+	// running Glider, and no delegate has started yet.
+	if err := vendors.SweepDelegateContextDirs(); err != nil {
+		log.Debug("could not sweep stale delegate context dirs", "err", err)
+	}
 
 	if loaded, err := config.LoadDotEnvFiles(); err != nil {
 		log.Warn("dotenv load", "err", err)

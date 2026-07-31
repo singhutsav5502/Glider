@@ -24,13 +24,13 @@ candidates:
     # @AGENTS.md import instead). Glider appends a delegate context pack
     # here and restores the file afterward — see ContextPack in
     # internal/vendors/context_pack.go.
-    context_file: "CLAUDE.md"
+    context_file: "glider-context.md"
     templates:
       - name: default
         mode: headless
         # --verbose is required by Claude Code alongside --output-format
         # stream-json in print mode (a known CLI requirement, not optional).
-        args: ["-p", "--output-format", "stream-json", "--verbose", "{{prompt}}"]
+        args: ["-p", "--output-format", "stream-json", "--verbose", "--append-system-prompt-file={{context_file}}", "{{prompt}}"]
       - name: resume
         mode: headless
         # --allowedTools isn't templated here (it can't be — the denied
@@ -39,7 +39,7 @@ candidates:
         # runtime instead, via VendorAdapter.ExtraResumeArgs +
         # RunOptions.ExtraArgs (added 2026-07-30) — see claudeAdapter's
         # ExtraResumeArgs doc in internal/vendors/denial.go.
-        args: ["-p", "--output-format", "stream-json", "--verbose", "--resume", "{{session_id}}", "{{prompt}}"]
+        args: ["-p", "--output-format", "stream-json", "--verbose", "--append-system-prompt-file={{context_file}}", "--resume", "{{session_id}}", "{{prompt}}"]
       - name: interactive
         mode: interactive
         # No -p/--output-format: confirmed via `claude --help` ("Usage:
@@ -68,10 +68,10 @@ candidates:
         # auto-trusts whatever directory it delegates into — a real,
         # disclosed tradeoff (planning/permission_relay_design.md §2.1),
         # not an oversight.
-        args: ["-p", "--output-format", "stream-json", "--trust", "{{prompt}}"]
+        args: ["-p", "--output-format", "stream-json", "--trust", "--add-dir={{context_dir}}", "{{prompt}}"]
       - name: resume
         mode: headless
-        args: ["-p", "--output-format", "stream-json", "--trust", "--resume", "{{session_id}}", "{{prompt}}"]
+        args: ["-p", "--output-format", "stream-json", "--trust", "--add-dir={{context_dir}}", "--resume", "{{session_id}}", "{{prompt}}"]
       - name: interactive
         mode: interactive
         # No -p/--print, no --trust: confirmed via `cursor-agent --help`
@@ -112,7 +112,7 @@ candidates:
         # plain text; structured detail lives in local SQLite/log
         # artifacts, not stdout) — denial detection for this vendor parses
         # stderr text instead (see internal/vendors/denial.go).
-        args: ["-p", "--add-dir={{cwd}}", "{{prompt}}"]
+        args: ["-p", "--add-dir={{cwd}}", "--add-dir={{context_dir}}", "{{prompt}}"]
       - name: resume
         mode: headless
         # FIXED 2026-07-26 (was broken — see planning/permission_relay_design.md
@@ -137,7 +137,7 @@ candidates:
         # destructive one-shot request, not a bug; it surfaces as ordinary
         # output text via ResolveDelegate's normal path, answerable with a
         # further plain "/agy ..." reply.
-        args: ["-p", "--add-dir={{cwd}}", "{{prompt}}"]
+        args: ["-p", "--add-dir={{cwd}}", "--add-dir={{context_dir}}", "{{prompt}}"]
       - name: interactive
         mode: interactive
         # agy has no bare-positional-prompt form the way claude and
