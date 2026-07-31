@@ -74,7 +74,8 @@
   transparent_ports: [443]
   windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll   # WinDivertNN.sys alongside it</pre>
       <p>
-        WinDivert rewrites a matched packet's destination to <code>127.0.0.1:8083</code>,
+        WinDivert rewrites a matched packet's destination to this machine's primary local IP on
+        <code>transparent_port</code> (<code>:8083</code> in the sample above — not loopback),
         recomputes checksums, and reinjects it — the client's own TCP stack never sees the rewrite.
         Windows has no OS-native "what was the original destination" lookup (unlike Linux's
         <code>SO_ORIGINAL_DST</code>), so the redirector keeps its own flow table keyed by the
