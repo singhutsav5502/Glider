@@ -67,10 +67,13 @@
       </table>
       <p class="note">
         A fourth, separate interface lives one layer down in <code>internal/vendors</code>:
-        <code>VendorAdapter</code> handles execution-time side effects (denial detection, permission grants,
-        session-id extraction) rather than wire-format parsing at all — see
-        <a href="delegation.html">Delegation</a> for that one. Don't confuse it with the three above; it's a
-        different boundary (process execution, not wire format).
+        <code>VendorAdapter</code> handles execution-time side effects (denial detection, session-id
+        extraction, scoped permission retry via <code>ExtraResumeArgs</code> and/or
+        <code>GrantResumePermission</code>, edit-view parsing, resume prompt framing) rather than wire-format
+        parsing at all —
+        see <a href="#vendor-adapter">below</a> for its full contract (and <a href="delegation.html">Delegation</a>
+        for the relay flow that calls through it). Don't confuse it with the three above; it's a different boundary
+        (process execution, not wire format).
       </p>
 
       <h2 id="turn">Turn &amp; Part — the shared vocabulary</h2>
@@ -160,6 +163,64 @@
         formatting is never silently indistinguishable from a normal short answer.
       </p>
 
+      <h2 id="vendor-adapter">VendorAdapter — execution-time side effects</h2>
+      <p>
+        Lives in <code>internal/vendors/adapter.go</code>, not <code>internal/ngl</code> — the single interface
+        point every per-CLI quirk in the execution layer must go through. <code>RunWithOptions</code> and
+        <code>ResolveDelegate</code> look up a <code>VendorAdapter</code> by vendor name and are otherwise blind
+        to which CLI they're talking to; adding a fourth vendor, or changing how an existing one detects denials or
+        grants resume permission, means writing or editing one adapter here, never branching on
+        <code>vendor.Name</code> inside shared control flow.
+      </p>
+      <pre>type VendorAdapter interface {
+    // nil means "no denials found" — every adapter implements this, even a trivial no-op.
+    DetectDenials(stdout, stderr []byte) []Denial
+    // "" means none available (no such id in this vendor's format, or extraction failed).
+    ExtractSessionID(stdout []byte) string
+    // Scoped side effect OUTSIDE the resume argv itself; revert is always called after the
+    // resume attempt, success or failure. cwd is the resolved workspace directory the resume
+    // will run in (may be ""). Most vendors return a no-op revert — per-denial scoping happens
+    // through ExtraResumeArgs instead (see below).
+    GrantResumePermission(v Vendor, cwd string, denials []Denial) (revert func() error, err error)
+    // Extra CLI args to append to the vendor's "resume" CommandTemplate for this specific set
+    // of denials, or nil if the vendor has no such mechanism.
+    ExtraResumeArgs(denials []Denial) []string
+    // ok=false for a run that made no edit, or whose headless output carries no structured diff.
+    ExtractEditViews(stdout []byte) (views ngl.EditViews, ok bool)
+    // Lets a vendor reframe the resume prompt for its model's known behavior on a resumed call;
+    // identity (returns prompt unchanged) for vendors whose resume already reliably completes.
+    WrapResumePrompt(prompt string) string
+}</pre>
+      <p>
+        Permission approval has to actually <em>change something</em> before a resume retry — otherwise the
+        retried run hits the identical wall. Each CLI offers a different lever, which is why the interface has
+        <strong>two grant methods for one concept</strong>: <code>ExtraResumeArgs</code> contributes
+        <em>command-line arguments</em> scoped to the denied tool(s) (claude builds
+        <code>--allowedTools &lt;comma-joined tool names&gt;</code> from the denials — the denied tool name is only
+        known per-call, so it can't live in a static resume template), while <code>GrantResumePermission</code>
+        performs a <em>side effect outside</em> the command line (agy writes a scoped rule into its own
+        <code>settings.json</code>, then restores the original bytes afterward). A vendor implements whichever its
+        CLI actually supports; shared code calls both and cares about neither. cursor-agent has no per-tool argv flag
+        (only blunt <code>-f</code>/<code>--yolo</code>, deliberately never auto-used), so its adapter returns
+        <code>nil</code> from <code>ExtraResumeArgs</code> and a no-op from <code>GrantResumePermission</code> —
+        <code>--resume [chatId] --trust</code> alone suffices.
+      </p>
+      <p>
+        <code>ExtractEditViews</code> is the "show the file diffs through NGL" hook — it parses a completed run's
+        raw stdout into canonical <code>ngl.EditViews</code> when the vendor's headless output carries enough
+        structure. agy's headless mode is prose-only (no <code>--output-format</code> flag), so its adapter always
+        returns <code>ok=false</code> here; that's an honest limit of the wire format, not a bug to paper over.
+        <code>WrapResumePrompt</code> is a prompt-engineering mitigation for vendors whose resume reliably clears the
+        permission gate but the model then describes the directory instead of acting (agy today) — not a guarantee,
+        and distinct from either grant mechanism.
+      </p>
+      <p>
+        Unregistered vendor names fall back to <code>noopAdapter</code> — every method is a safe no-op, so callers
+        never branch on "is there an adapter for this vendor" before calling one. The only place that lists all
+        known vendor names for execution purposes is the <code>vendorAdapters</code> map in
+        <code>adapter.go</code>.
+      </p>
+
       <h2 id="checklist">Adding a fourth vendor</h2>
       <p>
         The point of all three interfaces: adding a vendor is new files, never a diff to shared dispatch
@@ -167,7 +228,7 @@
       </p>
       <ul>
         <li><code>configs/vendor_candidates.yaml</code> — probe args, print flag, <code>default</code>/<code>resume</code>/<code>interactive</code> templates (data, not Go).</li>
-        <li><code>internal/vendors/adapter.go</code> — a <code>VendorAdapter</code> for denial detection, session-id/edit-view extraction (execution layer, not wire format).</li>
+        <li><code>internal/vendors/adapter.go</code> — a <code>VendorAdapter</code> implementing all six methods (<code>DetectDenials</code>, <code>ExtractSessionID</code>, <code>GrantResumePermission</code>, <code>ExtraResumeArgs</code>, <code>ExtractEditViews</code>, <code>WrapResumePrompt</code>) for execution-layer behavior, not wire format — see <a href="#vendor-adapter">VendorAdapter</a> above.</li>
         <li><code>internal/ngl/adapter_&lt;vendor&gt;.go</code> — a <code>ParseXTurn</code>, if the vendor's own stdout needs structuring beyond plain text.</li>
         <li><code>internal/ngl/adapter_&lt;vendor&gt;_origin.go</code> — an <code>OriginAdapter</code>, <strong>only once its real live wire shape is confirmed</strong> — see the confidence column above; never registered on a guess.</li>
         <li><code>internal/ngl/adapter_&lt;vendor&gt;_render.go</code> — a <code>DelegateRenderer</code>, once its headless output shape is confirmed.</li>

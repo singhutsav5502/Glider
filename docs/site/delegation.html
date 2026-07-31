@@ -167,6 +167,40 @@ summarize recent commits /agy</pre>
         set a default workspace to skip asking in the common single-project case.
       </p>
 
+      <h2 id="context">Session context for the delegate</h2>
+      <p>
+        A delegated CLI used to receive exactly two things — the prompt text and a working
+        directory — so it had no idea what the larger task was or which CLI asked. Now every
+        delegate run gets its <em>own</em> private directory under
+        <code>~/.glider/delegates/&lt;id&gt;</code> holding a single context file, handed to the CLI
+        through a flag that vendor already supports, so it's ingested during normal session startup
+        rather than spent out of the prompt budget.
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>How the context reaches it</th></tr>
+        <tr><td>claude</td><td><code>--append-system-prompt-file=&lt;file&gt;</code> — the file's path is passed explicitly, so its name doesn't matter</td></tr>
+        <tr><td>cursor-agent</td><td><code>--add-dir=&lt;dir&gt;</code> — reads an <code>AGENTS.md</code> written inside that directory</td></tr>
+        <tr><td>agy</td><td><code>--add-dir=&lt;dir&gt;</code> — same convention, also <code>AGENTS.md</code></td></tr>
+      </table>
+      <p>
+        Those flags are ordinary template args in <code>configs/vendor_candidates.yaml</code>
+        (<code>{{context_file}}</code>, <code>{{context_dir}}</code>), so which flag a vendor needs
+        stays data rather than a vendor-name branch in shared code. A vendor with no context
+        configured simply runs without one — the flag is dropped rather than left dangling.
+      </p>
+      <p>
+        The file itself carries the task restated, which CLI delegated it, the workspace, and up to
+        6 recent human instructions from the calling session (oldest first, marked as background
+        only).
+      </p>
+      <p class="note">
+        <strong>Nothing is written into files you own.</strong> Your project's
+        <code>CLAUDE.md</code> or <code>AGENTS.md</code> is never touched — an earlier design
+        appended to them and had to lock, restore byte-for-byte, and self-heal after crashed runs.
+        A per-delegate directory removes all of that: it belongs to exactly one run, and it's
+        deleted when that run ends.
+      </p>
+
       <h2 id="rendering">Rendering the result back</h2>
       <p>
         A delegate's edit is rendered as a diff appended to the reply regardless of which vendor
