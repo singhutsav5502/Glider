@@ -4,7 +4,7 @@ import "encoding/json"
 
 // Turn is the canonical, vendor-agnostic envelope for one exchange, per
 // planning/agent_cli_interop.md §"Proposed common envelope" and
-// planning/native_glider_orchestration.md §1. Raw is always kept —
+// planning/ngl_and_adapters.md §1. Raw is always kept —
 // normalization is best-effort and additive, never a replacement for the
 // vendor's own native event, so a Turn can always be re-emitted to the
 // same vendor untouched.

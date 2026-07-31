@@ -680,7 +680,12 @@
 
   function isRequestLogRow(data) {
     const action = data.action || data.route || "";
-    return action === "local" || action === "cloud" || action === "origin_passthrough" || action === "canned" || action === "error";
+    // "delegate" added 2026-07-30 alongside the backend's own
+    // IsRequestLogAction (internal/metrics/collector.go) -- without it, a
+    // delegate call's RequestRecord reaches the browser correctly but gets
+    // silently dropped right here, invisible in the Overview table despite
+    // every earlier layer having been fixed.
+    return action === "local" || action === "cloud" || action === "origin_passthrough" || action === "canned" || action === "error" || action === "delegate";
   }
 
   function addLog(data, opts) {

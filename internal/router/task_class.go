@@ -34,7 +34,7 @@ const (
 	defaultSmallLocalPriority = 70
 )
 
-// TaskClassRule matches prompt heuristics or tool presence (see planning/smart_routing_and_local_tools.md).
+// TaskClassRule matches prompt heuristics or tool presence (see planning/routing_and_context.md).
 type TaskClassRule struct {
 	name         string
 	priority     int

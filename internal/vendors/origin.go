@@ -49,7 +49,7 @@ func ResolveOriginPID(remoteAddr string) uint32 {
 // this request, from the real OS process on the other end of the
 // connection — replacing a hardcoded vendor name literal (which existed
 // at both HTTP-facing call sites, flagged as a known, disclosed exception
-// in planning/adapter_boundary.md §4 before this function existed) with a
+// in planning/ngl_and_adapters.md §0 before this function existed) with a
 // real, per-request answer instead of always assuming "claude".
 //
 // "" is a safe, valid result — not an error — for an unresolvable origin

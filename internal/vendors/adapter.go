@@ -33,17 +33,42 @@ type VendorAdapter interface {
 
 	// GrantResumePermission performs whatever scoped, vendor-specific side
 	// effect is needed to let a resume invocation succeed where the
-	// original run was denied. Most vendors need none of this — their
-	// CommandTemplate resume args alone are sufficient (claude's
-	// --allowedTools, cursor-agent's --resume) — and return a no-op revert
-	// with a nil error. The returned revert func is always called after
-	// the resume attempt, success or failure, so any side effect stays
-	// scoped to exactly one resume call. cwd is the resolved workspace
-	// directory the resume will run in (may be "" if none was resolved) —
-	// agy needs this to also grant into a directory-specific project
-	// config when one exists, since it takes precedence over any global
-	// grant (confirmed live 2026-07-26, see agy_grant.go).
+	// original run was denied — a side effect OUTSIDE the resume argv
+	// itself (agy: a settings.json grant, since its resume is a bare
+	// --continue with no per-tool flag at all). Most vendors need none of
+	// this — their per-denial scoping happens through ExtraResumeArgs
+	// instead (see below) — and return a no-op revert with a nil error.
+	// The returned revert func is always called after the resume attempt,
+	// success or failure, so any side effect stays scoped to exactly one
+	// resume call. cwd is the resolved workspace directory the resume
+	// will run in (may be "" if none was resolved) — agy needs this to
+	// also grant into a directory-specific project config when one
+	// exists, since it takes precedence over any global grant (confirmed
+	// live 2026-07-26, see agy_grant.go).
 	GrantResumePermission(v Vendor, cwd string, denials []Denial) (revert func() error, err error)
+
+	// ExtraResumeArgs returns extra CLI args to append to the vendor's
+	// "resume" CommandTemplate for this specific set of denials, or nil
+	// if the vendor has no such mechanism. Added 2026-07-30 to close a
+	// real gap: resolveAllow used to unconditionally reissue the resume
+	// template's static args, with no way for a vendor to scope the retry
+	// to just the denied tool(s) — for claude that meant every "allow"
+	// click re-ran the identical prompt against the identical permission
+	// state instead of actually granting anything (claudeAdapter's own
+	// GrantResumePermission doc used to claim "--allowedTools ... is
+	// sufficient on its own" as part of the resume template — false; the
+	// registered template has never included it, see
+	// configs/vendor_candidates.yaml's claude "resume" entry). claude's
+	// implementation builds "--allowedTools <comma-joined tool names>"
+	// from denials — confirmed live via `claude --help`: "--allowedTools,
+	// --allowed-tools <tools...> Comma or space-separated list of tool
+	// names to allow". cursor-agent has no equivalent (confirmed live via
+	// `cursor-agent --help`: only -f/--force/--yolo, which grants
+	// everything, not just the denied tool — a materially broader
+	// escalation than this method is meant for) so cursorAgentAdapter
+	// returns nil here, same as noopAdapter and agyAdapter (agy's
+	// GrantResumePermission already covers its resume side effect).
+	ExtraResumeArgs(denials []Denial) []string
 
 	// ExtractEditViews parses a completed run's raw stdout into NGL's
 	// canonical EditViews, when the vendor's output contains enough
@@ -65,7 +90,7 @@ type VendorAdapter interface {
 	// clears the permission gate but the model often responds by
 	// describing the directory instead of acting (confirmed live,
 	// reproduced 6 consecutive times) — a prompt-engineering mitigation,
-	// not a guarantee; see planning/adapter_boundary.md §5 for the honest
+	// not a guarantee; see planning/ngl_and_adapters.md §9 for the honest
 	// limits and why the real fix is Path B, not this.
 	WrapResumePrompt(prompt string) string
 }
@@ -80,7 +105,8 @@ func (noopAdapter) ExtractSessionID(stdout []byte) string        { return "" }
 func (noopAdapter) GrantResumePermission(Vendor, string, []Denial) (func() error, error) {
 	return func() error { return nil }, nil
 }
-func (noopAdapter) WrapResumePrompt(prompt string) string { return prompt }
+func (noopAdapter) ExtraResumeArgs(denials []Denial) []string { return nil }
+func (noopAdapter) WrapResumePrompt(prompt string) string     { return prompt }
 func (noopAdapter) ExtractEditViews(stdout []byte) (ngl.EditViews, bool) {
 	return ngl.EditViews{}, false
 }

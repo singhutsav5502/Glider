@@ -1,5 +1,5 @@
 // Package contextkit holds session/episode/turn-budget state for swarm, loop,
-// and local fulfill memory (see planning/context_management.md).
+// and local fulfill memory (see planning/routing_and_context.md).
 package contextkit
 
 import (

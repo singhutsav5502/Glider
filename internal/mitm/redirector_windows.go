@@ -99,6 +99,16 @@ type WinDivertRedirector struct {
 
 	allowProcessNames map[string]bool // lowercased basenames; nil/empty => no process narrowing
 
+	// pidScopingActive lets pidEnrolled skip pidScopeMu entirely on the
+	// hot per-packet path when no PID enrollment is active (the
+	// overwhelming common case — see pidEnrolled's own doc comment for
+	// the real regression this fixes). Only pidEnrolled's slow path
+	// (scoping actually active) and SetEnrolledPIDs itself ever touch
+	// pidScopeMu/enrolledPIDs.
+	pidScopingActive atomic.Bool
+	pidScopeMu       sync.Mutex
+	enrolledPIDs     map[uint32]bool // nil/empty => no PID narrowing (see PIDScoper's doc comment)
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -518,8 +528,68 @@ func (r *WinDivertRedirector) processAllowed(srcPort uint16) bool {
 	allowed := r.allowProcessNames[name]
 	if !allowed {
 		r.Log.Debug("mitm transparent: rejecting non-vendor process", "port", srcPort, "pid", pid, "process", name)
+		return false
 	}
-	return allowed
+
+	if !r.pidEnrolled(pid) {
+		r.Log.Debug("mitm transparent: rejecting non-enrolled process", "port", srcPort, "pid", pid, "process", name)
+		return false
+	}
+	return true
+}
+
+// pidEnrolled reports whether pid passes PID-scoping — true unconditionally
+// when no enrollment is active (SetEnrolledPIDs never called, or called
+// with an empty set), matching AllowProcessNames' own "no configured names
+// => no narrowing" convention so the two knobs compose the same way.
+//
+// Real, live-confirmed regression this fixes (2026-07-31): the first cut
+// of this method unconditionally took pidScopeMu before even checking
+// whether any enrollment was active — a real, measurable throughput hit
+// on this hot per-packet path (processAllowed's own neighboring comment
+// already documents "a single active passthrough connection generated
+// 1300+ packets in a few seconds" as the bar for what counts as
+// meaningfully hot here), since it runs for every packet on every
+// already-recognized vendor CLI connection, PID scoping enrolled or not.
+// pidScopingActive (an atomic.Bool, checked with no lock at all) lets the
+// overwhelmingly common case — no enrollment ever configured — skip
+// pidScopeMu entirely instead of paying a mutex acquisition on every
+// single packet for a check that was going to return true anyway.
+func (r *WinDivertRedirector) pidEnrolled(pid uint32) bool {
+	if !r.pidScopingActive.Load() {
+		return true
+	}
+	r.pidScopeMu.Lock()
+	defer r.pidScopeMu.Unlock()
+	if len(r.enrolledPIDs) == 0 {
+		return true
+	}
+	return r.enrolledPIDs[pid]
+}
+
+// SetEnrolledPIDs implements PIDScoper — see that interface's doc comment
+// for why this exists. Copies the input so later mutation of the caller's
+// slice can't reach back into redirector state. pidScopingActive is set
+// last on enroll (nothing observes a half-populated enrolledPIDs) and
+// cleared first on disable (nothing observes a stale non-empty map through
+// a still-true flag) — pidEnrolled's own fast path only trusts the flag,
+// so ordering here is what keeps that fast path correct.
+func (r *WinDivertRedirector) SetEnrolledPIDs(pids []uint32) {
+	if len(pids) == 0 {
+		r.pidScopingActive.Store(false)
+		r.pidScopeMu.Lock()
+		r.enrolledPIDs = nil
+		r.pidScopeMu.Unlock()
+		return
+	}
+	set := make(map[uint32]bool, len(pids))
+	for _, pid := range pids {
+		set[pid] = true
+	}
+	r.pidScopeMu.Lock()
+	r.enrolledPIDs = set
+	r.pidScopeMu.Unlock()
+	r.pidScopingActive.Store(true)
 }
 
 func (r *WinDivertRedirector) ownerPID(port uint16) (uint32, bool) {

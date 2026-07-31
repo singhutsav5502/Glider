@@ -75,3 +75,28 @@ type ProcessFilter interface {
 	// against Glider's own listening socket.
 	ConnectionAllowed(conn net.Conn) bool
 }
+
+// PIDScoper is an optional capability a TransparentRedirector can implement
+// to further narrow interception to a specific, dynamically-enrolled set of
+// process IDs — layered ON TOP of (not instead of) AllowProcessNames, and
+// mutable at runtime (unlike AllowProcessNames, fixed for the process's
+// whole lifetime via RedirectConfig). Added 2026-07-31 after a real, live
+// incident: AllowProcessNames matches by process image name machine-wide
+// ("claude.exe"), so a controlled test's own delegate subprocess and the
+// operator's own unrelated, concurrently-running Claude Code session both
+// matched the same name and both got their real traffic intercepted and
+// flag-scanned — the operator's own live session was silently hijacked
+// when a plain-English message happened to end in a recognized trailing
+// "/vendorname" flag. PIDScoper lets a caller (the dashboard, or a test
+// harness) explicitly enroll only the specific PID(s) it actually intends
+// to test, leaving every other matching-by-name process on the machine
+// untouched. Empty/nil enrollment (the default) preserves today's
+// behavior unchanged — this is opt-in narrowing, not a new requirement,
+// since Glider's core "just works, zero-cooperation" pitch for a real
+// single front-CLI session depends on NOT requiring enrollment.
+type PIDScoper interface {
+	// SetEnrolledPIDs replaces the enrolled-PID set wholesale. Passing nil
+	// or an empty slice disables PID narrowing entirely. Safe to call
+	// concurrently with the redirector's own packet/connection handling.
+	SetEnrolledPIDs(pids []uint32)
+}

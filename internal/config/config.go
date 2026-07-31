@@ -200,20 +200,20 @@ type RoutingConfig struct {
 	AllowCloudFallback *bool `yaml:"allow_cloud_fallback,omitempty" json:"allow_cloud_fallback,omitempty"`
 	// TaskClassifier injects heuristic rules (tools → cloud, must-cloud keywords,
 	// small-local keywords) when Enabled. Priorities default below explicit /cloud
-	// (99) and above context_size (10). See planning/smart_routing_and_local_tools.md.
+	// (99) and above context_size (10). See planning/routing_and_context.md.
 	TaskClassifier TaskClassifierConfig `yaml:"task_classifier,omitempty" json:"task_classifier,omitempty"`
 	// ComplexityFrom selects the complexity score source for routing:
 	//   heuristic — Glider MVP score (tools / files / prompt length / mode strings)
 	//   cursor    — only Metadata.CursorComplexity when extract finds a Cursor field
 	//   both      — prefer Cursor when present, else heuristic
 	// Empty → heuristic. Cursor wire fields are not exposed in MITM dumps today;
-	// see planning/smart_routing_and_local_tools.md §Complexity.
+	// see planning/routing_and_context.md §2 (complexity scoring).
 	ComplexityFrom string `yaml:"complexity_from,omitempty" json:"complexity_from,omitempty"`
 	// Complexity tunes the injected complexity→cloud rule (optional knobs).
 	Complexity ComplexityConfig `yaml:"complexity,omitempty" json:"complexity,omitempty"`
 	// TurnFamilyTTL is how long a DecideLocal / explicit turn family stays open for
 	// reply-summary / title follow-ons (e.g. "90s"). Empty → 90s. Not conversation-wide.
-	// See planning/routing_session_policy.md.
+	// See planning/routing_and_context.md.
 	TurnFamilyTTL string `yaml:"turn_family_ttl,omitempty" json:"turn_family_ttl,omitempty"`
 	// ToolFollowup controls per-tool-step re-decide for child RunSSE / tool loops
 	// after a parent cloud|local decision. Path B logs would_local and fulfills
@@ -235,7 +235,7 @@ type ComplexityConfig struct {
 }
 
 // ToolFollowupConfig is the configurable methodology for tool-step routing after a
-// parent turn decision (see planning/routing_session_policy.md).
+// parent turn decision (see planning/routing_and_context.md).
 type ToolFollowupConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// InheritParentDefault starts from the parent turn's cloud|local decision.

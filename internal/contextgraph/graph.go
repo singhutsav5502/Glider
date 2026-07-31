@@ -1,7 +1,7 @@
 // Package contextgraph is the orchestrator context layer: an append-only event
 // log plus a structural entity/edge store (Graphify-inspired dual-layer Query)
 // and an ephemeral turn index for sticky routing. Persist under ~/.glider/context.
-// See planning/context_management.md and planning/slate_weave_graphify_plan.md.
+// See planning/routing_and_context.md and planning/slate_weave_graphify_plan.md.
 package contextgraph
 
 import (

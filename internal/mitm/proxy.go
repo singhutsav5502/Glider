@@ -575,12 +575,44 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 	// Glider's entire relay to the real origin, including the response
 	// body copy — even when that relay is otherwise proceeding
 	// correctly and would complete fine left alone. A generous, bounded,
-	// independent timeout (matching vendors.RunTimeout's own ceiling for
-	// a real completion call) lets the outbound leg live or die on its
-	// own merits instead of inheriting a client-side cancellation that
-	// may have nothing to do with whether the real origin can actually
-	// answer.
-	outCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// independent timeout lets the outbound leg live or die on its own
+	// merits instead of inheriting a client-side cancellation that may
+	// have nothing to do with whether the real origin can actually
+	// answer. 120s here is its own independently-reasoned ceiling for a
+	// real network response from a real vendor origin (cursor.sh) — not
+	// coupled to vendors.RunTimeout (a local subprocess exec bound,
+	// raised to 6min 2026-07-30 for unrelated reasons; this comment used
+	// to claim the two intentionally matched, which stopped being true
+	// the moment only one of them changed).
+	//
+	// AgentService/Run gets a much shorter ceiling — real, live-confirmed
+	// incident (2026-07-31): decoupling the outbound relay's lifetime
+	// from the inbound client's own (the independent-context fix above)
+	// solved the false-positive-cancellation problem, but created a new
+	// one — cursor-agent's real client gives up waiting and reconnects on
+	// its own ~30s cadence (confirmed live: 4 reconnect attempts, ~30-34s
+	// apart), but each abandoned relay here kept running for the FULL
+	// 120s regardless, since nothing ever told it the client had moved
+	// on. A new diagnostic counter (inFlightAgentRunRelays) proved these
+	// pile up: concurrent_in_flight climbed 1→2→3→4 across one real
+	// multi-reconnect exchange, meaning by the 4th attempt three already-
+	// abandoned relays were still alive, competing for real resources
+	// (decrypt workers, TLS negotiation, network) with the attempt that
+	// might actually succeed — a real, measurable drag on exactly the
+	// connections most likely to matter. There's no reliable way to
+	// detect "the client genuinely gave up" directly (req.Context() is
+	// exactly what the independent-context fix above correctly avoids,
+	// for the reason stated there), so instead of detecting abandonment,
+	// this just refuses to hold a relay open longer than the client's own
+	// patience window would ever make useful: 40s, a little past the
+	// observed ~30-34s reconnect cadence to give a genuinely-just-slow
+	// connection a fair chance, but not the 3-4x-longer margin that let
+	// abandoned relays pile up before.
+	relayTimeout := 120 * time.Second
+	if cursorrpc.IsAgentServiceRunPath(req.URL.Path) {
+		relayTimeout = 40 * time.Second
+	}
+	outCtx, cancel := context.WithTimeout(context.Background(), relayTimeout)
 	defer cancel()
 	outReq := req.Clone(outCtx)
 	outReq.RequestURI = ""
@@ -646,8 +678,60 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, copyErr := io.Copy(w, resp.Body)
+
+	// flushAfterWrite, not a bare io.Copy(w, ...) — THE root cause of the
+	// long-chased cursor-agent hang, found 2026-07-31 with exact numeric
+	// confirmation. net/http buffers response writes internally
+	// (bufferBeforeChunkingSize = 2048 for HTTP/1.1;
+	// http2handlerChunkWriteSize = 4096 for HTTP/2) and only lets them
+	// out when that buffer fills, the handler returns, or someone calls
+	// Flush. This relay called Flush nowhere, so a streaming RPC response
+	// — which is exactly a slow trickle of small frames, by design —
+	// accumulated in the buffer instead of reaching the client.
+	//
+	// The live data was bimodal and unmistakable: every stuck
+	// AgentService/Run stream plateaued at 116-215 bytes (safely under
+	// both thresholds — invisible to the client, which then hit its own
+	// ~30s patience window and reconnected, repeatedly, for 160-420s),
+	// while every stream that actually delivered had crossed 14KB
+	// (blowing past 4096 and auto-flushing as a side effect, which is the
+	// only reason this ever appeared to "work eventually" at all). This
+	// also explains why killing glider.exe made the same in-flight prompt
+	// resolve instantly — no buffering proxy left in the path — and why
+	// small delegate replies were hit hardest: they're the smallest
+	// responses of all. Note the ngl origin adapters (adapter_*_origin.go)
+	// have always flushed explicitly for exactly this reason; plain
+	// passthrough was simply missing the equivalent.
+	//
+	// Wrapping w (rather than passing it directly) additionally prevents
+	// io.Copy from taking net/http's io.ReaderFrom fast path, which would
+	// bypass per-write flushing entirely.
+	var dst io.Writer = w
+	if flusher, ok := w.(http.Flusher); ok {
+		dst = flushAfterWrite{w: w, flusher: flusher}
+	}
+	_, copyErr := io.Copy(dst, resp.Body)
 	return copyErr
+}
+
+// flushAfterWrite pushes every write straight through to the client
+// instead of letting it sit in net/http's internal response buffer — see
+// its use in passthroughHTTPS for the full incident writeup. Permanent,
+// not diagnostic: any relay of a streaming response (Connect/gRPC bidi,
+// SSE, chunked long-poll) is broken without it whenever the response's
+// frames are individually smaller than the buffer, which for a
+// heartbeat-driven protocol is the normal case rather than an edge case.
+type flushAfterWrite struct {
+	w       io.Writer
+	flusher http.Flusher
+}
+
+func (f flushAfterWrite) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if n > 0 {
+		f.flusher.Flush()
+	}
+	return n, err
 }
 
 // singleConnListener adapts one already-accepted net.Conn to the

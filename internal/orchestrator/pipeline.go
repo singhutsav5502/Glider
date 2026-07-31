@@ -30,7 +30,7 @@ type CompleteOptions struct {
 
 // PipelineCompleter implements api.Completer: tokenize → route → transform → execute.
 //
-// Context to locals (see planning/smart_routing_and_local_tools.md §Local context):
+// Context to locals (see planning/routing_and_context.md §5):
 //
 //	Path B: ExtractBidiCompletionRequest → one TipTap latest-turn user message
 //	        (no tools, no full envelope) → DecideLocal / CompleteLocal.

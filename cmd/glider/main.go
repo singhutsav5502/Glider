@@ -31,6 +31,7 @@ import (
 	"github.com/glider-ai/glider/internal/orchestrator"
 	"github.com/glider-ai/glider/internal/plugin"
 	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/runstate"
 	"github.com/glider-ai/glider/internal/safego"
 	"github.com/glider-ai/glider/internal/tools"
 	"github.com/glider-ai/glider/internal/transform"
@@ -92,6 +93,21 @@ func runGlider(ctx context.Context, cfgPath string) {
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: levelVar}))
+
+	// See internal/runstate's own doc comment: a crash or forceful kill
+	// (taskkill /F, SIGKILL) runs no Go code at all, so the only place
+	// that can ever be surfaced is retrospectively, here, on the next
+	// startup — real, live-confirmed incident (2026-07-30): a killed
+	// instance left an orphaned delegate subprocess running with nobody
+	// left to notice. Checked before MarkStarted overwrites the evidence.
+	if runstate.WasUncleanShutdown() {
+		log.Warn("previous glider instance did not shut down cleanly (crashed, or was forcefully killed) — " +
+			"if it was running transparent interception, verify no orphaned vendor-CLI subprocess or stale " +
+			"redirect rule is still active (tasklist/netstat, or iptables -t nat -L on Linux) before relying on this run")
+	}
+	if err := runstate.MarkStarted(); err != nil {
+		log.Debug("runstate: could not write startup marker", "err", err)
+	}
 
 	if loaded, err := config.LoadDotEnvFiles(); err != nil {
 		log.Warn("dotenv load", "err", err)
@@ -300,6 +316,7 @@ func runGlider(ctx context.Context, cfgPath string) {
 	handlers := &api.Handlers{
 		Completer: completer,
 		Models:    orchestrator.RegistryModelLister{Registry: reg},
+		Metrics:   collector,
 	}
 
 	seedDefaultWorkspace(log)
@@ -390,7 +407,7 @@ func runGlider(ctx context.Context, cfgPath string) {
 		// existing Cursor-focused logic — anything it doesn't claim falls
 		// straight through.
 		localHandler := &mitm.ChainHandler{Handlers: []mitm.LocalHandler{
-			&mitm.DelegateHandler{Log: log},
+			&mitm.DelegateHandler{Log: log, Metrics: collector},
 			interceptor,
 		}}
 		mitmProxy = &mitm.Proxy{
@@ -447,6 +464,11 @@ func runGlider(ctx context.Context, cfgPath string) {
 		dash.GPUs = gpuMonitorAdapter{mon: vramMon}
 		dash.Metrics = collector
 		dash.MITMDebug = mitmDebug
+		if mitmProxy != nil {
+			if scoper, ok := mitmProxy.Redirector.(mitm.PIDScoper); ok {
+				dash.Redirector = scoper
+			}
+		}
 		dash.ContextGraph = ctxGraph
 		dash.Episodes = episodeStore
 		dash.ContextRetainDays = retainDays
@@ -532,6 +554,9 @@ func runGlider(ctx context.Context, cfgPath string) {
 		_ = history.Close()
 	}
 	provider.Stop()
+	if err := runstate.MarkStoppedCleanly(); err != nil {
+		log.Debug("runstate: could not clear startup marker", "err", err)
+	}
 	tray.Quit()
 }
 

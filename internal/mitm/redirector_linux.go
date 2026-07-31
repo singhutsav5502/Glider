@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -67,6 +68,15 @@ type LinuxRedirector struct {
 	matchPorts        []int
 	allowIPs          []string
 	allowProcessNames map[string]bool
+
+	// pidScopingActive lets pidEnrolled skip pidScopeMu when no PID
+	// enrollment is active — same reasoning as WinDivertRedirector's own
+	// field of the same name (redirector_windows.go), applied here for
+	// interface-implementation consistency even though this path runs
+	// once per accepted connection, not once per packet.
+	pidScopingActive atomic.Bool
+	pidScopeMu       sync.Mutex
+	enrolledPIDs     map[uint32]bool // nil/empty => no PID narrowing (see PIDScoper's doc comment, redirector.go)
 
 	chainCreated bool
 	selfPID      uint32
@@ -279,8 +289,49 @@ func (r *LinuxRedirector) ConnectionAllowed(conn net.Conn) bool {
 	allowed := r.allowProcessNames[name]
 	if !allowed {
 		r.Log.Debug("mitm transparent: rejecting non-vendor process", "port", srcPort, "pid", pid, "process", name)
+		return false
 	}
-	return allowed
+	if !r.pidEnrolled(pid) {
+		r.Log.Debug("mitm transparent: rejecting non-enrolled process", "port", srcPort, "pid", pid, "process", name)
+		return false
+	}
+	return true
+}
+
+// pidEnrolled mirrors WinDivertRedirector.pidEnrolled — see that doc
+// comment (redirector_windows.go) and PIDScoper (redirector.go) for why
+// this exists.
+func (r *LinuxRedirector) pidEnrolled(pid uint32) bool {
+	if !r.pidScopingActive.Load() {
+		return true
+	}
+	r.pidScopeMu.Lock()
+	defer r.pidScopeMu.Unlock()
+	if len(r.enrolledPIDs) == 0 {
+		return true
+	}
+	return r.enrolledPIDs[pid]
+}
+
+// SetEnrolledPIDs implements PIDScoper — see WinDivertRedirector's own
+// implementation for why pidScopingActive is set last on enroll and
+// cleared first on disable.
+func (r *LinuxRedirector) SetEnrolledPIDs(pids []uint32) {
+	if len(pids) == 0 {
+		r.pidScopingActive.Store(false)
+		r.pidScopeMu.Lock()
+		r.enrolledPIDs = nil
+		r.pidScopeMu.Unlock()
+		return
+	}
+	set := make(map[uint32]bool, len(pids))
+	for _, pid := range pids {
+		set[pid] = true
+	}
+	r.pidScopeMu.Lock()
+	r.enrolledPIDs = set
+	r.pidScopeMu.Unlock()
+	r.pidScopingActive.Store(true)
 }
 
 // ownerPID mirrors WinDivertRedirector.ownerPID exactly: a short TTL

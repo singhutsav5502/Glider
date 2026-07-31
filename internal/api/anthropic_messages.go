@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/ngl"
 	"github.com/glider-ai/glider/internal/vendors"
 )
@@ -24,7 +26,7 @@ type anthropicMessagesRequest struct {
 }
 
 // Messages handles POST /v1/messages — Claude Code's completion-plane route
-// (confirmed live via ANTHROPIC_BASE_URL, see planning/native_glider_orchestration.md
+// (confirmed live via ANTHROPIC_BASE_URL, see planning/ngl_and_adapters.md
 // §7). Delegate commands ("<prompt> /vendor-name", flag trailing) use the
 // same convention as Glider's existing /local /cloud /fast /heavy routing
 // commands, matched dynamically against whichever CLIs discovery has
@@ -70,7 +72,7 @@ func (h *Handlers) Messages(w http.ResponseWriter, r *http.Request) {
 	// generalization). "" (unresolvable, or a process matching no
 	// registered vendor) is a safe, valid result — ngl.LastUserInstruction
 	// already treats an unrecognized vendor name as "no scaffold stripping
-	// needed" rather than erroring. See planning/adapter_boundary.md §4 for
+	// needed" rather than erroring. See planning/ngl_and_adapters.md §0 (the rule) for
 	// the history of why this was hardcoded in the first place.
 	originVendorName := vendors.ResolveOriginVendorName(r.RemoteAddr, reg)
 	userText, err := ngl.LastUserInstruction(originVendorName, req.Messages)
@@ -98,7 +100,9 @@ func (h *Handlers) Messages(w http.ResponseWriter, r *http.Request) {
 
 	var replyText string
 	if isDelegate {
+		start := time.Now()
 		replyText = vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+		h.recordDelegateMetrics(vendor.Name, templateName, r.Host, r.URL.Path, start)
 	} else if len(reg.Enabled()) == 0 {
 		replyText = "No agent CLIs are registered yet. Run discovery from the dashboard's Vendors page " +
 			"(or POST /api/vendors/discover) to detect installed CLIs, then address one with \"/name <prompt>\"."
@@ -116,6 +120,29 @@ func (h *Handlers) Messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAnthropicJSON(w, req.Model, replyText)
+}
+
+// recordDelegateMetrics is this route's counterpart to
+// DelegateHandler.recordDelegateMetrics (internal/mitm/delegate_handler.go)
+// — see that method's doc comment for why this exists at all. Kept as a
+// near-duplicate rather than a shared helper: the two callers live in
+// different packages (api, mitm) with no existing shared dependency
+// between them worth introducing just for this one small record call.
+func (h *Handlers) recordDelegateMetrics(vendorName, templateName, host, path string, start time.Time) {
+	if h.Metrics == nil {
+		return
+	}
+	h.Metrics.Record(metrics.RequestRecord{
+		ID:      fmt.Sprintf("delegate_%d", time.Now().UnixNano()),
+		Mode:    "gateway",
+		Action:  "delegate",
+		Route:   "delegate",
+		Model:   vendorName,
+		Host:    host,
+		Path:    path,
+		Rule:    "delegate:" + templateName,
+		Latency: time.Since(start),
+	})
 }
 
 func joinNames(names []string) string {

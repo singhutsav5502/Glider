@@ -27,8 +27,24 @@ import (
 // ProbeTimeout bounds a single candidate's discovery probe.
 const ProbeTimeout = 10 * time.Second
 
-// RunTimeout bounds a single headless delegate call.
-const RunTimeout = 120 * time.Second
+// RunTimeout bounds a single headless delegate call. Raised from 120s to
+// 6 minutes 2026-07-30, evidenced rather than guessed: agy's own CLI
+// exposes --print-timeout with a documented default of 5 minutes (`agy
+// --help`: "Timeout for print mode wait (default 5m0s)") — Glider's own
+// ceiling was silently cutting agy's headless runs off a full 3 minutes
+// before agy's own client would have given up on its own, for any task
+// agy itself considered reasonable to still be working on. 6 minutes
+// gives agy's own timeout room to fire first (the expected, better-
+// behaved outcome — agy's own process exits cleanly), with Glider's
+// ceiling as a backstop for a vendor that never times out on its own
+// rather than the thing racing it. No live evidence claude or
+// cursor-agent need more than 120s specifically, but a single shared
+// constant across all headless delegate calls is simpler than a
+// per-vendor override with no evidence yet justifying the added
+// complexity — worth revisiting if a vendor is ever found needing
+// something shorter (a tight ceiling protects the human waiting on a
+// reply, not just the vendor doing the work).
+const RunTimeout = 6 * time.Minute
 
 // CommandTemplate is one named way to launch a vendor's CLI — user-editable
 // from the dashboard (planning/permission_relay_design.md §1), not
@@ -376,6 +392,14 @@ type RunOptions struct {
 	// WorkspaceStore before calling RunWithOptions — see resolveWorkspace
 	// in resume.go.
 	Cwd string
+	// ExtraArgs are appended after the resolved template's own args, verbatim.
+	// The one real caller today is resolveAllow (resume.go), which fills
+	// this from VendorAdapter.ExtraResumeArgs(denials) — the mechanism
+	// that lets a vendor scope a resume retry to exactly the tool(s) that
+	// were denied (claude: "--allowedTools <names>") instead of blindly
+	// reissuing the identical prompt against the identical permission
+	// state. nil/empty for vendors with no such per-denial mechanism.
+	ExtraArgs []string
 }
 
 // Run executes prompt against vendor's CLI using its "default" template and
@@ -431,6 +455,7 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 		}
 	}
 	args := substituteTemplateArgs(tmpl.Args, prompt, opts.Resume, cwd)
+	args = append(args, opts.ExtraArgs...)
 
 	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
 	defer cancel()
@@ -449,7 +474,30 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
-	runErr := cmd.Run()
+
+	// Start (not Run) so the process can be enrolled in the kill-on-close
+	// job object between start and wait — see AssignToKillOnCloseJob's own
+	// doc comment for the real, live-confirmed incident this closes: a
+	// forceful kill of glider.exe (taskkill /F, or any external SIGKILL)
+	// bypasses ctx cancellation entirely, since no Go code runs at all
+	// when a process is forcibly terminated. The job object is the only
+	// mechanism that still cleans up in that case, enforced by Windows
+	// itself rather than by Glider's own (necessarily absent) code.
+	// Best-effort: a failed assignment is logged nowhere here and just
+	// falls back to pre-2026-07-31 behavior (possible orphan on a
+	// forceful kill) rather than aborting an otherwise-healthy delegate
+	// call over a hardening gap, not a correctness one.
+	var runErr error
+	if runErr = cmd.Start(); runErr == nil {
+		// AssignToKillOnCloseJob's job membership doubles as the signal
+		// internal/mitm's Path B fulfillment path (tryRunSSEFulfill) uses
+		// to recognize this process (and any of its own child processes,
+		// e.g. cursor-agent.cmd's real node.exe) as a Glider-spawned
+		// delegate subprocess — see procutil.IsInDelegateSubprocessJob's
+		// doc comment for why that matters.
+		_ = procutil.AssignToKillOnCloseJob(cmd)
+		runErr = cmd.Wait()
+	}
 
 	text := strings.TrimSpace(out.String())
 	denials, _ := DetectDenials(v.Name, out.Bytes(), errOut.Bytes())

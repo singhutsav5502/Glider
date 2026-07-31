@@ -1,6 +1,6 @@
 // Package ngl is a first, minimal slice of "Native Glider Language" — the
 // canonical, vendor-agnostic representation of a turn's content described in
-// planning/native_glider_orchestration.md. It exists because of a real bug,
+// planning/ngl_and_adapters.md. It exists because of a real bug,
 // not as a documentation exercise: on 2026-07-26, a delegate-flag detector
 // that searched raw wire-format JSON for a substring anywhere in "the last
 // user-role message" got tripped by Claude Code's own auto-injected
@@ -35,7 +35,7 @@ const (
 // Part is one classified piece of content. ToolCall, ToolResultData, and
 // ReasoningToken are only populated when Kind indicates their presence
 // (PartToolCall, PartToolResult, PartReasoning respectively) — mirrors
-// native_glider_orchestration.md §3's sketch (there named "ToolResult"; the
+// ngl_and_adapters.md §10's sketch (there named "ToolResult"; the
 // field here is ToolResultData to avoid colliding with the ToolResult type
 // name itself).
 type Part struct {

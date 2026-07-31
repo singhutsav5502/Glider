@@ -217,8 +217,9 @@ func resolveAllow(ctx context.Context, token string) string {
 		return fmt.Sprintf("Could not grant resume permission for %s: %s", pr.Vendor.Name, err.Error())
 	}
 	resumePrompt := adapter.WrapResumePrompt(pr.Prompt)
+	extraArgs := adapter.ExtraResumeArgs(pr.Denials)
 
-	out, runErr := RunWithOptions(ctx, pr.Vendor, resumePrompt, RunOptions{Template: "resume", Resume: pr.SessionID, Cwd: pr.Cwd})
+	out, runErr := RunWithOptions(ctx, pr.Vendor, resumePrompt, RunOptions{Template: "resume", Resume: pr.SessionID, Cwd: pr.Cwd, ExtraArgs: extraArgs})
 	revertErr := revert()
 
 	var revertNote string

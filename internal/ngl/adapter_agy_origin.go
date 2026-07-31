@@ -7,7 +7,16 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
+
+// agyDelegateKeepAliveInterval mirrors cursorDelegateKeepAliveInterval
+// (adapter_cursor_origin.go) — see WriteReply's own doc comment for why
+// agy's own client needs the identical treatment, contrary to what this
+// file used to assume. A var, not a const — same reason as
+// vendors.PendingResumeTTL: tests shrink it rather than waiting out a real
+// 10s interval.
+var agyDelegateKeepAliveInterval = 10 * time.Second
 
 func init() {
 	RegisterOriginAdapter(agyOriginAdapter{})
@@ -108,14 +117,23 @@ func (agyOriginAdapter) ExtractUserInstruction(body []byte) (text, model string,
 }
 
 // WriteReply sends header as its own SSE data: event immediately (real
-// bytes on the wire before replyText is known), then blocks on replyText
-// and sends the resolved text as a second data: event. agy's endpoint is
-// itself named streamGenerateContent, so a real backend emitting more
+// bytes on the wire before replyText is known), then sends an empty-text
+// data: event (same wire shape, just parts:[{"text":""}] — a harmless
+// no-op append for a client accumulating candidates[].content.parts[].text)
+// every agyDelegateKeepAliveInterval while waiting, before finally sending
+// the resolved text as a last data: event once it arrives. agy's endpoint
+// is itself named streamGenerateContent, so a real backend emitting more
 // than one frame over the connection's lifetime is consistent with its
 // own protocol, even though the only live capture this codebase has on
 // file (see this file's own doc comment) happened to be a single short
-// frame. No periodic keep-alive ticker — no timeout has been confirmed
-// for agy's own client the way it has for cursor-agent's.
+// frame.
+//
+// This file used to assume no periodic keep-alive was needed here, unlike
+// cursor-agent's WriteReply — live-confirmed wrong (2026-07-31) via the
+// same incident that fixed claudeOriginAdapter's identical assumption
+// (see writeClaudeSSE's doc comment, adapter_claude_origin.go): a real agy
+// session delegating to a real cursor-agent target sat waiting with no
+// keep-alive for the same reason claude's did.
 func (agyOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
@@ -163,5 +181,20 @@ func (agyOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream b
 			return err
 		}
 	}
-	return sendEvent(<-replyText)
+
+	ticker := time.NewTicker(agyDelegateKeepAliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case text, ok := <-replyText:
+			if !ok {
+				text = ""
+			}
+			return sendEvent(text)
+		case <-ticker.C:
+			if err := sendEvent(""); err != nil {
+				return err
+			}
+		}
+	}
 }

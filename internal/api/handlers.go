@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/glider-ai/glider/internal/backend"
+	"github.com/glider-ai/glider/internal/metrics"
 )
 
 // Completer handles a completion request end-to-end (route + execute).
@@ -21,6 +22,11 @@ type ModelLister interface {
 type Handlers struct {
 	Completer Completer
 	Models    ModelLister
+	// Metrics is optional (nil is a valid, quiet no-op) — used by Messages
+	// (anthropic_messages.go) to record a dashboard-visible RequestRecord
+	// for every delegate call, the gateway-route counterpart of the same
+	// 2026-07-30 fix in internal/mitm/delegate_handler.go's DelegateHandler.
+	Metrics *metrics.Collector
 }
 
 type openAIErrorBody struct {

@@ -100,9 +100,18 @@ func (c *Collector) IncAction(mode, action string) {
 
 // IsRequestLogAction reports whether action belongs in the Overview request log
 // (LLM/harness outcomes), as opposed to tunnel opens or non-LLM skips.
+//
+// "delegate" added 2026-07-30: without it, a DelegateHandler/Messages
+// Record(RequestRecord{Action: "delegate"}) call silently fell into
+// Record's !IsRequestLogAction branch below — downgraded to a routeCounts-
+// only IncAction bump, never written to History, never published to the
+// Bus. That's the exact invisibility this action value exists to fix, just
+// moved one layer deeper — caught by writing a real test asserting a
+// delegate call actually appears in History, not just that Record didn't
+// panic.
 func IsRequestLogAction(action string) bool {
 	switch action {
-	case "local", "cloud", "origin_passthrough", "canned", "error":
+	case "local", "cloud", "origin_passthrough", "canned", "error", "delegate":
 		return true
 	default:
 		return false

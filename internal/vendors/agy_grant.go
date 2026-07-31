@@ -118,7 +118,7 @@ func (agyAdapter) GrantResumePermission(v Vendor, cwd string, denials []Denial) 
 }
 
 // WrapResumePrompt addresses a real, separately-confirmed gap
-// (planning/adapter_boundary.md §5): agy's resume reliably clears the
+// (planning/ngl_and_adapters.md §9): agy's resume reliably clears the
 // permission gate (no denial on the resumed call) but the model itself
 // often responds by describing the workspace instead of performing the
 // requested action — reproduced 6 consecutive times live, across varied
@@ -131,6 +131,12 @@ func (agyAdapter) GrantResumePermission(v Vendor, cwd string, denials []Denial) 
 func (agyAdapter) WrapResumePrompt(prompt string) string {
 	return "Permission for this action has already been granted. Do not describe the directory or ask a follow-up question — perform the action directly: " + prompt
 }
+
+// ExtraResumeArgs is nil for agy — its per-denial grant is a real
+// settings.json side effect (GrantResumePermission above), not a resume
+// argv flag; agy's own resume is a bare --continue with no per-tool flag
+// to append to in the first place.
+func (agyAdapter) ExtraResumeArgs(denials []Denial) []string { return nil }
 
 func uniqueDenialToolNames(denials []Denial) []string {
 	seen := map[string]bool{}

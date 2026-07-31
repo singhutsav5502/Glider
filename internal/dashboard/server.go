@@ -33,6 +33,11 @@ type Server struct {
 	Metrics *metrics.Collector
 	// MITMDebug is optional Path B R&D observer (GET /api/mitm/debug/recent).
 	MITMDebug MITMDebugSource
+	// Redirector is optional live PID-scoping control for the transparent
+	// interceptor (POST /api/mitm/enrollment) — nil when transparent mode
+	// isn't running, or when the platform's redirector doesn't implement
+	// PIDScoper. See mitm.PIDScoper's doc comment for why this exists.
+	Redirector mitm.PIDScoper
 	// ContextGraph is optional turn-family event log (GET /api/context/turns/{id}).
 	ContextGraph ContextGraphSource
 	// Episodes is optional session episode ring (GET /api/context/episodes).
@@ -153,6 +158,13 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		s.handleMITMDebugRecent(w, r)
+	})
+	mux.HandleFunc("/api/mitm/enrollment", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleSetMITMEnrollment(w, r)
 	})
 	mux.HandleFunc("/api/context/recent", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

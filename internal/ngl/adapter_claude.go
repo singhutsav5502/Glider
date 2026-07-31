@@ -412,7 +412,7 @@ type ClaudeNotebookFile struct {
 // ClaudeTaskInput/Result match Task's confirmed shape — wire name is
 // actually "Agent", not "Task" (agent_cli_interop.md §1); this is Claude's
 // own subagent-delegation primitive, the concrete precedent
-// native_glider_orchestration.md's Delegate design is built on. The async
+// ngl_and_adapters.md's Delegate design is built on. The async
 // lifecycle (task_started -> task_progress -> task_updated ->
 // task_notification) is a stream-json CLI presentation detail, not part
 // of this struct — ClaudeTaskResult models the final result payload only.

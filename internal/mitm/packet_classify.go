@@ -15,9 +15,26 @@ import (
 // own loopback listener. Shared by every platform's TransparentRedirector
 // implementation (see classifyPacket below).
 type flowEntry struct {
-	host       string // original real destination, dotted-quad
-	port       int
+	host       string // original real destination, dotted-quad — meaningless when rejected is true
+	port       int    // meaningless when rejected is true
 	insertedAt time.Time
+	// rejected records that this flow's first packet failed
+	// processAllowed — see classifyPacket's own doc comment for the real,
+	// live-confirmed incident (2026-07-31) this field exists to prevent:
+	// without it, a flow whose first packet was rejected got NO entry
+	// recorded at all, so the next packet on the same client ip:port was
+	// re-evaluated from scratch — and if processAllowed happened to
+	// succeed that time (a racy OS TCP-table snapshot catching up), that
+	// LATER packet got redirected to Glider's listener while the FIRST
+	// one had already gone straight to the real destination. One TCP
+	// connection split across two different paths is indistinguishable
+	// from a dropped connection to both the client and the real origin —
+	// exactly the "several silent reconnects" symptom the ORIGINAL
+	// flow-sticky fix (2026-07-30) only half-solved: it made an ACCEPT
+	// decision sticky, but left a REJECT decision re-evaluated every
+	// time, which is the same class of bug the accept-side fix was
+	// written to close, just on the other branch.
+	rejected bool
 }
 
 // parsedPacket is the handful of IPv4/TCP header fields classifyPacket
@@ -75,7 +92,11 @@ const (
 	// connection's bytes reach Glider's MITM/blind-tunnel handling.
 	actionRedirect
 	// actionRejectProcess: matched by IP/port but the owning process
-	// isn't in AllowProcessNames — pass through untouched.
+	// isn't in AllowProcessNames — pass through untouched. Sticky per
+	// flow just like actionRedirect (flowEntry.rejected) — a rejected
+	// decision must hold for the connection's whole lifetime, or a later
+	// packet on the same flow could get redirected instead, splitting one
+	// TCP connection across two different destinations.
 	actionRejectProcess
 	// actionUnmatched: doesn't match any known shape (not the return
 	// port, not an allowlisted destination) — pass through untouched.
@@ -152,11 +173,20 @@ func classifyPacket(pkt parsedPacket, listenPort int, localIP string, matchPorts
 
 		if !known {
 			if !processAllowed() {
+				// Sticky reject, not just sticky accept — see flowEntry.rejected's
+				// own doc comment for the real incident this closes.
+				flowsMu.Lock()
+				flows[key] = flowEntry{insertedAt: now, rejected: true}
+				flowsMu.Unlock()
 				return packetDecision{Action: actionRejectProcess}
 			}
 			flowsMu.Lock()
 			flows[key] = flowEntry{host: pkt.dstIP, port: int(pkt.dstPort), insertedAt: now}
 			flowsMu.Unlock()
+			return packetDecision{Action: actionRedirect}
+		}
+		if entry.rejected {
+			return packetDecision{Action: actionRejectProcess}
 		}
 		return packetDecision{Action: actionRedirect}
 

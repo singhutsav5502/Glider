@@ -120,13 +120,28 @@ func (cursorOriginAdapter) ExtractUserInstruction(body []byte) (text, model stri
 // token_delta, turn_ended, ...) carry no model field; the real origin
 // response doesn't encode one either.
 //
-// Uses cursorrpc.WriteDelegateReplyWithKeepAlive, not WriteRunSSEResponse
-// — real, live-confirmed fix (2026-07-29) for cursor-agent's own HTTP/2
-// client abandoning the stream (`http2: stream closed`) while replyText
-// was resolved synchronously, before any bytes went out. See that
-// function's doc comment for the full frame-order/keep-alive design.
+// Blocks on replyText, then writes the complete reply in one shot via the
+// pre-2026-07-29 WriteRunSSEResponse/CannedCompletionChunks path — NOT
+// cursorrpc.WriteDelegateReplyWithKeepAlive's header-first/keepalive-ticker
+// streaming. That streaming approach was added 2026-07-29 to fix cursor-
+// agent's client abandoning a reply stream that received zero bytes for a
+// while — a real fix for that specific symptom — but live testing
+// 2026-07-31 found the opposite problem is worse in practice for this
+// vendor: cursor-agent's own AgentService/Run traffic (relayed as plain
+// MITM passthrough while a delegate subprocess does its own real work)
+// arrives as a slow trickle of small frames that can take multiple
+// minutes to become a complete answer, and streaming that trickle back
+// live compounds the delay rather than hiding it. Reverted specifically
+// for cursor-agent, vendor-by-vendor through this same WriteReply
+// interface point — claude and agy keep their own header-first/keepalive
+// WriteReply behavior unchanged (adapter_claude_origin.go,
+// adapter_agy_origin.go), since neither has a confirmed problem with it.
+// cursorrpc.WriteDelegateReplyWithKeepAlive itself is left in place
+// (unused here now, still tested) in case this needs revisiting once the
+// underlying passthrough-relay slowness is separately root-caused.
 func (cursorOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
-	return cursorrpc.WriteDelegateReplyWithKeepAlive(w, header, replyText, cursorDelegateKeepAliveInterval)
+	text := header + <-replyText
+	return cursorrpc.WriteRunSSEResponse(w, cursorrpc.CannedCompletionChunks(text))
 }
 
 // findLDField returns the first length-delimited field wantField's payload

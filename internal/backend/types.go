@@ -20,7 +20,7 @@ type Message struct {
 
 // ToolsUnsupportedError is returned when a backend rejects tools[] (common on
 // Ollama models without tool-calling). FallbackChain then tries the next step
-// (typically BYOK cloud). See planning/smart_routing_and_local_tools.md.
+// (typically BYOK cloud). See planning/routing_and_context.md.
 type ToolsUnsupportedError struct {
 	Backend string
 	Message string
@@ -70,7 +70,7 @@ type CompletionRequest struct {
 	// Tools / ToolChoice are first-class Path A fields (OpenAI or Anthropic-normalized).
 	// Stored as RawMessage so schemas pass through to Ollama/vLLM/OpenAI unchanged.
 	// Stream tool_calls are parsed into CompletionChunk.ToolCalls and re-emitted on the
-	// gateway SSE (M2 bridge). See planning/smart_routing_and_local_tools.md.
+	// gateway SSE (M2 bridge). See planning/routing_and_context.md.
 	Tools      json.RawMessage `json:"tools,omitempty"`
 	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
 	// Format is Ollama-native structured output: JSON string "json" or a JSON Schema object.

@@ -134,20 +134,53 @@ func TestClassifyPacket_KnownFlow_NeverRechecksProcessAllowed(t *testing.T) {
 	}
 }
 
-func TestClassifyPacket_ProcessRejected_NewFlowOnly(t *testing.T) {
+// TestClassifyPacket_ProcessRejected_IsStickyAcrossLaterPackets is the
+// direct regression test for a real, live-confirmed incident (2026-07-31):
+// this used to assert the OPPOSITE of what it does now — "a rejected flow
+// must not be recorded, the next packet has to be re-evaluated" — which
+// was itself the bug. Without a sticky reject, a flow whose first packet
+// hit a transient processAllowed miss (a racy OS TCP-table snapshot,
+// worse under real concurrent connection load) got NO entry recorded, so
+// the very next packet on the same client ip:port was re-evaluated from
+// scratch — and if THAT lookup happened to succeed, that later packet got
+// redirected to Glider's listener while the first one had already gone
+// straight to the real destination. One TCP connection split across two
+// different paths is indistinguishable from a dropped connection to both
+// sides — this is exactly the "cursor-agent needs several silent
+// reconnects" symptom the original 2026-07-30 flow-sticky fix only
+// half-closed (it made accept decisions sticky, left reject decisions
+// re-evaluated every time).
+func TestClassifyPacket_ProcessRejected_IsStickyAcrossLaterPackets(t *testing.T) {
 	flows := map[string]flowEntry{}
 	matchPorts := map[uint16]bool{443: true}
 	allowIPs := map[string]bool{"93.184.216.34": true}
+	var mu sync.Mutex
 
-	rejected := func() bool { return false }
+	calls := 0
+	rejectedOnce := func() bool { calls++; return false }
 	pkt := parsedPacket{ok: true, srcIP: "10.0.0.5", dstIP: "93.184.216.34", srcPort: 51234, dstPort: 443}
 
-	decision := classifyPacket(pkt, 9999, "10.0.0.1", matchPorts, allowIPs, flows, &sync.Mutex{}, time.Now(), rejected)
-	if decision.Action != actionRejectProcess {
-		t.Fatalf("got %+v", decision)
+	// First packet: processAllowed misses, gets rejected — and now must
+	// be recorded, not silently dropped from flows.
+	if d := classifyPacket(pkt, 9999, "10.0.0.1", matchPorts, allowIPs, flows, &mu, time.Now(), rejectedOnce); d.Action != actionRejectProcess {
+		t.Fatalf("packet 1: got %+v, want actionRejectProcess", d)
 	}
-	if _, ok := flows["10.0.0.5:51234"]; ok {
-		t.Fatal("a rejected flow must not be recorded — the next packet has to be re-evaluated, not silently redirected later")
+	if entry, ok := flows["10.0.0.5:51234"]; !ok || !entry.rejected {
+		t.Fatalf("expected a sticky rejected flow entry to be recorded, got %+v (ok=%v)", flows["10.0.0.5:51234"], ok)
+	}
+
+	// A processAllowed that would now ACCEPT if it were ever called again
+	// — proving later packets on the same flow never re-run it and never
+	// flip to actionRedirect, which is exactly the split-connection bug.
+	wouldAcceptIfCalled := func() bool { calls++; return true }
+	for i := 0; i < 5; i++ {
+		d := classifyPacket(pkt, 9999, "10.0.0.1", matchPorts, allowIPs, flows, &mu, time.Now(), wouldAcceptIfCalled)
+		if d.Action != actionRejectProcess {
+			t.Fatalf("packet %d: got %+v, want actionRejectProcess (reject must stay sticky)", i+2, d)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("processAllowed called %d times across 6 packets on one rejected flow, want exactly 1 (only the first)", calls)
 	}
 }
 

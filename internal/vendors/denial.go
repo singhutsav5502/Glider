@@ -55,6 +55,15 @@ func (cursorAgentAdapter) GrantResumePermission(Vendor, string, []Denial) (func(
 	return func() error { return nil }, nil
 }
 
+// ExtraResumeArgs is nil for cursor-agent — confirmed live via
+// `cursor-agent --help` that it has no per-tool scoped-allow flag
+// analogous to claude's --allowedTools. The only lever it exposes is
+// -f/--force/--yolo, which allows every future permission check, not just
+// the one that was denied — a materially broader escalation than this
+// method is meant to make automatically. See adapter.go's
+// ExtraResumeArgs doc for the full reasoning.
+func (cursorAgentAdapter) ExtraResumeArgs(denials []Denial) []string { return nil }
+
 // WrapResumePrompt is a no-op for cursor-agent — its resume reliably
 // completes the original request via --resume alone, confirmed live.
 func (cursorAgentAdapter) WrapResumePrompt(prompt string) string { return prompt }
@@ -116,10 +125,31 @@ func (claudeAdapter) DetectDenials(stdout, stderr []byte) []Denial {
 
 func (claudeAdapter) ExtractSessionID(stdout []byte) string { return sessionIDFromJSONLines(stdout) }
 
-// GrantResumePermission is a no-op for claude — its resume CommandTemplate
-// (--resume <session-id> --allowedTools ...) is sufficient on its own.
+// GrantResumePermission is a no-op for claude — it needs no side effect
+// outside the resume invocation itself; the actual per-denial grant
+// happens via ExtraResumeArgs below, not here.
 func (claudeAdapter) GrantResumePermission(Vendor, string, []Denial) (func() error, error) {
 	return func() error { return nil }, nil
+}
+
+// ExtraResumeArgs builds "--allowedTools <names>" from the denied tool
+// names — confirmed live via `claude --help`: "--allowedTools,
+// --allowed-tools <tools...> Comma or space-separated list of tool names
+// to allow". The registered "resume" CommandTemplate (see
+// configs/vendor_candidates.yaml) deliberately has no --allowedTools of
+// its own — it can't, since the tool name is only known per-call, not at
+// template-definition time — so without this, resolveAllow's "allow" flow
+// was reissuing the identical prompt against the identical (denying)
+// permission state and relying on nothing but luck/model behavior change
+// to actually get further. Deduplicates by ToolName
+// (uniqueDenialToolNames, shared with agy_grant.go) since the same tool
+// can appear denied more than once in one run.
+func (claudeAdapter) ExtraResumeArgs(denials []Denial) []string {
+	tools := uniqueDenialToolNames(denials)
+	if len(tools) == 0 {
+		return nil
+	}
+	return []string{"--allowedTools", strings.Join(tools, ",")}
 }
 
 // WrapResumePrompt is a no-op for claude — its resume reliably completes

@@ -18,7 +18,9 @@ import (
 	"github.com/glider-ai/glider/internal/cursorrpc"
 	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/orchestrator"
+	"github.com/glider-ai/glider/internal/procutil"
 	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/vendors"
 )
 
 // Harness is the shared Tokenizer → Router → Transform → Execute pipeline.
@@ -831,6 +833,28 @@ func (i *Interceptor) tryRunSSEFulfill(w http.ResponseWriter, r *http.Request, b
 	if !cursorrpc.IsRunSSEPath(path) {
 		return false, nil
 	}
+
+	// Real, live-confirmed incident (2026-07-31): this traffic can be
+	// cursor-agent's OWN spawned subprocess (a Path A delegate call
+	// Glider itself started, via vendors.RunWithOptions), not a genuine
+	// front-CLI session — its own real AgentService/Run calls match the
+	// exact same transparent-interception filter as a human-driven
+	// session and get funneled into this same Path B machinery, which
+	// then waits defaultRunSSEFulfillWait (800ms) for a local-fulfillment
+	// decision that will NEVER arrive: nothing in Path A's delegate flow
+	// ever arms one. A single multi-step delegate task makes several such
+	// RunSSE calls, each independently paying that dead-end 800ms wait —
+	// real, compounding, multi-minute overhead for what should be an
+	// instant relay to the real vendor backend. Skipped here, before any
+	// of Path B's machinery (including evaluateToolFollowupRunSSE's own
+	// wait) ever runs, not just the root-call wait below — a delegate
+	// subprocess's tool-loop child calls are just as pointless to route
+	// through local-fulfillment as its root call is.
+	if pid := vendors.ResolveOriginPID(r.RemoteAddr); pid != 0 && procutil.IsInDelegateSubprocessJob(pid) {
+		log.Debug("mitm runsse: origin PID is a known delegate subprocess, skipping Path B local-fulfillment wait", "pid", pid, "host", host, "path", path)
+		return false, nil
+	}
+
 	// Tool-loop child runs: re-decide via routing.tool_followup (not stuck on parent
 	// cloud forever). Fulfill local only when Path B tool codec is ready; else
 	// log would_local / origin and passthrough.

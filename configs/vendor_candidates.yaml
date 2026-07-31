@@ -26,11 +26,12 @@ candidates:
         args: ["-p", "--output-format", "stream-json", "--verbose", "{{prompt}}"]
       - name: resume
         mode: headless
-        # --allowedTools isn't templated per-denial here (it would need the
-        # specific denied tool name substituted in, not just {{prompt}}) —
-        # this resume template alone re-attempts the same prompt against
-        # the same session; a caller that wants to scope the resume to one
-        # specific tool needs to build that arg list itself for now.
+        # --allowedTools isn't templated here (it can't be — the denied
+        # tool name is only known per-call, not at template-definition
+        # time). resolveAllow (internal/vendors/resume.go) appends it at
+        # runtime instead, via VendorAdapter.ExtraResumeArgs +
+        # RunOptions.ExtraArgs (added 2026-07-30) — see claudeAdapter's
+        # ExtraResumeArgs doc in internal/vendors/denial.go.
         args: ["-p", "--output-format", "stream-json", "--verbose", "--resume", "{{session_id}}", "{{prompt}}"]
       - name: interactive
         mode: interactive

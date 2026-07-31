@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/glider-ai/glider/internal/metrics"
 	"github.com/glider-ai/glider/internal/ngl"
 	"github.com/glider-ai/glider/internal/vendors"
 )
@@ -16,13 +18,27 @@ import (
 // convention (vendors.ParseDelegateCommand), same dynamic vendor registry,
 // applied to real OS-level-intercepted /v1/messages traffic instead of
 // gateway traffic reached via ANTHROPIC_BASE_URL. Deliberately flag-gated,
-// not host-gated — see planning/native_glider_orchestration.md's delegation
+// not host-gated — see planning/ngl_and_adapters.md's delegation
 // discussion: an unconditional "everything to host X -> vendor Y" rule would
 // also catch the operator's own Claude Code session if it happens to run
 // the same front CLI, which is exactly the kind of self-disruption this
 // design avoids by requiring an explicit, deliberate flag in the message.
 type DelegateHandler struct {
 	Log *slog.Logger
+	// Metrics is optional (nil is a valid, quiet no-op) — when set,
+	// every dispatched delegate call gets a real RequestRecord, the same
+	// mechanism Interceptor already uses for normal routing decisions
+	// (internal/mitm/intercept.go's observe). Added 2026-07-30 after a
+	// real, previously-undiscovered gap: this handler had a real slog
+	// line ("mitm delegate: routing to vendor") but no dashboard-visible
+	// trace at all — a delegate call was invisible in the Overview
+	// request log and the LOCAL/CLOUD/CANNED split, unlike every other
+	// routing outcome, discoverable only by reading raw log text with
+	// the right log level on. Action "delegate" is a genuinely new
+	// value, not reused from local/cloud/origin_passthrough/canned/error
+	// — a delegate call isn't any of those, and collapsing it into one
+	// would misrepresent what actually happened.
+	Metrics *metrics.Collector
 }
 
 // TryHandle implements LocalHandler. Only claims requests it can actually
@@ -142,12 +158,15 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	// vendor whose client has a stream-idle timeout (cursor-agent,
 	// confirmed live 2026-07-29) from giving up while ResolveDelegate is
 	// still running headless in the background goroutine below — that
-	// call can take up to vendors.RunTimeout (120s).
+	// call can take up to vendors.RunTimeout (6min).
 	header := fmt.Sprintf("Delegated to %s:\n\n", vendor.Name)
 	replyCh := make(chan string, 1)
+	start := time.Now()
 	go func() {
 		defer close(replyCh)
-		replyCh <- vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+		reply := vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+		h.recordDelegateMetrics(vendor.Name, templateName, r.Host, r.URL.Path, start)
+		replyCh <- reply
 	}()
 
 	if err := adapter.WriteReply(w, model, stream, header, replyCh); err != nil {
@@ -170,6 +189,28 @@ func (h *DelegateHandler) logInfo(msg string, args ...any) {
 	if h.Log != nil {
 		h.Log.Info(msg, args...)
 	}
+}
+
+// recordDelegateMetrics publishes one RequestRecord per dispatched delegate
+// call, mirroring Interceptor.observe's shape (internal/mitm/intercept.go)
+// so a delegate call shows up in the same Overview request-log table as
+// every other routing outcome, distinguished by Action "delegate" —
+// see DelegateHandler.Metrics' own doc comment for why this exists.
+func (h *DelegateHandler) recordDelegateMetrics(vendorName, templateName, host, path string, start time.Time) {
+	if h.Metrics == nil {
+		return
+	}
+	h.Metrics.Record(metrics.RequestRecord{
+		ID:      fmt.Sprintf("delegate_%d", time.Now().UnixNano()),
+		Mode:    "mitm",
+		Action:  "delegate",
+		Route:   "delegate",
+		Model:   vendorName,
+		Host:    host,
+		Path:    path,
+		Rule:    "delegate:" + templateName,
+		Latency: time.Since(start),
+	})
 }
 
 // ChainHandler tries each Handler in order, using the first one that
