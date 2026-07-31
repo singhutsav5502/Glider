@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/glider-ai/glider/internal/procutil"
 )
 
 // Continuity is Glider's own running record of the human turns it has
@@ -107,6 +109,27 @@ func lockForContinuity(path string) *sync.Mutex {
 func RecordContinuity(workspace, originVendor string, originPID uint32, text string) error {
 	text = singleLine(strings.TrimSpace(text))
 	if workspace == "" || text == "" {
+		return nil
+	}
+
+	// Never record an origin Glider couldn't identify. Confirmed live
+	// 2026-07-31: a plain `curl` against the gateway was recorded as
+	// "(#56632)" — a real process, but not a CLI session, so its turn can
+	// never be correctly attributed back to anyone and only adds noise to
+	// a file meant to orient a delegate.
+	if strings.TrimSpace(originVendor) == "" {
+		return nil
+	}
+
+	// Never record Glider's OWN delegate subprocesses. Also confirmed live
+	// the same day: a spawned cursor-agent's request was intercepted and
+	// logged as though a human had typed its task, so Glider was recording
+	// its own output as session history — which then feeds back into the
+	// next delegate's context. Reuses the job-object membership check that
+	// already identifies delegate subprocesses elsewhere (it covers child
+	// processes too, e.g. cursor-agent.cmd's real node.exe, which is the
+	// process that actually owns the connection).
+	if procutil.IsInDelegateSubprocessJob(originPID) {
 		return nil
 	}
 	if len(text) > continuityMaxTextLen {

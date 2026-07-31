@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ContextPack is the session context Glider hands to a delegated CLI so it
@@ -140,12 +141,46 @@ func singleLine(s string) string {
 // vendors touch different files (CLAUDE.md vs AGENTS.md) and different
 // workspaces are independent, so neither should serialize against the
 // other. Only genuine same-file contention waits.
-var contextFileLocks sync.Map // absolute path -> *sync.Mutex
+// A 1-buffered channel, not a sync.Mutex, because acquisition must be
+// BOUNDED — see ContextPackLockWait. sync.Mutex offers only Lock (waits
+// forever) and TryLock (gives up instantly); neither is right here.
+var contextFileLocks sync.Map // absolute path -> chan struct{} (cap 1)
 
-func lockForContextFile(path string) *sync.Mutex {
-	actual, _ := contextFileLocks.LoadOrStore(path, &sync.Mutex{})
-	return actual.(*sync.Mutex)
+func lockForContextFile(path string) chan struct{} {
+	actual, _ := contextFileLocks.LoadOrStore(path, make(chan struct{}, 1))
+	return actual.(chan struct{})
 }
+
+// ContextPackLockWait bounds how long one delegate will wait for another
+// to release the same vendor context file before giving up and running
+// WITHOUT a context pack.
+//
+// This exists because the lock is necessarily held for a delegate's whole
+// subprocess lifetime: the block has to be on disk from before the CLI
+// starts until after it has read the file, and Glider can't observe when
+// that read happens. Once RunTimeout stopped imposing a ceiling (see its
+// doc comment — Glider is a relay, not the arbiter of how long another
+// CLI may think), "held for a bounded run" became "held indefinitely", and
+// a wedged delegate would have blocked every later delegate to that same
+// vendor and workspace forever.
+//
+// Degrading beats deadlocking, and it degrades in the right direction: a
+// delegate without a pack still receives its task (that travels in argv,
+// not the file) and its workspace. It loses only the orienting background.
+//
+// The alternatives were considered and rejected:
+//
+//   - Per-section locks with surgical removal make locks brief, but let
+//     two concurrent delegates leave two blocks in one file, so each CLI
+//     reads the other's "Your task:" too. Confusing a delegate is worse
+//     than briefly not briefing one.
+//   - A refcounted shared block works only while the content is identical,
+//     which it isn't: two origins delegating into one workspace carry
+//     different history.
+//   - Releasing early, once the CLI has "probably" read the file, requires
+//     guessing startup duration; guessing short silently yields no context
+//     at all, which is the failure this whole mechanism exists to prevent.
+var ContextPackLockWait = 30 * time.Second
 
 // InstallContextPack appends pack to the vendor's own context file inside
 // cwd and returns a revert func restoring the file to its exact prior state
@@ -170,11 +205,21 @@ func InstallContextPack(cwd, contextFile string, pack ContextPack) (func() error
 	}
 
 	path := filepath.Join(cwd, contextFile)
-	mu := lockForContextFile(path)
-	mu.Lock()
+	sem := lockForContextFile(path)
+	timer := time.NewTimer(ContextPackLockWait)
+	defer timer.Stop()
+	select {
+	case sem <- struct{}{}:
+		// acquired
+	case <-timer.C:
+		// Contended past the bound — run without a pack rather than block
+		// the caller indefinitely. Not an error: the delegate still gets
+		// its task and workspace, just no background.
+		return noop, nil
+	}
 
 	unlockOnce := &sync.Once{}
-	unlock := func() { unlockOnce.Do(mu.Unlock) }
+	unlock := func() { unlockOnce.Do(func() { <-sem }) }
 
 	onDisk, err := os.ReadFile(path)
 	existed := err == nil

@@ -173,7 +173,7 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	// vendor whose client has a stream-idle timeout (cursor-agent,
 	// confirmed live 2026-07-29) from giving up while ResolveDelegate is
 	// still running headless in the background goroutine below — that
-	// call can take up to vendors.RunTimeout (6min).
+	// call is unbounded by default (see vendors.RunTimeout).
 	header := fmt.Sprintf("Delegated to %s:\n\n", vendor.Name)
 
 	// Session context for the delegate, so it isn't a cold start. Built

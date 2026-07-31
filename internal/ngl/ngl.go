@@ -74,15 +74,31 @@ type wireContentBlock struct {
 // exactly one vendor's wrapping convention has been confirmed live; adding
 // a second front's own convention later is one more map entry, not a
 // rewrite of ExtractUserText.
-var scaffoldStrippers = map[string]*regexp.Regexp{
-	// Claude Code wraps auto-injected context in <system-reminder>...</system-reminder>,
-	// observed live and repeatedly throughout this investigation, present
-	// even in --bare mode, often multiple non-overlapping occurrences per
-	// message. (?s) makes '.' match newlines; the block bodies are
-	// multi-line. Non-greedy so each block closes at its own nearest tag
-	// rather than spanning past intervening real content to the last tag
-	// in the message.
-	"claude": regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`),
+// A vendor maps to a LIST, not one pattern: a single front can have several
+// independent wrapper conventions, and claude demonstrably does. Keeping one
+// regexp per vendor silently applied only the first and let the rest through.
+var scaffoldStrippers = map[string][]*regexp.Regexp{
+	"claude": {
+		// Auto-injected context wrapper, observed live and repeatedly,
+		// present even in --bare mode, often multiple non-overlapping
+		// occurrences per message. (?s) makes '.' match newlines; the block
+		// bodies are multi-line. Non-greedy so each block closes at its own
+		// nearest tag rather than spanning past intervening real content.
+		regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`),
+		// <transcript> (a whole serialized prior conversation) and <session>
+		// (an auxiliary session blob). Both confirmed live 2026-07-31 by
+		// catching a real leak: a <transcript> blob containing an entire
+		// session summary was written verbatim into a durable continuity
+		// file as if a human had typed it — the exact conflation this
+		// package exists to prevent, just on a new marker.
+		//
+		// Each alternates "closed form" with "opens and runs to end of
+		// text": a truncated or still-streaming block is real, and failing
+		// to match one would pass the entire blob through untouched, which
+		// is the worst possible outcome here.
+		regexp.MustCompile(`(?s)<transcript>.*?(?:</transcript>|$)`),
+		regexp.MustCompile(`(?s)<session>.*?(?:</session>|$)`),
+	},
 }
 
 // StripScaffold removes vendor's known auto-injected wrapper content from
@@ -108,16 +124,21 @@ var scaffoldStrippers = map[string]*regexp.Regexp{
 // this "" path.
 func StripScaffold(vendor, text string) string {
 	if vendor == "" {
-		for _, re := range scaffoldStrippers {
-			text = re.ReplaceAllString(text, "")
+		for _, res := range scaffoldStrippers {
+			for _, re := range res {
+				text = re.ReplaceAllString(text, "")
+			}
 		}
 		return strings.TrimSpace(text)
 	}
-	re, ok := scaffoldStrippers[vendor]
+	res, ok := scaffoldStrippers[vendor]
 	if !ok {
 		return text
 	}
-	return strings.TrimSpace(re.ReplaceAllString(text, ""))
+	for _, re := range res {
+		text = re.ReplaceAllString(text, "")
+	}
+	return strings.TrimSpace(text)
 }
 
 // ExtractParts classifies an Anthropic-shaped content value (either a bare

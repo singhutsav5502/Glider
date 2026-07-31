@@ -580,8 +580,8 @@ func (p *Proxy) passthroughHTTPS(w http.ResponseWriter, req *http.Request, host,
 	// have nothing to do with whether the real origin can actually
 	// answer. 120s here is its own independently-reasoned ceiling for a
 	// real network response from a real vendor origin (cursor.sh) — not
-	// coupled to vendors.RunTimeout (a local subprocess exec bound,
-	// raised to 6min 2026-07-30 for unrelated reasons; this comment used
+	// coupled to vendors.RunTimeout (a local subprocess exec bound, now
+	// unbounded by default for unrelated reasons; this comment used
 	// to claim the two intentionally matched, which stopped being true
 	// the moment only one of them changed).
 	//

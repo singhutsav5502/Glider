@@ -27,24 +27,43 @@ import (
 // ProbeTimeout bounds a single candidate's discovery probe.
 const ProbeTimeout = 10 * time.Second
 
-// RunTimeout bounds a single headless delegate call. Raised from 120s to
-// 6 minutes 2026-07-30, evidenced rather than guessed: agy's own CLI
-// exposes --print-timeout with a documented default of 5 minutes (`agy
-// --help`: "Timeout for print mode wait (default 5m0s)") — Glider's own
-// ceiling was silently cutting agy's headless runs off a full 3 minutes
-// before agy's own client would have given up on its own, for any task
-// agy itself considered reasonable to still be working on. 6 minutes
-// gives agy's own timeout room to fire first (the expected, better-
-// behaved outcome — agy's own process exits cleanly), with Glider's
-// ceiling as a backstop for a vendor that never times out on its own
-// rather than the thing racing it. No live evidence claude or
-// cursor-agent need more than 120s specifically, but a single shared
-// constant across all headless delegate calls is simpler than a
-// per-vendor override with no evidence yet justifying the added
-// complexity — worth revisiting if a vendor is ever found needing
-// something shorter (a tight ceiling protects the human waiting on a
-// reply, not just the vendor doing the work).
-const RunTimeout = 6 * time.Minute
+// RunTimeout optionally bounds a single headless delegate call. Zero — the
+// default — means NO Glider-imposed ceiling.
+//
+// History worth keeping, because this was wrong twice in opposite ways: it
+// started at 120s, then was raised to 6 minutes when agy's own
+// --print-timeout default (5m) proved Glider was cutting agy off three
+// minutes before agy itself would have stopped. But 6 minutes was still an
+// arbitrary number picked by Glider, and it silently killed a real,
+// legitimate refactor task mid-work (live, 2026-07-31) — the delegate was
+// making progress and simply needed longer than a constant nobody had
+// evidence for.
+//
+// The principle: Glider is a relay, not the arbiter of how long someone
+// else's CLI is allowed to think. Every vendor already has its own timeout
+// (agy's --print-timeout), the front CLI has its own client-side patience,
+// and the caller's context cancels when the human's request goes away —
+// three real bounds that respond to actual conditions. A fourth, fixed
+// ceiling stacked on top can only ever fire *before* one of those, which
+// means the only thing it can uniquely do is interrupt work that was going
+// fine.
+//
+// Set it to a non-zero duration to reimpose a ceiling (SetRunTimeout).
+// Note what a ceiling costs beyond the killed run: a delegate holds its
+// vendor's context-file lock (see InstallContextPack) for its whole
+// lifetime, so an unbounded run that genuinely wedges blocks later
+// delegates to that same vendor and workspace until Glider exits — at
+// which point the kill-on-close job object reaps it regardless.
+var RunTimeout time.Duration
+
+// SetRunTimeout reimposes a ceiling on headless delegate calls; zero
+// removes it. Safe to call at startup before any delegate runs.
+func SetRunTimeout(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	RunTimeout = d
+}
 
 // CommandTemplate is one named way to launch a vendor's CLI — user-editable
 // from the dashboard (planning/permission_relay_design.md §1), not
@@ -473,8 +492,14 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 	args := substituteTemplateArgs(tmpl.Args, prompt, opts.Resume, cwd)
 	args = append(args, opts.ExtraArgs...)
 
-	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
-	defer cancel()
+	// Only wrap when a ceiling is actually configured — see RunTimeout.
+	// The caller's own context still governs either way, so a request the
+	// human abandoned still cancels the subprocess.
+	if RunTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, RunTimeout)
+		defer cancel()
+	}
 
 	cmd := exec.CommandContext(ctx, v.Path, args...)
 	procutil.HideWindow(cmd)

@@ -170,3 +170,21 @@ func TestContinuityFileIsReadableMarkdown(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordContinuity_SkipsUnidentifiedOrigin pins a real leak found by
+// dogfooding 2026-07-31: a plain `curl` against the gateway was recorded as
+// "(#56632)". A turn Glider can't attribute to a CLI session can never be
+// correctly read back, so it's pure noise in a file meant to orient a
+// delegate.
+func TestRecordContinuity_SkipsUnidentifiedOrigin(t *testing.T) {
+	withTempHome(t)
+	const ws = "D:/repo"
+
+	if err := RecordContinuity(ws, "", 56632, "a turn from some unidentified process"); err != nil {
+		t.Fatalf("should be a quiet no-op: %v", err)
+	}
+	path, _ := ContinuityPath(ws)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("an unidentified origin must not be recorded at all")
+	}
+}

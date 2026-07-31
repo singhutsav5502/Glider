@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func samplePack() ContextPack {
@@ -213,5 +214,66 @@ func TestInstallContextPack_SerializesSameFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("after every revert the created file should be gone")
+	}
+}
+
+// TestInstallContextPack_DegradesRatherThanBlockingForever pins the
+// liveness property. The lock is necessarily held for a delegate's whole
+// subprocess lifetime, and RunTimeout no longer bounds that lifetime — so
+// without a bounded acquisition, one wedged delegate would block every
+// later delegate to the same vendor and workspace forever.
+func TestInstallContextPack_DegradesRatherThanBlockingForever(t *testing.T) {
+	orig := ContextPackLockWait
+	ContextPackLockWait = 120 * time.Millisecond
+	defer func() { ContextPackLockWait = orig }()
+
+	dir := t.TempDir()
+
+	// Hold the file as a "wedged" delegate would: acquired and never released.
+	held, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
+	if err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	start := time.Now()
+	revert, err := InstallContextPack(dir, "CLAUDE.md", ContextPack{Task: "a second, contending delegate"})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("contention must degrade quietly, not error: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("waited %v — acquisition is not bounded", elapsed)
+	}
+	if err := revert(); err != nil {
+		t.Fatalf("the degraded revert must be a safe no-op: %v", err)
+	}
+
+	// The holder's own block must be untouched by the contender.
+	body, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if strings.Contains(string(body), "a second, contending delegate") {
+		t.Fatal("a contender that gave up must not have written anything")
+	}
+	if !strings.Contains(string(body), "add a refresh path") {
+		t.Fatal("the holder's block was damaged by a contender")
+	}
+
+	if err := held(); err != nil {
+		t.Fatalf("holder revert: %v", err)
+	}
+}
+
+// TestInstallContextPack_LockIsReleasedForTheNextDelegate confirms the
+// bounded acquisition doesn't leak the semaphore on the normal path.
+func TestInstallContextPack_LockIsReleasedForTheNextDelegate(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		revert, err := InstallContextPack(dir, "CLAUDE.md", samplePack())
+		if err != nil {
+			t.Fatalf("install %d: %v", i, err)
+		}
+		if err := revert(); err != nil {
+			t.Fatalf("revert %d: %v", i, err)
+		}
 	}
 }

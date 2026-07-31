@@ -196,3 +196,30 @@ func TestExtractParts_OtherBlockTypesHaveNoText(t *testing.T) {
 		t.Fatalf("got %+v, want PartOther with empty text", parts[0])
 	}
 }
+
+// TestStripScaffold_RemovesAllClaudeWrappers pins a real leak found by
+// dogfooding 2026-07-31: a <transcript> blob carrying an entire prior
+// session summary was written verbatim into a durable file as if a human
+// had typed it. Only <system-reminder> was registered at the time, and the
+// stripper map held ONE pattern per vendor, so additional markers could
+// never apply even once added.
+func TestStripScaffold_RemovesAllClaudeWrappers(t *testing.T) {
+	cases := map[string]string{
+		"system-reminder":     "keep this <system-reminder>injected junk</system-reminder> text",
+		"transcript":          "keep this <transcript>{\"user\":\"a whole prior session\"}</transcript> text",
+		"session":             "keep this <session>aux blob</session> text",
+		"unclosed transcript": "keep this <transcript>{\"user\":\"truncated mid-stream",
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := ngl.StripScaffold("claude", input)
+			if strings.Contains(got, "injected junk") || strings.Contains(got, "prior session") ||
+				strings.Contains(got, "aux blob") || strings.Contains(got, "truncated mid-stream") {
+				t.Fatalf("scaffold survived stripping: %q", got)
+			}
+			if !strings.Contains(got, "keep this") {
+				t.Fatalf("genuine human text was destroyed: %q", got)
+			}
+		})
+	}
+}

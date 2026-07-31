@@ -218,9 +218,9 @@ func TestDelegateHandler_RecognizesAgyShapedRequest(t *testing.T) {
 // registered as a real vendor front (recognized via a Matches that always
 // says yes for this test's own scheme) is not available without exporting
 // internals, so this instead proves the concurrency property indirectly:
-// TryHandle must return well before vendors.RunTimeout even for a delegate
-// target whose headless call is slow, because WriteReply's own blocking
-// wait — not TryHandle itself — is what's supposed to absorb that latency.
+// TryHandle must return promptly even for a delegate target whose headless
+// call is slow, because WriteReply's own blocking wait — not TryHandle
+// itself — is what's supposed to absorb that latency.
 // Covered at the adapter layer by
 // cursorrpc.TestWriteDelegateReplyWithKeepAlive_HeaderArrivesBeforeResultResolves,
 // which proves header reaches the wire before the slow value arrives.
@@ -257,8 +257,11 @@ func TestDelegateHandler_ResolveDelegateRunsConcurrentlyWithWriteReply(t *testin
 	// that TryHandle completed at all via the async goroutine+channel
 	// path (agyOriginAdapter.WriteReply blocking on the channel, not on
 	// ResolveDelegate directly), not a specific duration.
-	if elapsed > vendors.RunTimeout {
-		t.Fatalf("TryHandle took %v, want well under vendors.RunTimeout (%v)", elapsed, vendors.RunTimeout)
+	// An absolute bound, not vendors.RunTimeout: that is 0 (no ceiling) by
+	// default now, which would make this assertion vacuous.
+	const wantUnder = 30 * time.Second
+	if elapsed > wantUnder {
+		t.Fatalf("TryHandle took %v, want well under %v — it must not block on ResolveDelegate", elapsed, wantUnder)
 	}
 }
 

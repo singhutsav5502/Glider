@@ -379,7 +379,7 @@ func itoaIndex(i int) string {
 // cursor-agent's own HTTP/2 client gave up on a delegate reply stream
 // (`http2: stream closed`) that received zero bytes for the whole
 // duration of a slow delegate call — a headless run of another vendor's
-// CLI can take far longer (up to vendors.RunTimeout, 6min) than a normal
+// CLI can take far longer (unbounded by default — see vendors.RunTimeout) than a normal
 // completion, and the reply text used to be fully resolved *before*
 // WriteReply was ever called, so the heartbeat-first pattern below never
 // got a chance to run early. Now the caller (DelegateHandler) resolves
