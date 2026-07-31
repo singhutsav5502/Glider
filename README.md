@@ -19,7 +19,7 @@
 | **Context graph** | Turn-indexed event store for sticky routing and analytics |
 | **System tray** | Runs in the background (Windows) — "Open Dashboard" and "Exit" |
 
-Glider does **not** hardcode behavior for any one CLI in its core routing/delegation code — everything vendor-specific lives behind two adapter boundaries (NGL wire format, `VendorAdapter` execution behavior). See [`planning/adapter_boundary.md`](planning/adapter_boundary.md).
+Glider does **not** hardcode behavior for any one CLI in its core routing/delegation code — everything vendor-specific lives behind two adapter boundaries (NGL wire format, `VendorAdapter` execution behavior). See [`planning/ngl_and_adapters.md`](planning/ngl_and_adapters.md).
 
 ---
 

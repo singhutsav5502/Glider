@@ -4,7 +4,7 @@
 #   glider.exe --config configs/glider.cloud.yaml
 #
 # Routing: explicit → task_classifier → scripts → token ceiling → default cloud.
-# See planning/smart_routing_and_local_tools.md
+# See planning/routing_and_context.md
 
 server:
   proxy_port: 8080

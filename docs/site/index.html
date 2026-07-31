@@ -29,38 +29,121 @@
       <div class="badge">Hostable docs</div>
       <h1>Glider</h1>
       <p>
-        A routing and permission-relay layer for AI coding CLIs — Claude Code, Cursor Agent,
-        and Antigravity (<code>agy</code>). Routes their inference to local models or your own
-        cloud keys, and lets you delegate a task from one CLI to another, permission prompts
-        included.
+        Glider sits between your AI coding CLI and its backend. It can send a request to a
+        local model instead of the cloud, and it lets you hand a task from the CLI you're in
+        to a different CLI — with that CLI's permission prompts relayed back to you.
       </p>
       <p><a href="../SETUP.md">Step-by-step setup</a></p>
     </header>
 
+    <main class="prose">
+      <h2>What it does, concretely</h2>
+      <p>Three things, in the order most people care about them:</p>
+      <ol>
+        <li>
+          <strong>Delegate across CLIs.</strong> Type <code>refactor this module /agy</code>
+          in Claude Code and Antigravity runs it. Works from any of the three CLIs, to any of
+          the other two — you stay in one terminal. If the delegated CLI hits a permission
+          wall, you get asked, right there in your own session.
+          → <a href="delegation.html">Delegation</a>
+        </li>
+        <li>
+          <strong>Route work to a local model.</strong> Cheap, mechanical turns (rename,
+          explain, format) can go to Ollama instead of burning cloud tokens, while
+          architecture-shaped work stays on the real backend. You can always force it with
+          <code>/local</code> or <code>/cloud</code>.
+          → <a href="routing.html">Routing</a>
+        </li>
+        <li>
+          <strong>See what's actually happening.</strong> Every intercepted request shows up
+          in a local dashboard with its routing decision and why.
+          → <a href="api.html">HTTP API</a>
+        </li>
+      </ol>
+
+      <h2>How it gets in the middle</h2>
+      <p>Two ways, and you don't have to pick up front:</p>
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>What it needs</th><th>Best for</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Gateway</strong></td>
+            <td>Point the CLI at Glider (env var or a base-URL setting)</td>
+            <td>Simple, explicit, easy to reason about</td>
+          </tr>
+          <tr>
+            <td><strong>Transparent</strong></td>
+            <td>Nothing — Glider intercepts at the OS level</td>
+            <td>CLIs that ignore proxy settings, and sessions already running</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Transparent mode is genuinely zero-cooperation: it works on an <em>already-open</em>
+        CLI session, because it redirects packets rather than asking the program to
+        reconfigure itself. It needs Administrator (Windows) or root (Linux), and it is
+        machine-wide by process name — read <a href="mitm.html">MITM &amp; interception</a>
+        before turning it on.
+      </p>
+
+      <h2>Quick start</h2>
+      <p>Pure local, no cloud keys needed:</p>
+      <pre>ollama serve
+.\glider.exe --config configs\glider.local.yaml
+
+# Dashboard:  http://127.0.0.1:8081
+# Gateway:    http://127.0.0.1:8080/v1</pre>
+      <p>
+        Then point your CLI at the gateway, or enable transparent mode to skip that step.
+        <a href="pure-local.html">Pure local</a> has the full walkthrough.
+      </p>
+
+      <h2>Supported CLIs</h2>
+      <table>
+        <thead>
+          <tr><th>CLI</th><th>As the one you're driving</th><th>As a delegate target</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Code (<code>claude</code>)</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Cursor Agent (<code>cursor-agent</code>)</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Antigravity (<code>agy</code>)</td><td>Yes</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Adding a fourth is deliberately a small job — one YAML entry plus one adapter, no
+        changes to shared code. That constraint is the whole point of
+        <a href="ngl.html">NGL &amp; the adapter boundary</a>.
+      </p>
+
+      <h2>Where to go next</h2>
+    </main>
+
     <section class="grid">
       <a class="card" href="architecture.html">
         <h3>Architecture</h3>
-        <p>Surfaces, the shared completion pipeline, package map, failure modes — one page.</p>
-      </a>
-      <a class="card" href="routing.html">
-        <h3>Routing</h3>
-        <p>Priority order from explicit flags down to the default rule.</p>
+        <p>Surfaces, the shared completion pipeline, package map, failure modes.</p>
       </a>
       <a class="card" href="delegation.html">
         <h3>Delegation</h3>
-        <p>Hand a task to another CLI; permission prompts relay back to you.</p>
+        <p>Flag syntax, the permission-relay loop, and what each CLI can actually do.</p>
+      </a>
+      <a class="card" href="routing.html">
+        <h3>Routing</h3>
+        <p>The full priority order, from explicit flags down to the default rule.</p>
       </a>
       <a class="card" href="mitm.html">
         <h3>MITM &amp; interception</h3>
-        <p>CONNECT decrypt, transparent WinDivert redirect, Cursor's Agent RPC plane.</p>
+        <p>CONNECT decrypt, transparent redirect, and the risks worth knowing first.</p>
       </a>
       <a class="card" href="ngl.html">
         <h3>NGL &amp; interfaces</h3>
-        <p>The three per-vendor interfaces (OriginAdapter, DelegateRenderer, ParseXTurn) — and the map between them.</p>
+        <p>How multi-CLI support works without vendor-specific code in the core.</p>
       </a>
       <a class="card" href="context.html">
         <h3>Context</h3>
-        <p>Event log + entity graph behind sticky routing and analytics.</p>
+        <p>The event log and turn index behind sticky routing and analytics.</p>
       </a>
       <a class="card" href="pure-local.html">
         <h3>Pure local</h3>
@@ -77,11 +160,10 @@
     </section>
 
     <main class="prose">
-      <h2>Quick start</h2>
-      <pre>ollama serve
-.\glider.exe --config configs\glider.local.yaml
-# Dashboard: http://127.0.0.1:8081
-# Docs (this site): open docs/site/index.html or scripts\serve-docs.ps1</pre>
+      <p>
+        Design rationale — including findings that took real live testing to establish —
+        lives in <code>planning/</code>, indexed by <code>planning/README.md</code>.
+      </p>
 
       <h2>Host this site</h2>
       <p>Everything under <code>docs/site/</code> is static HTML/CSS — no build step, no external JS.</p>

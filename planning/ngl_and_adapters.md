@@ -1,8 +1,39 @@
-# NGL interface reference — exhaustive
+# NGL and the adapter boundary
 
-This is the precise, exhaustive technical reference for `internal/ngl`: every type, every interface method, every registration mechanism, every per-vendor implementation, and every real call site — cross-checked directly against the current source, not against an earlier design intent. For the *why this exists* narrative and the vision this package is one slice of, read [native_glider_orchestration.md](native_glider_orchestration.md) first; for how NGL relates to the separate execution-layer `VendorAdapter` interface, read [adapter_boundary.md](adapter_boundary.md). This doc assumes both and goes deep instead of wide.
+The complete technical reference for how Glider talks to more than one agent
+CLI without its core knowing which one it's talking to: the rule, both adapter
+layers, every interface contract, the per-vendor implementation matrix, and the
+checklist for adding a new vendor.
 
-Package doc (verbatim, because it states the actual motivating incident precisely): NGL exists because on 2026-07-26, a delegate-flag detector that searched raw wire-format JSON for a substring anywhere in "the last user-role message" got tripped by Claude Code's own auto-injected `<system-reminder>` scaffolding, silently hijacking real conversation turns. The fix isn't a better regex on raw JSON — it's not treating `role: user` as "text the human typed" at all. Anthropic-shaped wire format conflates at least three different things under one `role="user"` envelope: genuine human input, `tool_result` content blocks, and vendor-specific auto-injected scaffolding living inside an ordinary `type="text"` block, invisible to block-type filtering alone. NGL's job is separating those, per vendor, so callers only ever see genuine human intent.
+> Code: `internal/ngl/` (wire format), `internal/vendors/adapter.go` (execution).
+> Consolidated 2026-07-31 from `ngl_interface_reference.md`,
+> `adapter_boundary.md`, and `native_glider_orchestration.md`.
+
+## 0. The rule
+
+**Glider's core code must not know which CLI it's talking to.** Every fact that
+differs between claude, cursor-agent, and agy — a wire-format quirk, a denial
+message shape, a permission-granting mechanism, a launch flag — lives behind an
+interface or in data, never as a `switch vendor.Name` or `if vendor.Name == "agy"`
+inside shared control flow.
+
+This applies to both layers below, and it's checkable: every literal vendor-name
+comparison in the codebase lives inside that vendor's own adapter file, never in
+a dispatch path.
+
+## Why NGL exists at all
+
+Stated precisely because the motivating incident is specific: on 2026-07-26 a
+delegate-flag detector that searched raw wire-format JSON for a substring
+anywhere in "the last user-role message" got tripped by Claude Code's own
+auto-injected `<system-reminder>` scaffolding, silently hijacking real
+conversation turns. The fix isn't a better regex on raw JSON — it's not treating
+`role: user` as "text the human typed" at all. Anthropic-shaped wire format
+conflates at least three different things under one `role="user"` envelope:
+genuine human input, `tool_result` content blocks, and vendor-specific
+auto-injected scaffolding living inside an ordinary `type="text"` block,
+invisible to block-type filtering alone. NGL's job is separating those, per
+vendor, so callers only ever see genuine human intent.
 
 ## 1. Four interfaces, four different questions
 
@@ -13,7 +44,23 @@ Package doc (verbatim, because it states the actual motivating incident precisel
 | `ParseXTurn` family | What does one line of a vendor's own stream-json output mean, structurally? | One event line of a vendor's headless/stream output | Outgoing (structuring) — subprocess → `Turn`/`Part` | `adapter_<vendor>.go` |
 | `VendorPack` | What tools does this vendor have, which are confirmed live (not just wire-declared), and how do their arg names map to a canonical name? | A hand-authored YAML file per vendor | Static data, not a runtime dispatch interface | `vendorpack.go`, `vendorpacks/*.yaml` |
 
-A fifth, genuinely separate boundary lives one layer down in `internal/vendors`: `VendorAdapter` handles execution-time side effects (denial detection, permission grants, session-id extraction) — a different question (process execution) from all four above (wire format). See `adapter_boundary.md`.
+A fifth, genuinely separate boundary lives one layer down in `internal/vendors`:
+`VendorAdapter` handles execution-time side effects (denial detection, permission
+grants, session-id extraction) — a different question (process execution) from
+all four above (wire format). It gets its own section (§9) because conflating
+the two layers is the single easiest mistake to make here:
+
+| | **NGL adapters** (`internal/ngl/adapter_*.go`) | **VendorAdapter** (`internal/vendors/adapter.go`) |
+|---|---|---|
+| Question | "What does this vendor's tool-call / diff look like on the wire, and how do I turn it into canonical `Turn`/`Part`/`EditViews`?" | "How do I detect a denial, recover a session id, or grant a resume permission when running this vendor headlessly?" |
+| When it runs | Parsing bytes already captured — observational, no side effects | During an actual `exec.Command` — has real side effects |
+| Shape | One file per vendor; free functions + typed structs | One `interface{...}`, one implementing type per vendor, in a `map[string]VendorAdapter` |
+| Who calls it | Anything inspecting wire data | `internal/vendors`' own `RunWithOptions`/`ResolveDelegate` |
+
+They're independent. `VendorAdapter` is *allowed* to reuse NGL's wire-format
+types as building blocks (e.g. `claudeAdapter.DetectDenials` uses
+`ngl.ClaudeResultEvent`) — that's the intended direction of dependency, since
+knowing the shape of vendor X's bytes is exactly NGL's job.
 
 **Registration discipline, identical across all three registry-backed interfaces** (`OriginAdapter`, `DelegateRenderer`): each adapter registers itself from its own file's `init()` (`RegisterOriginAdapter`/`RegisterDelegateRenderer`), never from shared dispatch code. `ResolveOriginAdapter`/`ResolveDelegateRenderer` are linear scans over package-level slices (`originAdapters`, `delegateRenderers`) — fine at three vendors, would want reconsidering well before dozens. Nothing in `internal/mitm` or `internal/vendors` compares a vendor name literally anywhere in the dispatch path; every literal vendor-name comparison lives inside that vendor's own adapter file.
 
@@ -155,7 +202,7 @@ Built 2026-07-28 after a real reported problem: Claude's and cursor-agent's head
 | `WriteReply` | Non-streaming: one atomic JSON write (`writeClaudeJSON`) — `header + <-replyText` concatenated, since there's no way to get `header` on the wire early for a single atomic body. Streaming: `writeClaudeSSE` — sends `header` as its own `text_delta` event immediately, then blocks on `replyText`, sends it as a second `text_delta`. No periodic keep-alive ticker — no timeout confirmed for Claude's own client the way one has for cursor-agent's. |
 | Outgoing parse (`ParseClaudeTurn`) | `type="text"` blocks → `PartUserText`; `type="tool_use"` → `PartToolCall`. `Hosted` is set from the `tool_use` id's prefix: `srvtoolu_` (server-side, e.g. WebSearch) vs. `toolu_` (client-side) — Claude's own signal, not an NGL invention. |
 | Scaffold convention | `<system-reminder>...</system-reminder>`, confirmed live, present even in `--bare` mode, often multiple non-overlapping occurrences per message. |
-| Tool catalog (confirmed-live, `adapter_claude.go`) | Edit/Write (`ClaudeEditViews` — empty `structuredPatch` + null `originalFile` = whole-file create/overwrite), Bash, Glob, WebFetch (fetch-and-*summarize*, not raw HTML), WebSearch (hosted; result is a **heterogeneous** array — one structured-hits object then one markdown-summary string, not homogeneous), NotebookEdit (native `Before`/`After`, unlike Write's null-`originalFile` convention), Read (polymorphic: plain text vs. `.ipynb` → `{type:"notebook", file:{...}}`), Task (Claude's own subagent-delegation primitive — the concrete precedent `native_glider_orchestration.md`'s Delegate design is built on; wire name is actually `"Agent"`, not `"Task"`). |
+| Tool catalog (confirmed-live, `adapter_claude.go`) | Edit/Write (`ClaudeEditViews` — empty `structuredPatch` + null `originalFile` = whole-file create/overwrite), Bash, Glob, WebFetch (fetch-and-*summarize*, not raw HTML), WebSearch (hosted; result is a **heterogeneous** array — one structured-hits object then one markdown-summary string, not homogeneous), NotebookEdit (native `Before`/`After`, unlike Write's null-`originalFile` convention), Read (polymorphic: plain text vs. `.ipynb` → `{type:"notebook", file:{...}}`), Task (Claude's own subagent-delegation primitive — the concrete precedent the delegation design in §10 is built on; wire name is actually `"Agent"`, not `"Task"`). |
 | Result/denial signal | `ClaudeResultEvent.PermissionDenials` — confirmed live, a clean structured `[{"tool_name":...,"tool_use_id":...,"tool_input":...}]` array whenever any tool call in the run was denied. No prose-parsing required (contrast agy, which has nothing like this). |
 
 ### cursor-agent
@@ -251,14 +298,91 @@ func (p *VendorPack) AnnotateToolCall(tc *ToolCall)
 | `ngl.LastUserInstruction` | `internal/api/anthropic_messages.go`, `internal/vendors/origin.go` | The gateway's own Claude-only route calls this directly (not through `claudeOriginAdapter`) — `ResolveOriginVendorName`'s result (or `""` for an unidentified origin) is passed straight through. |
 | `ngl.HostWithoutPort` | `adapter_cursor_origin.go`, `adapter_agy_origin.go` | Both non-Claude `Matches` implementations, for the reason in §3. |
 
-**Honest gap, worth stating plainly**: `ParseClaudeTurn`, `ParseCursorAgentTurn`, and `ParseAgyTurn` — the entire `ParseXTurn` family — have **no call sites outside their own tests** as of this writing. They're built, individually unit-tested, and structurally sound, but not yet wired into any live runtime path. This matches `native_glider_orchestration.md`'s framing of NGL as "a first, minimal slice" of a larger cross-CLI orchestration vision — the outgoing/structuring direction exists ahead of a caller that needs it (a future native subagent/session-concurrency feature, per that doc's §3b, "not built"), not because it's dead code.
+**Honest gap, worth stating plainly**: `ParseClaudeTurn`, `ParseCursorAgentTurn`, and `ParseAgyTurn` — the entire `ParseXTurn` family — have **no call sites outside their own tests** as of this writing. They're built, individually unit-tested, and structurally sound, but not yet wired into any live runtime path. This matches §10's framing of NGL as one slice of a larger cross-CLI orchestration vision — the outgoing/structuring direction exists ahead of a caller that needs it (a future native subagent/session-concurrency feature, §10, "not built"), not because it's dead code.
 
-## 9. Adding a fifth vendor — the actual checklist
+## 9. `VendorAdapter` — the execution layer (`internal/vendors/adapter.go`)
+
+```go
+type VendorAdapter interface {
+    DetectDenials(stdout, stderr []byte) []Denial
+    ExtractSessionID(stdout []byte) string
+    GrantResumePermission(v Vendor, cwd string, denials []Denial) (revert func() error, err error)
+    ExtraResumeArgs(denials []Denial) []string
+    ExtractEditViews(stdout []byte) (ngl.EditViews, bool)
+    WrapResumePrompt(prompt string) string
+}
+```
+
+Registered in one map (`vendorAdapters`) — the only place in the codebase that
+lists all vendor names for execution purposes. `noopAdapter` backs any
+unregistered name, so `adapterFor(name)` never returns nil and callers never
+branch on "do I have an adapter for this."
+
+| | `claudeAdapter` | `cursorAgentAdapter` | `agyAdapter` |
+|---|---|---|---|
+| `DetectDenials` | Terminal `result` event's `permission_denials[]` | Rejected `tool_call` in stream-json | Regex over confirmed stderr prose (agy has no `--output-format` at all) |
+| `ExtractSessionID` | `sessionIDFromJSONLines` (shared — both echo `session_id` per line) | same shared helper | `""` — no structured stdout |
+| `GrantResumePermission` | No-op — grant happens via argv (below) | No-op — `--resume` alone suffices | **Real side effect:** rewrites `settings.json`'s `permissions.allow`, returns a byte-for-byte revert |
+| `ExtraResumeArgs` | `--allowedTools <denied tools>` | nil — no per-tool flag exists (only blunt `-f`/`--yolo`, deliberately not auto-used) | nil — its grant is the settings.json write |
+| `ExtractEditViews` | Two-pass `tool_use` → `tool_use_result` correlation | `editToolCall` result via `CursorEditViews` | Always false — prose-only headless output |
+| `WrapResumePrompt` | Identity | Identity | Prepends "permission already granted, act directly" framing |
+
+The two grant mechanisms are worth contrasting, because they're why this
+interface has two methods for one concept: **`ExtraResumeArgs` contributes argv**
+(claude's `--allowedTools`, which can only be built per-call since the denied
+tool name isn't known at template-definition time), while
+**`GrantResumePermission` performs a side effect outside argv** (agy's
+settings.json write, needed because its resume is a bare `--continue` with no
+per-tool flag to attach anything to). A vendor uses whichever its CLI actually
+supports; the core calls both and cares about neither.
+
+Everything calling through this interface stays vendor-blind:
+`RunWithOptions`, `ResolveDelegate`/`resolveAllow`, and the two HTTP-facing
+callers (`DelegateHandler`, `api.Messages`) contain zero vendor-name checks.
+
+### What's *data*, not code
+
+Launch flags (`--trust` for cursor-agent, `--verbose` for claude,
+`--add-dir={{cwd}}` for agy) live in `configs/vendor_candidates.yaml`, loaded
+into `Vendor.Templates []CommandTemplate` and editable live from the dashboard.
+`RunWithOptions` substitutes `{{prompt}}`/`{{session_id}}`/`{{cwd}}` into
+whatever args a template declares — it has no idea what `--add-dir` *means*.
+
+**Behavioral quirks belong in `VendorAdapter` (Go — they need real logic and
+side effects); launch-flag requirements belong in `CommandTemplate` (YAML —
+they're just data).** Neither may leak into `internal/mitm` or `internal/api`.
+
+## 10. The vision this is one slice of
+
+The product goal: a user drives **one** CLI and stays there, while Glider
+transparently runs sub-tasks through *other* CLIs and folds results back so they
+read as if the front did it natively.
+
+**Built today:** the explicit-flag slice — `do X /agy` typed in any front runs
+headless through agy, with permission prompts relayed back and edits rendered
+through `EditViews`. Front-agnostic by construction: it never depends on the
+front's tool catalog, so it works identically even for agy, which has no
+subagent-tool concept of its own.
+
+**Not built**, and honestly separated from the above:
+
+- **Automatic vendor selection** — a `DecideVendor(req) → same-as-front | claude | cursor-agent | agy` classifier extending `DecideLocal` into a third dimension. Would need capability tags from vendor packs (live-confirmed, not wire-declared), a liveness/auth probe per vendor, plus normal cost/latency concerns.
+- **Model-initiated delegation** — a front's own subagent-shaped tool as a second trigger. Claude's real `Agent` tool is live-captured prior art for the shape (`{description, prompt, subagent_type, run_in_background}`, resumable `agentId`, async lifecycle, `parent_tool_use_id` correlation, budget/telemetry in the result). agy exposes no equivalent primitive, so it would rely on the flag trigger regardless.
+- **Persistent bidi sessions.** claude can hold one process open indefinitely (`-p --input-format stream-json`); cursor-agent and agy cannot and resume turn-by-turn (`--resume [chatId]`, `-c`/`--continue`). Today's `RunWithOptions` is one-shot exec-and-capture, which is all the resume loop actually needs.
+- **Front-native rendering.** The intent is that the front adapter is the sole renderer — an agy `RangeReplace` shown to a claude user should become a claude-shaped `Edit` diff via the converter registry, with unconvertible views degrading to an honest vendor-native fallback and large results passed by reference rather than inlined. Today `vendors.FormatEditSummary` appends a generic diff block instead.
+- **Delegate context bookkeeping.** `contextgraph` is currently turn/session bookkeeping for *routing*. A delegated sub-session needs roughly the same three things (parent binding, re-resolution, audit trail) — either by generalizing `contextgraph` in place or via a smaller ledger referencing its turn ids. Undecided, deliberately: worth revisiting against real delegate traffic rather than from a design doc.
+
+### Findings worth carrying into a new vendor
+
+- A vendor's *wire-declared* tool catalog is not proof of its *live* toolset — agy self-reports missing tools it has wire-declared support for. Trust a per-tool `confirmed: true/false` set by an actual live trace.
+- Across all three vendors tested, **zero TLS certificate pinning** was found. Worth re-checking per vendor, not assuming it holds forever.
+
+## 11. Adding a fifth vendor — the actual checklist
 
 Extends the "fourth vendor" checklist already in `docs/site/ngl.html`, now cross-checked against real integration points above. A complete addition touches:
 
 1. `configs/vendor_candidates.yaml` — probe args, print flag, `default`/`resume`/`interactive` templates (data, not Go).
-2. `internal/vendors/adapter.go` — a `VendorAdapter` for denial detection, session-id/edit-view extraction (execution layer, not wire format — see `adapter_boundary.md`).
+2. `internal/vendors/adapter.go` — a `VendorAdapter` for denial detection, session-id/edit-view extraction (execution layer, not wire format — see §9).
 3. `internal/ngl/adapter_<vendor>.go` — a `ParseXTurn`, only if the vendor's own stdout needs structuring beyond plain text (agy's renderer shows this can be a near-identity no-op if the CLI's headless output is already plain prose).
 4. `internal/ngl/adapter_<vendor>_origin.go` — an `OriginAdapter`, **only once its real live wire shape is confirmed** via an isolated capture (`tools/wirecapture`) — never registered on a guess. Register in `init()`.
 5. `internal/ngl/adapter_<vendor>_render.go` — a `DelegateRenderer`, once its headless output shape is confirmed. Register in `init()`.
@@ -266,7 +390,7 @@ Extends the "fourth vendor" checklist already in `docs/site/ngl.html`, now cross
 
 None of the above require touching `internal/mitm/delegate_handler.go`, `vendors.ResolveDelegate`, or any other shared dispatch code — the entire point of the interface split in §1.
 
-## 10. Known gaps and open questions
+## 12. Known gaps and open questions
 
 - **`ParseXTurn` has no live caller** (§8) — the outgoing/structuring direction is ahead of its consumer.
 - **`CursorInteractionQuery`'s "denied" shape is unconfirmed** — only the approved path for a web-search permission gate was ever observed live; whether this gate extends to other tools is open.

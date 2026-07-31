@@ -95,12 +95,12 @@ graph TD
 |---|---|---|
 | `internal/api` | OpenAI-compatible gateway (`:8080`), SSE streaming, the deliberately Claude-only `/v1/messages` route | `docs/site/api.html` |
 | `internal/mitm` | HTTPS MITM: CONNECT proxy, CA/cert forging, both transparent redirector implementations, `DelegateHandler`, `Interceptor` | `docs/site/mitm.html`, `planning/transparent_redirector_design.md` |
-| `internal/ngl` | Wire-format interop layer — recognizing/answering a vendor's own traffic, rendering delegate replies, structuring headless output | `planning/ngl_interface_reference.md`, `planning/native_glider_orchestration.md` |
-| `internal/vendors` | Vendor registry/discovery, headless CLI execution, permission-relay resume flow, workspace-per-PID resolution, `VendorAdapter` (execution-layer per-CLI behavior) | `planning/permission_relay_design.md`, `planning/adapter_boundary.md` |
-| `internal/router` | Rule-based routing engine (explicit/regex/context_size/always/script rules, task classifier, complexity scoring), `RouteExplain` dry-run, `LintConfig` | `docs/site/routing.html`, `planning/smart_routing_and_local_tools.md` |
+| `internal/ngl` | Wire-format interop layer — recognizing/answering a vendor's own traffic, rendering delegate replies, structuring headless output | `planning/ngl_and_adapters.md`, `planning/ngl_and_adapters.md` |
+| `internal/vendors` | Vendor registry/discovery, headless CLI execution, permission-relay resume flow, workspace-per-PID resolution, `VendorAdapter` (execution-layer per-CLI behavior) | `planning/permission_relay_design.md`, `planning/ngl_and_adapters.md` |
+| `internal/router` | Rule-based routing engine (explicit/regex/context_size/always/script rules, task classifier, complexity scoring), `RouteExplain` dry-run, `LintConfig` | `docs/site/routing.html`, `planning/routing_and_context.md` |
 | `internal/orchestrator` | Fan-out execution, fallback chains, circuit breakers, rate limiting, request queueing, VRAM allocation | — |
 | `internal/backend` | Backend clients — Ollama, vLLM, OpenAI, Anthropic — and the model registry | — |
-| `internal/contextgraph` / `internal/contextkit` | Turn-family event log, episode store, turn-family sticky routing signal | `planning/context_management.md`, `planning/routing_session_policy.md` |
+| `internal/contextgraph` / `internal/contextkit` | Turn-family event log, episode store, turn-family sticky routing signal | `planning/routing_and_context.md`, `planning/routing_and_context.md` |
 | `internal/config` | Config loading, validation, hot-reload | — |
 | `internal/dashboard` | Web UI (Overview, VRAM & Models, Rules Engine, MCP, Vendors, Workspace, Playground, Config) + its REST APIs | — |
 | `internal/tools`, `internal/mcp` | Builtin tool registry, workspace sandbox, MCP server integration | `planning/tools.md` |
@@ -174,7 +174,7 @@ For a task the router or a human judges suitable for parallel decomposition, `in
 
 `internal/router.Engine.Route` evaluates, in this fixed order:
 
-1. **Explicit command override** (`ExplicitCommandRule`, e.g. `/local`, `/cloud`) — matched anywhere in the message, not just the trailing token (a different, older convention than the vendor-delegate flags in §4c, which are deliberately trailing-only for the reason in `ngl_interface_reference.md`). **Always wins**, regardless of any rule's configured priority — enforced by `explicitHardOverride`, a hardcoded pre-pass before the general priority-sorted loop.
+1. **Explicit command override** (`ExplicitCommandRule`, e.g. `/local`, `/cloud`) — matched anywhere in the message, not just the trailing token (a different, older convention than the vendor-delegate flags in §4c, which are deliberately trailing-only for the reason in `ngl_and_adapters.md`). **Always wins**, regardless of any rule's configured priority — enforced by `explicitHardOverride`, a hardcoded pre-pass before the general priority-sorted loop.
 2. Everything else — `RegexRule`, `ContextSizeRule`, `AlwaysRule`, `StarlarkScriptRule`, `ComposerWrapupOriginRule`, plus two **injected** rule families built from `routing.task_classifier` (tools-present → cloud; must-cloud/small-local regex patterns) and `routing.complexity` (heuristic or Cursor-provided score vs. a threshold) — sorted by `Priority()` descending, first match wins.
 
 `RouteExplain` (same `Engine`) runs the identical rule set without the early return, recording every rule's outcome — matched, shadowed by a higher-priority winner, or not matched — so the dashboard's Rules Engine → Explain panel can show *why* a real request would route where it did, without issuing a completion. `LintConfig` is a separate, static (no request needed) check for provable config-time ambiguity: two enabled rules racing on the same explicit command, or byte-identical triggers at the same priority that can never both be reached. Both are read-only reflections over the same rule construction `NewEngineFromConfig` does for the live gateway — never used on the real request path themselves.
@@ -225,5 +225,5 @@ Single-page app (`internal/dashboard/static/`), no build step, served via `embed
 - Dashboard has no real authentication or multi-user concept — single-operator, single-machine tool today. A P2P/team-pooling design (peers sharing local inference capacity, coordinated by a lightweight rendezvous service that never sees prompt/response content, Tailscale-shaped) is sketched in conversation history but not yet a written design doc or implementation.
 - No cost/value reporting (`"$X saved by routing locally"`) — the raw local/cloud/canned split is tracked, never turned into a dollar figure.
 - Adding a new vendor CLI requires writing Go (`OriginAdapter`, `DelegateRenderer`, `VendorAdapter`) — no path to community-contributed vendor support via config alone.
-- `ngl.ParseXTurn` family has no live caller yet (`planning/ngl_interface_reference.md` §8) — built ahead of the orchestration feature that will need it.
+- `ngl.ParseXTurn` family has no live caller yet (`planning/ngl_and_adapters.md` §8) — built ahead of the orchestration feature that will need it.
 - Router rule dispatch (`ResolveOriginAdapter`, `ResolveDelegateRenderer`, `Engine.Route`) is a linear scan/priority-sorted list — fine at today's scale (3 vendors, a handful of rules), a real bottleneck-in-waiting if either grows substantially.

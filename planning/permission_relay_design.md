@@ -83,9 +83,9 @@ type VendorAdapter interface {
 }
 ```
 
-`cursorAgentAdapter`/`claudeAdapter`/`agyAdapter` (`denial.go`, `agy_grant.go`) are the three implementations, looked up once via `adapterFor(vendorName)` — the only place in the package that knows the full vendor list. `GrantResumePermission` is a no-op for claude/cursor-agent (their resume template args alone suffice); agy's is the real settings-file grant from §3. `ExtractEditViews` feeds NGL's diff-rendering (see `adapter_boundary.md`) so a delegate's edit shows up as a proper diff in the reply, regardless of which vendor produced it.
+`cursorAgentAdapter`/`claudeAdapter`/`agyAdapter` (`denial.go`, `agy_grant.go`) are the three implementations, looked up once via `adapterFor(vendorName)` — the only place in the package that knows the full vendor list. `GrantResumePermission` is a no-op for claude/cursor-agent (their resume template args alone suffice); agy's is the real settings-file grant from §3. `ExtractEditViews` feeds NGL's diff-rendering (see `ngl_and_adapters.md`) so a delegate's edit shows up as a proper diff in the reply, regardless of which vendor produced it.
 
-See `adapter_boundary.md` for the full two-layer adapter picture (this interface vs. NGL's wire-format adapters) and what adding a 4th vendor actually touches.
+See `ngl_and_adapters.md` for the full two-layer adapter picture (this interface vs. NGL's wire-format adapters) and what adding a 4th vendor actually touches.
 
 ## Known gaps
 

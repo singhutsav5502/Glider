@@ -100,12 +100,41 @@ summarize recent commits /agy</pre>
   |<----------------------------| reply: result + diff block                        |</pre>
 
       <h2 id="grant">Granting permission (vendor-specific, hidden behind one interface)</h2>
+      <p>
+        Approving a denial has to actually <em>change something</em> before the retry — otherwise
+        the resumed run hits the identical wall. Each CLI offers a different lever, so there are
+        two ways to pull one:
+      </p>
       <table>
-        <tr><th>Vendor</th><th>Mechanism</th></tr>
-        <tr><td>claude</td><td>Resume template: <code>--resume &lt;session-id&gt;</code> + the continuation prompt</td></tr>
-        <tr><td>cursor-agent</td><td>Resume template: <code>--resume [chatId] -p --output-format stream-json --trust</code></td></tr>
-        <tr><td>agy</td><td>Writes a scoped rule into its own <code>settings.json</code> (and per-project config if the workspace matches a known project) — <strong>agy's own officially-designed headless-permission mechanism</strong>, confirmed via its changelog — then reverts both files to their exact original bytes afterward</td></tr>
+        <tr><th>Vendor</th><th>What approval actually does</th></tr>
+        <tr>
+          <td>claude</td>
+          <td>Appends <code>--allowedTools &lt;denied tools&gt;</code> to the resume call. The tool
+            name is only known per-call, so it can't live in a static template — it's built from
+            the denial itself.</td>
+        </tr>
+        <tr>
+          <td>cursor-agent</td>
+          <td>Nothing extra — <code>--resume [chatId] --trust</code> is sufficient on its own.
+            Note it exposes <em>no</em> per-tool flag; the only alternative is
+            <code>--force</code>/<code>--yolo</code>, which allows everything, so Glider
+            deliberately never reaches for it on your behalf.</td>
+        </tr>
+        <tr>
+          <td>agy</td>
+          <td>Writes a scoped rule into its own <code>settings.json</code> (plus the per-project
+            config when the workspace matches one), then restores both files to their exact
+            original bytes afterward. This is agy's <strong>officially-designed</strong>
+            headless-permission mechanism, confirmed via its changelog — not a workaround.</td>
+        </tr>
       </table>
+      <p>
+        That split is why the interface has two grant methods rather than one:
+        <code>ExtraResumeArgs</code> contributes <em>command-line arguments</em>, while
+        <code>GrantResumePermission</code> performs a <em>side effect outside</em> the command
+        line. A vendor implements whichever its CLI actually supports; shared code calls both and
+        cares about neither.
+      </p>
       <p>
         Two alternatives were tried and rejected for agy first: a plain
         <code>--dangerously-skip-permissions</code> resume flag looked cleaner (uniform with the
@@ -117,8 +146,8 @@ summarize recent commits /agy</pre>
       <p>
         Every vendor's quirk sits behind one <code>VendorAdapter</code> interface
         (<code>DetectDenials</code>, <code>ExtractSessionID</code>, <code>GrantResumePermission</code>,
-        <code>WrapResumePrompt</code>, <code>ExtractEditViews</code>) — shared code never branches
-        on a vendor name.
+        <code>ExtraResumeArgs</code>, <code>WrapResumePrompt</code>, <code>ExtractEditViews</code>)
+        — shared code never branches on a vendor name.
       </p>
 
       <h2 id="workspace">Workspace scoping</h2>
@@ -150,8 +179,9 @@ summarize recent commits /agy</pre>
         <li><strong>agy sometimes still asks a clarifying question</strong> after a successful grant instead of acting — ordinary agent caution on a one-shot destructive request, not a bug, but it means the loop isn't always one round trip.</li>
         <li><strong>No real interactive/pty relay (Path B).</strong> A genuinely live mid-execution pause — catching a TUI prompt inside an already-running headless call — would need Windows ConPTY plumbing and a captured TUI-prompt wire format per vendor, neither built yet. Don't confuse this with the <code>:interactive</code> template above, which sidesteps the whole problem by handing the task to a brand-new native session instead of trying to relay one.</li>
         <li><strong>No cost/consent gate</strong> beyond the explicit flag itself — a delegated call can spend against a different subscription/API key than the one you're directly watching.</li>
+        <li><strong>Delegation is not instant, and that's mostly not Glider.</strong> A delegated CLI pays its own full cold start — process launch, auth, model listing, then inference — on every call, because there's no persistent session to reuse. Measured standalone with Glider entirely out of the path, a trivial one-line <code>cursor-agent</code> task still takes ~20s. Budget accordingly for multi-step work; the headless call is capped at 6 minutes.</li>
       </ul>
-      <p>Full design: <code>planning/permission_relay_design.md</code>. Adapter boundary: <code>planning/adapter_boundary.md</code>.</p>
+      <p>Full design: <code>planning/permission_relay_design.md</code>. Adapter boundary: <code>planning/ngl_and_adapters.md</code>.</p>
     </main>
     <footer class="foot"><a href="routing.html">← Routing</a> · <a href="mitm.html">MITM →</a></footer>
   </div>

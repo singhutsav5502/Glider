@@ -16,7 +16,7 @@
 #   Dashboard loops (/api/loops) and gateway chat work without Cursor at all.
 #
 # Hybrid dual-mode (MITM + gateway): leave mitm.enabled: true (default here).
-# See planning/context_management.md and STATUS.md.
+# See planning/routing_and_context.md and STATUS.md.
 
 server:
   proxy_port: 8080

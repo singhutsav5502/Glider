@@ -17,9 +17,9 @@
 #     mitm.origin_on_local_error: false       # clear Ollama errors vs Cursor origin
 #     mitm.require_local_healthy: true
 #   Gateway-only: mitm.enabled: false + Override Base URL -> :8080/v1 (cus- optional).
-#   See planning/context_management.md sec Local context -> Ollama.
+#   See planning/routing_and_context.md sec Local context -> Ollama.
 #
-# See planning/smart_routing_and_local_tools.md and planning/routing_session_policy.md
+# See planning/routing_and_context.md
 
 server:
     proxy_port: 8080
@@ -68,7 +68,7 @@ model_aliases:
     gpt-4o-mini: llama3:8b-instruct
 routing:
     # How long DecideLocal / explicit turn family sticks for reply-summary / title
-    # follow-ons only (not the whole chat). See planning/routing_session_policy.md.
+    # follow-ons only (not the whole chat). See planning/routing_and_context.md.
     turn_family_ttl: 90s
     # Child tool-loop re-decide: after parent cloud|local, each tool step may prefer
     # local (allowlist) or stay origin (denylist). Path B logs tool_followup_would_local
@@ -149,7 +149,7 @@ routing:
             model: gpt-4o
         # Composer wrap-up / final summary -> always origin. Beats Small Context Local
         # and task_classifier so post-/cloud chrome (user_visible_high_level_summary,
-        # title-like printable_hint) never runsse_local. See routing_session_policy.md.
+        # title-like printable_hint) never runsse_local. See routing_and_context.md.
         - name: composer_wrapup_origin
           priority: 95
           enabled: true
@@ -280,7 +280,7 @@ mitm:
         # subdomain actually confirmed in real traffic so far.
         - agentn.global.api5.cursor.sh
         # Claude Code's completion plane (confirmed live via ANTHROPIC_BASE_URL
-        # and, separately, TLS-trust of a forged leaf — planning/native_glider_orchestration.md §7).
+        # and, separately, TLS-trust of a forged leaf — planning/ngl_and_adapters.md §7).
         - api.anthropic.com
         # agy (Antigravity CLI)'s completion plane + auxiliary calls, all confirmed
         # live to honor a redirected connection and trust a forged leaf (same doc).

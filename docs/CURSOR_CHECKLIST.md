@@ -36,6 +36,6 @@
 
 ## Known limits
 
-- **Path B MITM — text-only Agent** when `agent_rpc_fulfill` is on (BidiAppend → root RunSSE). Child/tool RunSSE → origin; Agent+tools → Mode A (`cus-` + Override Base URL). See [cursor_agent_research.md](../planning/cursor_agent_research.md); routing roadmap [smart_routing_and_local_tools.md](../planning/smart_routing_and_local_tools.md).
+- **Path B MITM — text-only Agent** when `agent_rpc_fulfill` is on (BidiAppend → root RunSSE). Child/tool RunSSE → origin; Agent+tools → Mode A (`cus-` + Override Base URL). See [cursor_agent_research.md](../planning/cursor_agent_research.md); routing roadmap [routing_and_context.md](../planning/routing_and_context.md).
 - Some Cursor versions ignore `http.proxy` on Agent HTTP/2 paths — stay on HTTP/1.1
 - Proprietary Cursor envelopes that are not chat/Responses / fulfillable StreamChat* / Path B text RunSSE always passthrough
