@@ -94,7 +94,31 @@ candidates:
     # but would silently outrank a user's own AGENTS.md instructions.
     context_file: "AGENTS.md"
     templates:
+      # DEFAULT IS INTERACTIVE for agy, unlike claude and cursor-agent.
+      # agy's headless mode is genuinely unreliable as a delegate target,
+      # for two compounding reasons confirmed live:
+      #
+      #   1. It auto-denies any tool needing permission, because these
+      #      templates deliberately omit --dangerously-skip-permissions
+      #      (catching the denial is the whole premise of the permission
+      #      relay, not something to bypass). So even reading a file costs
+      #      two round trips: task -> denial -> approve -> resume.
+      #   2. After the grant clears, the model frequently DESCRIBES the
+      #      workspace instead of performing the task — reproduced 6
+      #      consecutive times, and again on 2026-07-31 when a delegated
+      #      doc-review run summarized the repository rather than editing
+      #      it. WrapResumePrompt mitigates this and is honestly labelled
+      #      as not guaranteeing it.
+      #
+      # Its interactive mode has neither problem: it opens a real window
+      # with agy's own permission UI, primed with the task, and was
+      # confirmed live to complete the work autonomously. So "/agy" now
+      # opens a window; "/agy:headless" is still there for anyone who
+      # explicitly wants the headless behavior and its caveats.
       - name: default
+        mode: interactive
+        args: ["--add-dir={{cwd}}", "--prompt-interactive", "{{prompt}}"]
+      - name: headless
         mode: headless
         # --add-dir={{cwd}} is REQUIRED — confirmed live 2026-07-26 by
         # actually running this without it: agy's -p mode silently ignores

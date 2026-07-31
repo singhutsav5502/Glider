@@ -29,10 +29,9 @@ If you want one file for everything, write `AGENTS.md` and add a single line to
 @AGENTS.md
 ```
 
-> **Note:** Glider also appends a temporary block to this same file when *it*
-> delegates to a CLI, and removes it when the run ends. The two coexist —
-> Glider appends and restores byte-for-byte, never overwrites — but don't be
-> surprised to see a `GLIDER DELEGATE CONTEXT` block appear briefly.
+> **Note:** Glider never writes into this file. When it delegates, it passes
+> context through a private per-run directory instead (see §4), so your own
+> rules here are the only thing in it.
 
 ## 2. The template
 
@@ -57,9 +56,9 @@ Rules for when to do this automatically:
   third variation myself. A different model family fails differently.
 - **Long mechanical edits** — bulk renames or repetitive refactors across
   many files go to `/cursor-agent`.
-- **Anything needing a human decision mid-task** — use
-  `/agy:interactive`, which opens a real agy window the user drives
-  directly, instead of guessing on their behalf.
+- **Anything needing a human decision mid-task** — use `/agy`, which
+  opens a real agy window the user drives directly, instead of guessing
+  on their behalf. Nothing comes back into this session from it.
 
 Never delegate automatically:
 
@@ -91,7 +90,17 @@ at refactoring" as fact. What's worth routing on, with reasons that hold up:
 | **Different model family** | A genuinely independent attempt. The strongest reason to delegate — two tries from the same model correlate; two from different vendors don't. |
 | **Quota separation** | Delegated calls spend against that CLI's own subscription. Useful when you're near a limit on your main one. |
 | **Permission granularity** | claude can be approved for one specific tool (`--allowedTools`). cursor-agent has no per-tool flag — its only lever grants everything, so Glider won't reach for it. Prefer claude when you want narrow, auditable approval. |
-| **Human-in-the-loop** | `/agy:interactive` opens a real window the user drives. The right answer whenever the task needs a judgment call, rather than guessing. |
+| **Human-in-the-loop** | `/agy` opens a real window the user drives. The right answer whenever the task needs a judgment call, rather than guessing. |
+
+> **`/agy` is interactive by default**, unlike `/claude` and `/cursor-agent`,
+> which run headless. This is deliberate: agy's headless mode auto-denies any
+> tool needing permission (so even reading a file costs an extra approve/resume
+> round trip), and after that grant clears its model often *describes* the
+> workspace instead of doing the work. Its interactive mode has neither problem
+> — it opens a window with agy's own permission UI, primed with your task. Use
+> `/agy:headless` only if you specifically want the headless behavior and its
+> caveats. Note a window is not a text reply: nothing comes back into your
+> session from it.
 
 Anti-triggers worth stating explicitly in your rules, because a model won't
 infer them:
@@ -111,10 +120,16 @@ Worth knowing, because it determines how much you need to spell out:
 
 - **The task text** — everything before the flag.
 - **A working directory** — the resolved workspace.
-- **A context block** Glider appends to the delegate's own context file
-  (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, per §1) and removes when the run
-  ends: the task restated, which CLI delegated it, the workspace, and up to
-  6 recent human instructions from your session.
+- **A context file** in a private directory created for that one run
+  (`~/.glider/delegates/<id>/`), handed to the CLI through a flag it already
+  supports — `--append-system-prompt-file` for claude, `--add-dir` for
+  cursor-agent and agy. It holds the task restated, which CLI delegated it,
+  the workspace, and up to 6 recent human instructions from your session.
+  The directory is deleted when the run ends.
+
+**Your own files are never touched.** An earlier design appended to your
+project's `CLAUDE.md`/`AGENTS.md` and restored them afterward; a per-run
+directory removes that risk entirely.
 
 The same block is delivered whichever way you run Glider — transparent
 interception or gateway mode.
@@ -143,9 +158,10 @@ If your delegate rules live in `AGENTS.md`, and a delegated CLI reads
 `AGENTS.md`, it would read those same rules and could delegate onward — each
 hop paying another cold start.
 
-Glider prevents this: the context block it appends tells the delegate
-explicitly that it *is* the delegate, to ignore auto-delegation rules in the
-file, and to complete the task itself. You don't need to handle this in your
+Glider prevents this: the context file it hands the delegate says explicitly
+that it *is* the delegate, that it should ignore any auto-delegation rules it
+finds in the project, and that it must complete the task itself. You don't
+need to handle this in your
 rules, but if you write your own briefing conventions, keep that line.
 
 ## 6. Verifying it works
