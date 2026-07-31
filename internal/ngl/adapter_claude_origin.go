@@ -66,6 +66,23 @@ func (claudeOriginAdapter) ExtractUserInstruction(body []byte) (text, model stri
 	return text, req.Model, req.Stream, true, nil
 }
 
+// PriorUserInstructions reads the Anthropic messages[] array this request
+// already carries — Claude Code sends full conversation history on every
+// call, so this is the richest history source of the three vendors.
+// Delegates to ngl.PriorUserInstructions, which applies the same
+// ExtractParts + StripScaffold filtering ExtractUserInstruction uses.
+func (claudeOriginAdapter) PriorUserInstructions(body []byte, max int) []string {
+	var req claudeWireRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil
+	}
+	prior, err := PriorUserInstructions("claude", req.Messages, max)
+	if err != nil {
+		return nil
+	}
+	return prior
+}
+
 func (claudeOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
 	if stream {
 		return writeClaudeSSE(w, model, header, replyText)

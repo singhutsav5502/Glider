@@ -144,7 +144,22 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 		return true, nil
 	}
 
+	// Record this turn for session continuity BEFORE deciding whether it's
+	// a delegate — the whole point is accumulating the turns Glider sees
+	// one-at-a-time, most of which are ordinary non-delegate traffic. This
+	// is what lets a cursor-agent-fronted delegate have history at all:
+	// its own protocol can't supply it (see PriorUserInstructions), but
+	// Glider watched every turn go by. Best-effort; a continuity failure
+	// must never affect the request the user actually made.
 	vendor, templateName, prompt, ok := vendors.ParseDelegateCommand(reg, userText)
+	continuityText := userText
+	if ok {
+		continuityText = prompt // store the task, not the "/vendor" flag noise
+	}
+	if ws, found := vendors.WorkspaceForPID(originPID); found {
+		_ = vendors.RecordContinuity(ws, adapter.Vendor(), originPID, continuityText)
+	}
+
 	if !ok {
 		return false, nil // no delegate flag present — real origin answers as normal
 	}
@@ -160,11 +175,34 @@ func (h *DelegateHandler) TryHandle(w http.ResponseWriter, r *http.Request) (boo
 	// still running headless in the background goroutine below — that
 	// call can take up to vendors.RunTimeout (6min).
 	header := fmt.Sprintf("Delegated to %s:\n\n", vendor.Name)
+
+	// Session context for the delegate, so it isn't a cold start. Built
+	// here because this is where the intercepted conversation actually
+	// exists — it's discarded a few lines up by ExtractUserInstruction,
+	// which deliberately returns only the latest human message. History
+	// extraction goes through the origin adapter (vendor-shaped), never a
+	// branch on the front's name. See vendors.ContextPack for how this
+	// reaches the delegate: its own context file, not the prompt.
+	recent := adapter.PriorUserInstructions(body, vendors.DefaultContextTurns)
+	if len(recent) == 0 {
+		// This front's protocol carries no retrievable history (cursor-agent
+		// — an honest structural limit, not a gap). Glider's own accumulated
+		// record covers it, so context quality doesn't depend on which CLI
+		// the human happens to be driving.
+		if ws, found := vendors.WorkspaceForPID(originPID); found {
+			recent = vendors.ReadContinuity(ws, adapter.Vendor(), originPID, vendors.DefaultContextTurns)
+		}
+	}
+	pack := vendors.ContextPack{
+		FrontVendor: adapter.Vendor(),
+		RecentTurns: recent,
+	}
+
 	replyCh := make(chan string, 1)
 	start := time.Now()
 	go func() {
 		defer close(replyCh)
-		reply := vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+		reply := vendors.ResolveDelegateWithContext(r.Context(), vendor, templateName, prompt, originPID, pack)
 		h.recordDelegateMetrics(vendor.Name, templateName, r.Host, r.URL.Path, start)
 		replyCh <- reply
 	}()

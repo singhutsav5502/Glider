@@ -177,3 +177,59 @@ func LastUserInstruction(vendor string, messagesJSON []byte) (string, error) {
 	}
 	return "", nil
 }
+
+// PriorUserInstructions returns up to max genuine human instructions from
+// BEFORE the latest one, oldest first — the bounded conversation history a
+// delegated CLI needs so it isn't a cold start (see
+// vendors.ContextPack). The newest instruction is deliberately excluded:
+// that one is already the delegate's task, restated separately, and
+// repeating it as "background" reads like a duplicate request.
+//
+// Reuses LastUserInstruction's exact safety machinery — same wire shape,
+// same ExtractParts filtering to genuine PartUserText, same per-vendor
+// StripScaffold — because the hazard is identical. A front CLI's
+// auto-injected scaffolding must never reach a delegate as if a human had
+// written it; that conflation is the original incident NGL exists to
+// prevent, and history is a wider surface for it than one message.
+//
+// Entries that are empty after stripping are skipped rather than emitted
+// blank, so a session whose earlier turns were pure scaffolding yields
+// nothing instead of a list of empty bullets.
+func PriorUserInstructions(vendor string, messagesJSON []byte, max int) ([]string, error) {
+	if max <= 0 {
+		return nil, nil
+	}
+	var messages []wireMessage
+	if err := json.Unmarshal(messagesJSON, &messages); err != nil {
+		return nil, err
+	}
+
+	var collected []string
+	seenLatest := false
+	for i := len(messages) - 1; i >= 0 && len(collected) < max; i-- {
+		m := messages[i]
+		if m.Role != "user" {
+			continue
+		}
+		if !seenLatest {
+			seenLatest = true // this is the delegate's own task — skip it
+			continue
+		}
+		var out strings.Builder
+		for _, p := range ExtractParts(m.Content) {
+			if p.Kind == PartUserText {
+				out.WriteString(p.Text)
+			}
+		}
+		if text := strings.TrimSpace(StripScaffold(vendor, out.String())); text != "" {
+			collected = append(collected, text)
+		}
+	}
+
+	// Collected newest-first while walking backwards; callers want oldest
+	// first so the list reads chronologically.
+	for l, r := 0, len(collected)-1; l < r; l, r = l+1, r-1 {
+		collected[l], collected[r] = collected[r], collected[l]
+	}
+	return collected, nil
+}

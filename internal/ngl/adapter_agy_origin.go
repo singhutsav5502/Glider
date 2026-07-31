@@ -116,6 +116,49 @@ func (agyOriginAdapter) ExtractUserInstruction(body []byte) (text, model string,
 	return "", "", false, false, nil
 }
 
+// PriorUserInstructions walks agy's own request.contents[] array, which
+// carries prior turns. Each user turn's text is unwrapped from agy's
+// <USER_REQUEST> convention the same way ExtractUserInstruction does —
+// without that, the returned "history" would be agy's own injected
+// metadata rather than anything a human typed.
+func (agyOriginAdapter) PriorUserInstructions(body []byte, max int) []string {
+	if max <= 0 {
+		return nil
+	}
+	var req agyWireRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil
+	}
+
+	var collected []string
+	seenLatest := false
+	for i := len(req.Request.Contents) - 1; i >= 0 && len(collected) < max; i-- {
+		c := req.Request.Contents[i]
+		if c.Role != "user" {
+			continue
+		}
+		var raw strings.Builder
+		for _, part := range c.Parts {
+			raw.WriteString(part.Text)
+		}
+		m := agyUserRequestTag.FindStringSubmatch(raw.String())
+		if m == nil {
+			continue // not agy's human-input convention — never guess
+		}
+		if !seenLatest {
+			seenLatest = true // the delegate's own task, restated elsewhere
+			continue
+		}
+		if text := strings.TrimSpace(m[1]); text != "" {
+			collected = append(collected, text)
+		}
+	}
+	for l, r := 0, len(collected)-1; l < r; l, r = l+1, r-1 {
+		collected[l], collected[r] = collected[r], collected[l]
+	}
+	return collected
+}
+
 // WriteReply sends header as its own SSE data: event immediately (real
 // bytes on the wire before replyText is known), then sends an empty-text
 // data: event (same wire shape, just parts:[{"text":""}] — a harmless

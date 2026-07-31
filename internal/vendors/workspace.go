@@ -94,6 +94,16 @@ func SetWorkspaceForPID(pid uint32, dir string) {
 	defaultWorkspaceStore.Set(pid, dir)
 }
 
+// WorkspaceForPID is the package-level read counterpart of
+// SetWorkspaceForPID — resolves an origin process to its working directory,
+// falling back to the configured default (see WorkspaceStore.Lookup).
+// ok=false means no directory is known yet, which callers must treat as
+// "don't guess": Glider's own server directory is a confirmed-wrong
+// fallback (2026-07-26), not merely imprecise.
+func WorkspaceForPID(pid uint32) (string, bool) {
+	return defaultWorkspaceStore.Lookup(pid)
+}
+
 // SetDefaultWorkspace configures the fallback directory used for any
 // origin PID with no specific entry yet — the dashboard's "default
 // workspace" setting.

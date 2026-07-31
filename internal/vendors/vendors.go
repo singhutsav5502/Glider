@@ -69,6 +69,8 @@ type Candidate struct {
 	ProbeArgs []string          `yaml:"probe_args" json:"probeArgs"`
 	PrintFlag string            `yaml:"print_flag" json:"printFlag"`
 	Templates []CommandTemplate `yaml:"templates,omitempty" json:"templates,omitempty"`
+	// ContextFile — see Vendor.ContextFile.
+	ContextFile string `yaml:"context_file,omitempty" json:"contextFile,omitempty"`
 }
 
 type candidateFile struct {
@@ -99,6 +101,14 @@ type Vendor struct {
 	Templates    []CommandTemplate `json:"templates,omitempty"`
 	Enabled      bool              `json:"enabled"`
 	DiscoveredAt time.Time         `json:"discoveredAt"`
+	// ContextFile is the file THIS vendor's CLI reads from its working
+	// directory at session start (CLAUDE.md / AGENTS.md / GEMINI.md — they
+	// genuinely differ per vendor, see ContextPack's doc comment). Glider
+	// writes a delegate context pack there and restores the file afterward,
+	// so a delegated run isn't a cold start. Empty disables context sharing
+	// for this vendor. Data, from vendor_candidates.yaml — never a
+	// vendor-name branch in Go.
+	ContextFile string `json:"contextFile,omitempty"`
 }
 
 // ResolveTemplate looks up a named command template, falling back to a
@@ -174,6 +184,7 @@ func Discover(ctx context.Context, candidates []Candidate) Registry {
 			Version:      version,
 			PrintFlag:    c.PrintFlag,
 			Templates:    c.Templates,
+			ContextFile:  c.ContextFile,
 			Enabled:      true,
 			DiscoveredAt: time.Now(),
 		})
@@ -392,6 +403,11 @@ type RunOptions struct {
 	// WorkspaceStore before calling RunWithOptions — see resolveWorkspace
 	// in resume.go.
 	Cwd string
+	// ContextPack, when non-empty, is written into the vendor's own
+	// ContextFile inside Cwd for the duration of this run and reverted
+	// afterward — see ContextPack's doc comment for why this beats prompt
+	// injection. Ignored when the vendor declares no ContextFile.
+	ContextPack ContextPack
 	// ExtraArgs are appended after the resolved template's own args, verbatim.
 	// The one real caller today is resolveAllow (resume.go), which fills
 	// this from VendorAdapter.ExtraResumeArgs(denials) — the mechanism
@@ -474,6 +490,20 @@ func RunWithOptions(ctx context.Context, v Vendor, prompt string, opts RunOption
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
+
+	// Install the delegate context pack into the vendor's own context file
+	// for exactly the duration of this run — see ContextPack's doc comment
+	// for why the file (not the prompt) is the right channel. Installed
+	// before Start and reverted after Wait, so the CLI reads it during its
+	// own session startup. A failure here is deliberately non-fatal: losing
+	// context degrades the delegate's answer, but refusing to run at all
+	// over it would be worse, and the original file is left untouched on
+	// the error path.
+	revertContext, ctxErr := InstallContextPack(cwd, v.ContextFile, opts.ContextPack)
+	if ctxErr != nil {
+		revertContext = func() error { return nil }
+	}
+	defer func() { _ = revertContext() }()
 
 	// Start (not Run) so the process can be enrolled in the kill-on-close
 	// job object between start and wait — see AssignToKillOnCloseJob's own

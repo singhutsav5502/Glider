@@ -135,6 +135,17 @@ func newToken() string {
 // way to correlate a later "/workspace" reply back to an unidentified
 // origin anyway.
 func ResolveDelegate(ctx context.Context, vendor Vendor, templateName, prompt string, originPID uint32) string {
+	return ResolveDelegateWithContext(ctx, vendor, templateName, prompt, originPID, ContextPack{})
+}
+
+// ResolveDelegateWithContext is ResolveDelegate plus the session context to
+// hand the delegated CLI, written into that vendor's own context file for
+// the duration of the run (see ContextPack). ResolveDelegate is the thin
+// no-context wrapper over this, mirroring how Run wraps RunWithOptions —
+// so every existing caller and test keeps working unchanged, and only the
+// two HTTP-facing entry points (which actually have the conversation in
+// hand) need to pass a pack.
+func ResolveDelegateWithContext(ctx context.Context, vendor Vendor, templateName, prompt string, originPID uint32, pack ContextPack) string {
 	switch templateName {
 	case "allow":
 		return resolveAllow(ctx, strings.TrimSpace(prompt))
@@ -161,7 +172,9 @@ func ResolveDelegate(ctx context.Context, vendor Vendor, templateName, prompt st
 			return resolveInteractive(vendor, tmpl, prompt, cwd)
 		}
 
-		out, runErr := RunWithOptions(ctx, vendor, prompt, RunOptions{Template: templateName, Cwd: cwd})
+		pack.Task = prompt
+		pack.Workspace = cwd
+		out, runErr := RunWithOptions(ctx, vendor, prompt, RunOptions{Template: templateName, Cwd: cwd, ContextPack: pack})
 		if runErr != nil {
 			return fmt.Sprintf("Delegation to %s failed: %s", vendor.Name, runErr.Error())
 		}

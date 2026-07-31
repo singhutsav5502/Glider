@@ -18,6 +18,13 @@ candidates:
     binary: claude
     probe_args: ["--version"]
     print_flag: "-p"
+    # Claude Code reads CLAUDE.md at session start and specifically does
+    # NOT read AGENTS.md (verified 2026-07-31 — the widely-repeated claim
+    # that it falls back to AGENTS.md is wrong; it supports an explicit
+    # @AGENTS.md import instead). Glider appends a delegate context pack
+    # here and restores the file afterward — see ContextPack in
+    # internal/vendors/context_pack.go.
+    context_file: "CLAUDE.md"
     templates:
       - name: default
         mode: headless
@@ -49,6 +56,9 @@ candidates:
     binary: cursor-agent
     probe_args: ["--version"]
     print_flag: "-p"
+    # cursor-agent reads AGENTS.md, the cross-tool convention 30+ agents
+    # share. Not CLAUDE.md.
+    context_file: "AGENTS.md"
     templates:
       - name: default
         mode: headless
@@ -77,6 +87,12 @@ candidates:
     binary: agy
     probe_args: ["--version"]
     print_flag: "-p"
+    # agy (Antigravity) reads BOTH AGENTS.md and GEMINI.md at session
+    # start, merged, with GEMINI.md winning on conflict. AGENTS.md is
+    # chosen here because native support for it shipped in v1.20.3 and it
+    # keeps Glider on the cross-tool convention; GEMINI.md would also work
+    # but would silently outrank a user's own AGENTS.md instructions.
+    context_file: "AGENTS.md"
     templates:
       - name: default
         mode: headless

@@ -98,10 +98,43 @@ func (h *Handlers) Messages(w http.ResponseWriter, r *http.Request) {
 
 	vendor, templateName, prompt, isDelegate := vendors.ParseDelegateCommand(reg, userText)
 
+	// Record the turn for session continuity, same as the MITM path — see
+	// internal/mitm/delegate_handler.go's identical block. Both entry points
+	// must accumulate, or history would depend on how the caller reached
+	// Glider rather than on what the user actually did.
+	continuityText := userText
+	if isDelegate {
+		continuityText = prompt
+	}
+	if ws, found := vendors.WorkspaceForPID(originPID); found {
+		_ = vendors.RecordContinuity(ws, originVendorName, originPID, continuityText)
+	}
+
 	var replyText string
 	if isDelegate {
 		start := time.Now()
-		replyText = vendors.ResolveDelegate(r.Context(), vendor, templateName, prompt, originPID)
+		// Session context for the delegate, exactly as the MITM path builds
+		// it (internal/mitm/delegate_handler.go) — a delegate reached through
+		// the gateway must not be more of a cold start than one reached
+		// through transparent interception. This route is deliberately
+		// Anthropic-shaped (see anthropicMessagesRequest's doc comment), so
+		// it calls ngl.PriorUserInstructions directly for the same reason it
+		// calls LastUserInstruction directly rather than going through
+		// claudeOriginAdapter. originVendorName is already resolved from the
+		// real origin process above, and "" is a safe value — NGL treats an
+		// unrecognized vendor as "strip every known scaffold pattern
+		// defensively" rather than "strip nothing."
+		prior, _ := ngl.PriorUserInstructions(originVendorName, req.Messages, vendors.DefaultContextTurns)
+		if len(prior) == 0 {
+			if ws, found := vendors.WorkspaceForPID(originPID); found {
+				prior = vendors.ReadContinuity(ws, originVendorName, originPID, vendors.DefaultContextTurns)
+			}
+		}
+		pack := vendors.ContextPack{
+			FrontVendor: originVendorName,
+			RecentTurns: prior,
+		}
+		replyText = vendors.ResolveDelegateWithContext(r.Context(), vendor, templateName, prompt, originPID, pack)
 		h.recordDelegateMetrics(vendor.Name, templateName, r.Host, r.URL.Path, start)
 	} else if len(reg.Enabled()) == 0 {
 		replyText = "No agent CLIs are registered yet. Run discovery from the dashboard's Vendors page " +

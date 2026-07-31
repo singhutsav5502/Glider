@@ -139,6 +139,15 @@ func (cursorOriginAdapter) ExtractUserInstruction(body []byte) (text, model stri
 // cursorrpc.WriteDelegateReplyWithKeepAlive itself is left in place
 // (unused here now, still tested) in case this needs revisiting once the
 // underlying passthrough-relay slowness is separately root-caused.
+// PriorUserInstructions returns nil for cursor-agent — an honest limit,
+// not an unimplemented stub. ReadRequestBody deliberately reads only the
+// FIRST Connect envelope (see its doc comment: reading further blocks ~30s
+// on the client's own bidi keepalives and kills the request), and that
+// envelope carries the current turn's prompt, not prior turns. Recovering
+// history would mean draining a stream Glider must not drain, so there is
+// genuinely nothing to return here.
+func (cursorOriginAdapter) PriorUserInstructions(body []byte, max int) []string { return nil }
+
 func (cursorOriginAdapter) WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error {
 	text := header + <-replyText
 	return cursorrpc.WriteRunSSEResponse(w, cursorrpc.CannedCompletionChunks(text))

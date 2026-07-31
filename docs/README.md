@@ -7,6 +7,7 @@
 | Doc | Description |
 |---|---|
 | [SETUP.md](SETUP.md) | Install, build, first run, and CLI integration (gateway mode, MITM mode, delegation) |
+| [instructions.md](instructions.md) | Auto-delegation: make your CLI hand tasks to another CLI on its own |
 | [CURSOR_CHECKLIST.md](CURSOR_CHECKLIST.md) | Verification checklist for gateway (Mode A) and MITM (Mode B) with Cursor |
 | [MITM_NETWORK.md](MITM_NETWORK.md) | MITM / transparent-interception networking: ports, CONNECT + TLS forge, host allowlist, CA, delegation |
 

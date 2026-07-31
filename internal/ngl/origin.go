@@ -129,6 +129,22 @@ type OriginAdapter interface {
 	// closed by the time WriteReply is called; a slow delegate call fills
 	// it asynchronously from a separate goroutine.
 	WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText <-chan string) error
+
+	// PriorUserInstructions returns up to max genuine human instructions
+	// from earlier in this request's conversation, oldest first, excluding
+	// the latest one (which is already the delegate's task). It exists so a
+	// delegated CLI gets real session context instead of starting cold —
+	// see vendors.ContextPack.
+	//
+	// nil is a valid, honest answer, not a failure: a vendor whose request
+	// shape genuinely doesn't carry retrievable history returns nil rather
+	// than inventing one. Implementations MUST apply the same
+	// scaffold-stripping and genuine-human-text filtering as
+	// ExtractUserInstruction — handing a front CLI's auto-injected
+	// scaffolding to another vendor as if a human wrote it is exactly the
+	// conflation NGL exists to prevent, and history is a wider surface for
+	// it than a single message.
+	PriorUserInstructions(body []byte, max int) []string
 }
 
 var originAdapters []OriginAdapter
