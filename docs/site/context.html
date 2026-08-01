@@ -42,8 +42,10 @@
 
       <h2>Query</h2>
       <p><code>context_query</code> tool / <code>Store.Query</code> search both layers:</p>
-      <pre>context_query: &lt;turn_id&gt; [key=file-tree] [kind=note|file|dir] [prov=RUNTIME|EXTRACTED|INFERRED]
-  [neigh=id] [explain=id] [communities=1] keyword…</pre>
+      <pre>context_query: &lt;turn_id&gt; [key=clone_path|goal|plan|file-tree]
+  [kind=note|file|dir|symbol] [prov=RUNTIME|EXTRACTED|INFERRED]
+  [path=&lt;from&gt;-&gt;&lt;to&gt;] [neigh=id] [explain=id] [communities=1] [limit=N] keyword…</pre>
+      <p>Keywords accept <code>OR</code> / <code>|</code> for any-term match (e.g. <code>goal OR plan</code>).</p>
       <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP, not full Leiden.</p>
 
       <h2>What locals receive</h2>
@@ -51,13 +53,14 @@
 
       <h2>Inspect</h2>
       <pre>GET  /api/context/recent
-GET  /api/context/turns/{id}
+GET  /api/context/turns · /api/context/turns/{id}
 GET  /api/context/episodes
 GET  /api/context/export
 POST /api/context/index-tree
 POST /api/context/index-symbols
 GET  /api/context/communities?turn_id=
-GET  /api/context/explain?turn_id=&amp;id=</pre>
+GET  /api/context/explain?turn_id=&amp;id=
+POST /api/context/prune</pre>
 
       <p class="note">
         <code>contextgraph</code>'s <code>RecordHoopContext</code>/

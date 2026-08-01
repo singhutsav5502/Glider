@@ -17,8 +17,12 @@
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --space: clamp(1.15rem, 4.5vw, 1.5rem);
+  /* --measure is the reading measure for hero/intro copy. --doc is the
+     content column for reference pages, which carry route and config
+     tables that need more room than prose does. */
   --measure: 42rem;
-  --wide: 64rem;
+  --doc: 52rem;
+  --wide: 72rem;
 }
 
 *,
@@ -340,11 +344,11 @@ pre code {
 
 main.prose,
 .prose {
-  max-width: var(--measure);
+  max-width: var(--doc);
 }
 
 .prose.deep {
-  max-width: min(var(--wide), 56rem);
+  max-width: min(var(--wide), 64rem);
 }
 
 .prose h1 {
@@ -396,22 +400,16 @@ main.prose,
   color: inherit;
 }
 
+/* One table box for the header and every body row, so columns line up
+   down the whole grid. The previous rule gave each <tr> its own
+   display:table box, which sized columns per-row independently and left
+   the borders visibly ragged from row to row. */
 .prose table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   font-size: 0.9rem;
   margin: 1rem 0;
-  display: block;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.prose thead,
-.prose tbody,
-.prose tr {
-  display: table;
-  width: 100%;
-  table-layout: auto;
 }
 
 .prose th,
@@ -421,6 +419,18 @@ main.prose,
   text-align: left;
   vertical-align: top;
   color: var(--ink-soft);
+  overflow-wrap: break-word;
+}
+
+/* Narrow viewports: scroll the table sideways rather than letting it
+   overflow into the clipped body. thead + tbody stay inside one
+   anonymous table box here, so columns remain aligned while scrolling. */
+@media (max-width: 720px) {
+  .prose table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .prose th {
