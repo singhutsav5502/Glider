@@ -56,8 +56,8 @@
       <p>GitHub is the built-in server (HTTP hosted Copilot MCP + Docker stdio); <code>internal/mcp.Manager</code> supports any additional stdio or Streamable-HTTP server.</p>
       <p><strong>Auth</strong> (never inline <code>auth.token</code> in config):</p>
       <pre>export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN</pre>
-      <p>Or Dashboard <strong>MCP</strong> tab → <strong>Sign in with GitHub</strong> (OAuth device flow) or <strong>Paste PAT</strong> (writes <code>~/.glider/credentials/github_token</code>, mode 0600).</p>
-      <p>The Streamable HTTP client persists <code>Mcp-Session-Id</code>, sends <code>MCP-Protocol-Version</code> + <code>X-MCP-Toolsets</code> on follow-ups, and on a 401/403 clears the session and re-<code>initialize</code>s once before retrying.</p>
+      <p>Or Dashboard <strong>MCP</strong> tab → <strong>Sign in with GitHub</strong> (browser OAuth, falling back to device flow if no client secret is configured) or <strong>Paste PAT</strong> (writes <code>~/.glider/credentials/github_token</code>, mode 0600).</p>
+      <p>The Streamable HTTP client sends <code>MCP-Protocol-Version</code> + <code>X-MCP-Toolsets</code> on every request including <code>initialize</code>, persists <code>Mcp-Session-Id</code> from the response and attaches it to follow-ups, and on a 401/403 clears the session and re-<code>initialize</code>s once before retrying.</p>
       <p>Dashboard <strong>MCP</strong> tab: server list, Connect/Disconnect/Reconnect/Refresh, live tool catalog (falls back to a documented catalog when nothing's connected). Full endpoint list: <a href="api.html#mcp">API · MCP</a>.</p>
 
       <h2 id="websearch">Web search setup</h2>

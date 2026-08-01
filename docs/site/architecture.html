@@ -78,8 +78,9 @@
   → metrics + contextgraph events</pre>
       <p>
         A message with a <code>/vendor</code> flag (<code>/claude</code>, <code>/cursor-agent</code>,
-        <code>/agy</code>) never reaches this pipeline at all — <code>DelegateHandler</code> claims
-        it first. See <a href="delegation.html">Delegation</a>.
+        <code>/agy</code>) never reaches this pipeline at all — <code>DelegateHandler</code> (or, on
+        the gateway, the <code>/v1/messages</code> route) claims it first.
+        See <a href="delegation.html">Delegation</a>.
       </p>
 
       <h2 id="packages">Package map</h2>
@@ -95,7 +96,7 @@
         <tr><td><code>contextgraph</code> / <code>contextkit</code></td><td>Turn-family event graph + compressed episode rings</td></tr>
         <tr><td><code>backend</code></td><td>Completion clients — <code>ollama</code>, <code>vllm</code>, <code>cloud</code> (OpenAI/Anthropic)</td></tr>
         <tr><td><code>transform</code></td><td>Token estimate, <code>BoundLocalContext</code>, optional rewrite pipeline</td></tr>
-        <tr><td><code>vram</code></td><td>nvidia-smi monitor, allocation strategy, idle unload</td></tr>
+        <tr><td><code>vram</code></td><td>nvidia-smi monitor, allocation strategy, reserve/release + eviction planning</td></tr>
         <tr><td><code>metrics</code></td><td>Collector → Bus (dashboard WS) → on-disk history</td></tr>
         <tr><td><code>dashboard</code></td><td>Operator UI + REST/WS API; serves this docs site when present</td></tr>
         <tr><td><code>config</code></td><td>YAML load, validate, file-watcher hot-reload</td></tr>
@@ -126,7 +127,7 @@
       <ul>
         <li>Hot-path config (<code>Config</code>, <code>router.Engine</code>) is swapped via <code>atomic.Pointer</code> — readers never block on a reload.</li>
         <li>Gateway and MITM call <code>PipelineCompleter.Handle</code> concurrently; it's immutable wiring over synchronized dependencies — never stash per-request mutable state on it.</li>
-        <li>A delegate call's subprocess is tied to the incoming HTTP request's context — no background runner outlives the request.</li>
+        <li>A headless delegate call's subprocess is tied to the incoming HTTP request's context — no background runner outlives the request. An <code>interactive</code> template (<code>/agy</code>'s default) is the exception: it launches a detached console session Glider neither waits on nor cancels.</li>
         <li>Cursor's fulfill hub (<code>AgentFulfillHub</code>) guards its <code>waiting</code>/<code>pending</code>/<code>family</code> maps under one mutex — detail in <a href="mitm.html#hub">MITM</a>.</li>
       </ul>
 

@@ -47,7 +47,7 @@
       <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP, not full Leiden.</p>
 
       <h2>What locals receive</h2>
-      <p>Never the full transcript. A bounded pack: the latest user turn plus up to N compressed episodes (<code>transform.local_context</code>). Dashboard Overview shows episode chips from <code>GET /api/context/episodes</code>.</p>
+      <p>Never the full transcript. A bounded pack: the latest user turn plus up to N compressed episodes (<code>transform.local_context</code> + <code>transform.local_episode_count</code>). Dashboard Overview shows episode chips from <code>GET /api/context/episodes</code>.</p>
 
       <h2>Inspect</h2>
       <pre>GET  /api/context/recent
@@ -60,9 +60,12 @@ GET  /api/context/communities?turn_id=
 GET  /api/context/explain?turn_id=&amp;id=</pre>
 
       <p class="note">
-        <code>contextgraph</code> also still contains <code>RecordHoopContext</code>/
-        <code>LookupHoopContext</code> and durable multi-wave "thread" facts from a removed
-        stage-runner feature — dead library code with no caller today, not a live feature.
+        <code>contextgraph</code>'s <code>RecordHoopContext</code>/
+        <code>LookupHoopContext</code> outlived the removed stage-runner but are still live:
+        <code>IndexFileTree</code> writes the <code>file-tree</code> key and the
+        <code>key=</code> fast path in <code>QueryWith</code> reads it back. The durable
+        multi-wave "thread" facts (<code>RecordThreadWave</code>, <code>RecordEpisodeFact</code>)
+        are the leftovers — dead library code with no caller today, not a live feature.
       </p>
       <p>Full write-up: <code>planning/routing_and_context.md</code>.</p>
     </main>

@@ -36,7 +36,7 @@
         <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Composer wrap-ups (Cursor MITM) → cloud/origin</td></tr>
         <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Tools / must-cloud → cloud; small tasks → local</td></tr>
         <tr><td>75</td><td>Complexity heuristic</td><td>Opt-in (<code>complexity.enabled</code>)</td></tr>
-        <tr><td>50</td><td>Starlark scripts</td><td>e.g. refactor detect → local</td></tr>
+        <tr><td>55 / 50</td><td>Starlark scripts</td><td>Opt-in fan-out (<code>/swarm</code>) → local · refactor detect → local</td></tr>
         <tr><td>10 / 5</td><td>Context size</td><td>&gt;8000 tokens → cloud, else local</td></tr>
         <tr><td>0</td><td>Default</td><td>Cloud when unsure (local in the pure-local profile)</td></tr>
       </table>

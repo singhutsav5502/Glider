@@ -27,17 +27,18 @@
     <main class="prose">
       <div class="badge">HTTP</div>
       <h1>Dashboard API</h1>
-      <p>Base: <code>http://127.0.0.1:8081</code> (unless reconfigured).</p>
+      <p>Base: <code>http://127.0.0.1:8081</code> (unless reconfigured). Also serves <code>/ws</code>, a WebSocket feed for live dashboard updates.</p>
 
       <h2>Config &amp; models</h2>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
         <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Full config JSON; <code>?format=yaml</code></td></tr>
-        <tr><td>GET</td><td><code>/api/validate</code></td><td>Validate a config without applying it</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/validate</code></td><td>Validate a config without applying it</td></tr>
         <tr><td>GET</td><td><code>/api/vram</code></td><td>GPUs + discovered models</td></tr>
-        <tr><td>GET/PUT</td><td><code>/api/gpu-assignments</code></td><td>Per-model GPU assignment</td></tr>
-        <tr><td>GET</td><td><code>/api/models</code> · <code>/api/models/{id}</code></td><td>List / update models</td></tr>
+        <tr><td>PUT</td><td><code>/api/gpu-assignments</code></td><td>Per-model GPU assignment</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/models</code> · <code>/api/models/{id}/load</code> · <code>/unload</code></td><td>List models / load · unload one</td></tr>
         <tr><td>GET</td><td><code>/api/metrics</code></td><td>Route counts, local/cloud %</td></tr>
+        <tr><td>GET</td><td><code>/api/sessions</code> · <code>/{id}</code></td><td>Recorded delegate sessions</td></tr>
       </table>
 
       <h2 id="context">Context</h2>
@@ -51,6 +52,21 @@
         <tr><td>GET</td><td><code>/api/context/communities</code> · <code>/explain</code></td><td><code>?turn_id=</code></td></tr>
       </table>
 
+      <h2 id="router">Router &amp; playground</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>POST</td><td><code>/api/playground/parse</code></td><td>Parse a Starlark routing rule</td></tr>
+        <tr><td>POST</td><td><code>/api/router/explain</code></td><td>Trace which rule a sample request would match</td></tr>
+        <tr><td>GET</td><td><code>/api/router/lint</code></td><td>Lint the active routing config</td></tr>
+      </table>
+
+      <h2 id="mitm-debug">MITM debug</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
+        <tr><td>GET</td><td><code>/api/mitm/debug/recent</code></td><td>Recent intercepted requests</td></tr>
+        <tr><td>POST</td><td><code>/api/mitm/enrollment</code></td><td>Set CA enrollment state</td></tr>
+      </table>
+
       <h2 id="vendors">Vendors &amp; hot-swap</h2>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
@@ -59,6 +75,9 @@
         <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Set the default delegate workspace directory</td></tr>
         <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Toggle a vendor</td></tr>
         <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Update a vendor's command templates</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/vendors/{name}/permissions</code></td><td>Read / set a vendor's remembered tool grants</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/launch-interactive</code></td><td>Open a detached interactive console for that vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/response-detail</code></td><td>Set "clean" vs "raw" delegate response rendering</td></tr>
         <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>/{name}</code></td><td>Hot-swap registry</td></tr>
       </table>
 
@@ -66,7 +85,7 @@
       <p>Browses the tools/delegation sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>.</p>
       <table>
         <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Root listing</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace</code></td><td><code>runs/</code> listing (no query params default to <code>path=runs</code>)</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that run</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>List a relative directory</td></tr>
         <tr><td>GET</td><td><code>/api/workspace?file=…&amp;limit=</code></td><td>Capped text preview</td></tr>
@@ -94,6 +113,7 @@
 
       <h2>Gateway OpenAI surface</h2>
       <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code> · <code>/healthz</code></p>
+      <p><code>/v1/messages</code> is also served here — the Anthropic-shaped route Claude Code talks to, and the one that carries gateway-side <a href="delegation.html">delegate</a> commands.</p>
     </main>
     <footer class="foot"><a href="pure-local.html">← Pure local</a> · <a href="mcp.html">Tools &amp; MCP →</a></footer>
   </div>
