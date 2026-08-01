@@ -230,7 +230,9 @@ pre code {
   margin-bottom: 2rem;
   position: sticky;
   top: 0;
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  background: transparent;
+  /* No paper tint, but the nav is sticky — keep the backdrop blur so
+     content scrolling underneath it doesn't collide with the links. */
   backdrop-filter: blur(10px);
   z-index: 5;
 }
