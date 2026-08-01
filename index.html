@@ -37,6 +37,7 @@
   --muted:#a8a29a;
   --muted-lo:#55524a;
   --rule:#e6e4dc;
+  --rule-strong:#cfccc2;
   --rule-dark:rgba(255,255,255,0.08);
 
   --display:"Archivo",system-ui,sans-serif;
@@ -350,112 +351,91 @@ code{
 
 .spec-top p{color:var(--muted-lo);max-width:52ch}
 
-/* ═══════════ who can send to whom ═══════════
-   Paired per row, so each sender sits opposite the two CLIs it can
-   reach. The right column differs on every row, which is what stops
-   it reading as the same list printed twice. Hairlines and mono only:
-   no fill anywhere, since this section's whole method is rules. */
-.matrix{
-  display:grid;
-  grid-template-columns:1fr;
-  border-top:1px solid var(--rule);
-  border-bottom:1px solid var(--rule);
-}
-
-@media(min-width:820px){
-  .matrix{grid-template-columns:1fr minmax(180px,0.7fr) 1fr}
-}
-
-.mx-head{
-  font-family:var(--mono);
-  font-size:clamp(0.64rem,1.6vw,0.7rem);
-  font-weight:600;
-  letter-spacing:0.16em;
-  text-transform:uppercase;
-  color:var(--muted-lo);
-  padding-block:clamp(1rem,2.4vw,1.25rem);
-}
-
-.mx-rows{display:flex;flex-direction:column}
-
-.mx-row{
-  display:flex;
-  align-items:baseline;
-  gap:0.7rem;
-  font-family:var(--mono);
-  font-size:clamp(0.8rem,2vw,0.9rem);
-  padding-block:0.62rem;
-  color:var(--ink);
-  overflow-wrap:break-word;
-}
-
-.mx-row .arw{color:var(--teal);flex:0 0 auto}
-
-/* senders hug the hub's left rule; destinations start off its right */
-.mx-send .mx-row{justify-content:flex-end;text-align:right}
-.mx-to .mx-row{color:var(--muted-lo)}
-.mx-to .mx-row b{color:var(--ink);font-weight:600}
-
-.mx-hub{
+/* ═══════════ route plate ═══════════
+   A chart plate, not a drawing: bordered, with a header strip and a
+   legend strip divided by hairlines. Shape carries the meaning, so the
+   plate still reads without colour — square you, hexagon Glider,
+   triangle CLI, circle local model, diamond your own key. */
+.plate{
   display:flex;
   flex-direction:column;
-  justify-content:center;
-  gap:0.4rem;
-  padding:clamp(1.2rem,3vw,1.6rem) 0;
-  border-top:1px solid var(--rule);
+  border:1px solid var(--rule);
+}
+
+.plate-head,.plate-legend{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:0.4rem 1.1rem;
+  padding:0.7rem clamp(0.8rem,2vw,1.1rem);
+  font-family:var(--mono);
+  letter-spacing:0.13em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+.plate-head{
   border-bottom:1px solid var(--rule);
+  font-size:clamp(0.66rem,1.7vw,0.72rem);
+  font-weight:600;
 }
 
-.mx-hub .ic-node{
-  font-family:var(--display);
-  font-weight:900;
-  font-size:clamp(1.15rem,3vw,1.5rem);
-  letter-spacing:-0.02em;
-  color:var(--teal);
-}
+.plate-head .active{color:var(--teal);margin-left:auto;letter-spacing:0.08em}
 
-.mx-hub .ic-sub{
-  font-family:var(--mono);
-  font-size:clamp(0.72rem,1.8vw,0.8rem);
-  color:var(--muted-lo);
-  overflow-wrap:break-word;
-}
-
-@media(min-width:820px){
-  /* Source order stays mobile-logical (label, senders, hub, label,
-     destinations). On a wide screen the hub is placed explicitly so its
-     rules run the full height, past the header row as well. */
-  .mx-head-send{grid-column:1;grid-row:1}
-  .mx-send{grid-column:1;grid-row:2}
-  .mx-hub{grid-column:2;grid-row:1 / 3}
-  .mx-head-to{grid-column:3;grid-row:1}
-  .mx-to{grid-column:3;grid-row:2}
-  .mx-sum{grid-row:3}
-
-  .mx-hub{
-    border-top:0;
-    border-bottom:0;
-    border-left:1px solid var(--rule);
-    border-right:1px solid var(--rule);
-    padding-inline:clamp(1.4rem,3.5vw,2.4rem);
-  }
-  /* destinations and their header match the hub's inner padding, so all
-     three fields read as equals rather than two wide and one hugging */
-  .mx-to,.mx-head-to{padding-left:clamp(1.4rem,3.5vw,2.4rem)}
-}
-
-/* the claim stated as arithmetic, not repeated as prose */
-.mx-sum{
-  grid-column:1 / -1;
+.plate-legend{
   border-top:1px solid var(--rule);
-  padding-block:clamp(0.9rem,2.2vw,1.15rem);
-  font-family:var(--mono);
-  font-size:clamp(0.74rem,1.9vw,0.82rem);
-  letter-spacing:0.04em;
-  color:var(--muted-lo);
+  font-size:10.5px;
 }
 
-.mx-sum b{color:var(--teal);font-weight:600}
+.plate-body{padding:clamp(0.6rem,1.6vw,1rem)}
+
+.plate svg{width:100%;height:auto;display:block}
+
+/* below 760px the plate scrolls rather than shrinking labels under 13px */
+@media(max-width:760px){
+  .plate-body{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .plate svg{min-width:560px}
+}
+
+.plate .reg{stroke:var(--rule);stroke-width:1}
+.plate .sym{fill:var(--paper);stroke:var(--rule-strong);stroke-width:1.6}
+.plate .sym-on{stroke:var(--teal)}
+.plate .hub{fill:var(--teal);stroke:#3ba0ae;stroke-width:1.6}
+
+.plate .route{fill:none;stroke:var(--rule-strong);stroke-width:1.4}
+.plate .route-on{stroke:var(--teal);stroke-width:2.4;stroke-linecap:round}
+.plate .thru{fill:none;stroke:var(--rule-strong);stroke-width:1.4;stroke-dasharray:5 5}
+
+.plate .ret{
+  fill:none;
+  stroke:var(--rule-strong);
+  stroke-width:1.8;
+  stroke-dasharray:6 7;
+  stroke-linecap:round;
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .plate .ret{animation:flow 3.4s linear infinite}
+}
+
+@keyframes flow{to{stroke-dashoffset:-26}}
+
+.plate text{
+  font-family:var(--mono);
+  font-size:13px;
+  fill:var(--muted-lo);
+}
+
+.plate .t-on{fill:var(--teal)}
+.plate .t-sub{font-size:11px;letter-spacing:0.14em}
+
+.plate .t-hub{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:15px;
+  letter-spacing:0.06em;
+  fill:var(--teal);
+}
 
 /* ═══════════ redirect: two unequal columns, one hairline ═══════════ */
 .split{
@@ -839,32 +819,86 @@ code{
       </p>
     </div>
 
-    <div class="matrix rise d2">
-      <span class="mx-head mx-head-send">Sends the task</span>
-
-      <div class="mx-rows mx-send">
-        <span class="mx-row">claude <span class="arw" aria-hidden="true">&rarr;</span></span>
-        <span class="mx-row">cursor-agent <span class="arw" aria-hidden="true">&rarr;</span></span>
-        <span class="mx-row">agy <span class="arw" aria-hidden="true">&rarr;</span></span>
+    <div class="plate rise d2">
+      <div class="plate-head">
+        <span>Route plate · one turn</span>
+        <span class="active">/agy</span>
       </div>
 
-      <div class="mx-hub">
-        <span class="ic-node">glider</span>
-        <span class="ic-sub">reads the trailing flag</span>
+      <div class="plate-body">
+        <svg viewBox="0 0 560 380" role="img"
+             aria-label="A routing plate. The CLI you are typing in sends one turn to Glider, which routes it to the agy CLI and returns the answer and any permission question. Glider can equally route a turn to Claude Code, to Cursor Agent, to a local Ollama model, or to a provider using your own key. A message with no flag passes straight through to the CLI's own backend.">
+
+          <!-- register: row lines and two column lines, behind everything -->
+          <g class="reg">
+            <line x1="20" y1="52"  x2="540" y2="52"  />
+            <line x1="20" y1="96"  x2="540" y2="96"  />
+            <line x1="20" y1="140" x2="540" y2="140" />
+            <line x1="20" y1="190" x2="540" y2="190" />
+            <line x1="20" y1="278" x2="540" y2="278" />
+            <line x1="20" y1="326" x2="540" y2="326" />
+            <line x1="190" y1="20" x2="190" y2="360" />
+            <line x1="340" y1="20" x2="340" y2="360" />
+          </g>
+
+          <!-- pass-through: drawn first, so the hexagon covers it -->
+          <path class="thru" d="M 76 190 L 552 190" />
+          <text x="300" y="180">no flag · passes through</text>
+
+          <!-- idle routes -->
+          <path class="route" d="M 287 178 L 386 60" />
+          <path class="route" d="M 287 184 L 386 102" />
+          <path class="route" d="M 287 198 L 384 272" />
+          <path class="route" d="M 287 202 L 388 318" />
+
+          <!-- the turn being illustrated -->
+          <path class="route-on" d="M 76 190 L 223 190" />
+          <path class="route-on" d="M 287 186 L 386 148" />
+
+          <!-- the answer coming back -->
+          <path class="ret" d="M 380 134 C 296 30, 138 30, 66 172" />
+          <text x="225" y="22" text-anchor="middle">answer · permission question</text>
+
+          <!-- origin -->
+          <rect class="sym" x="44" y="174" width="32" height="32" />
+          <text x="60" y="228" text-anchor="middle">you</text>
+
+          <!-- Glider -->
+          <path class="hub" d="M 287 190 L 271 218 L 239 218 L 223 190 L 239 162 L 271 162 Z" />
+          <text class="t-hub" x="255" y="244" text-anchor="middle">GLIDER</text>
+
+          <!-- CLI destinations -->
+          <path class="sym" d="M 400 36 L 415 63 L 385 63 Z" />
+          <text x="428" y="57">claude</text>
+
+          <path class="sym" d="M 400 80 L 415 107 L 385 107 Z" />
+          <text x="428" y="101">cursor-agent</text>
+
+          <path class="sym sym-on" d="M 400 124 L 415 151 L 385 151 Z" />
+          <text class="t-on" x="428" y="145">agy</text>
+
+          <!-- not a CLI -->
+          <line class="reg" x1="360" y1="222" x2="540" y2="222" />
+          <text class="t-sub" x="360" y="242">NOT A CLI</text>
+
+          <circle class="sym" cx="400" cy="278" r="16" />
+          <text x="428" y="274">ollama</text>
+          <text x="428" y="290">qwen2.5-coder</text>
+
+          <path class="sym" d="M 400 309 L 417 326 L 400 343 L 383 326 Z" />
+          <text x="428" y="331">your own key</text>
+        </svg>
       </div>
 
-      <span class="mx-head mx-head-to">Runs it</span>
-
-      <div class="mx-rows mx-to">
-        <span class="mx-row"><span class="arw" aria-hidden="true">&rarr;</span> <b>cursor-agent</b> · <b>agy</b></span>
-        <span class="mx-row"><span class="arw" aria-hidden="true">&rarr;</span> <b>claude</b> · <b>agy</b></span>
-        <span class="mx-row"><span class="arw" aria-hidden="true">&rarr;</span> <b>claude</b> · <b>cursor-agent</b></span>
+      <div class="plate-legend">
+        <span>Square = you</span>
+        <span>Hexagon = Glider</span>
+        <span>Triangle = CLI</span>
+        <span>Circle = local model</span>
+        <span>Diamond = your own key</span>
+        <span>Solid = this turn</span>
+        <span>Dashed = passes through</span>
       </div>
-
-      <p class="mx-sum">
-        3 senders × 2 destinations = <b>6 directions</b> · the answer returns to
-        the CLI you started in
-      </p>
     </div>
 
     <div class="split rise d3">
