@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Glider — keep your tokens on the ground</title>
+<meta name="description" content="Glider sits between your AI coding CLI and its backend. It routes simple turns to a local model, and lets you hand a task from one CLI to another." />
+<meta property="og:title" content="Glider — keep your tokens on the ground" />
+<meta property="og:description" content="A local-first routing and permission-relay layer for Claude Code, Cursor Agent and Antigravity." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ───────────────────────────────────────────────────────────────
+   Palette taken from a VFR sectional chart: chart paper, airspace
+   magenta, airway blue. The amber is reserved for one meaning only
+   — a request that stayed local, i.e. lift.
+   ─────────────────────────────────────────────────────────────── */
+:root{
+  --sky-deep:#0a151e;
+  --sky:#122430;
+  --chart:#e6e8e3;
+  --chart-deep:#d7dbd4;
+  --ink:#0b1219;
+  --ink-soft:#54626a;
+  --sky-fg:#dde4e6;
+  --sky-fg-soft:#8ba0ab;
+  --magenta:#c0175e;
+  --magenta-lift:#e0417f;
+  --airway:#5b93b5;
+  --lift:#dda03c;
+  --rule:#c3c9c1;
+  --rule-sky:#22384a;
+
+  --display:"Archivo",system-ui,sans-serif;
+  --body:"Newsreader",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+
+  --gutter:clamp(1.25rem,5vw,4rem);
+  --measure:38rem;
+  --wide:74rem;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+
+html{-webkit-text-size-adjust:100%}
+
+body{
+  margin:0;
+  background:var(--chart);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:1.0625rem;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+
+h1,h2,h3{
+  font-family:var(--display);
+  font-weight:800;
+  letter-spacing:-0.035em;
+  line-height:0.98;
+  margin:0;
+  text-transform:uppercase;
+}
+
+a{color:inherit}
+
+:focus-visible{
+  outline:2px solid var(--magenta-lift);
+  outline-offset:3px;
+  border-radius:2px;
+}
+
+.shell{
+  width:min(100% - 2*var(--gutter),var(--wide));
+  margin-inline:auto;
+}
+
+/* ── the altitude gutter: a hairline the whole page hangs from ── */
+.band{position:relative}
+
+.band .shell{
+  position:relative;
+  padding-left:clamp(0px,6vw,5.5rem);
+}
+
+.tick{
+  position:absolute;
+  left:0;
+  top:0.35rem;
+  font-family:var(--mono);
+  font-size:0.68rem;
+  letter-spacing:0.14em;
+  color:var(--ink-soft);
+  white-space:nowrap;
+  display:none;
+}
+
+/* The spine runs the full height of the section, not just the label —
+   it is the descent line the whole page hangs from. */
+.band .shell::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:2.1rem;
+  bottom:0;
+  width:1px;
+  background:var(--rule);
+  display:none;
+}
+
+@media(min-width:900px){
+  .tick{display:block}
+  .band .shell::before{display:block}
+}
+
+/* ─────────────── sky: nav + hero ─────────────── */
+.sky{
+  background:
+    radial-gradient(ellipse 120% 80% at 20% -20%,rgba(91,147,181,.18),transparent 60%),
+    linear-gradient(180deg,var(--sky-deep) 0%,var(--sky) 100%);
+  color:var(--sky-fg);
+}
+
+.nav{
+  display:flex;
+  align-items:baseline;
+  gap:1.5rem;
+  padding:1.4rem 0 0;
+}
+
+.wordmark{
+  font-family:var(--display);
+  font-weight:800;
+  font-size:1.05rem;
+  letter-spacing:0.22em;
+  text-transform:uppercase;
+  text-decoration:none;
+  margin-right:auto;
+  color:var(--sky-fg);
+}
+
+.nav a:not(.wordmark){
+  font-family:var(--mono);
+  font-size:0.78rem;
+  letter-spacing:0.08em;
+  color:var(--sky-fg-soft);
+  text-decoration:none;
+  padding-bottom:2px;
+  border-bottom:1px solid transparent;
+}
+
+.nav a:not(.wordmark):hover{
+  color:var(--sky-fg);
+  border-bottom-color:var(--magenta-lift);
+}
+
+.hero{
+  padding:clamp(3rem,9vw,6.5rem) 0 clamp(3.5rem,9vw,6rem);
+  display:grid;
+  gap:clamp(2rem,5vw,4rem);
+  grid-template-columns:1fr;
+  align-items:center;
+}
+
+@media(min-width:960px){
+  .hero{grid-template-columns:1.05fr 0.95fr}
+}
+
+.eyebrow{
+  font-family:var(--mono);
+  font-size:0.72rem;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+  color:var(--airway);
+  margin:0 0 1.4rem;
+}
+
+h1{
+  font-size:clamp(2.9rem,9.5vw,6.1rem);
+  color:#fff;
+}
+
+h1 .down{
+  display:block;
+  color:var(--magenta-lift);
+}
+
+.lede{
+  max-width:32rem;
+  margin:1.6rem 0 0;
+  color:var(--sky-fg);
+  font-size:clamp(1.05rem,1.9vw,1.22rem);
+}
+
+.lede em{
+  font-style:italic;
+  color:#fff;
+}
+
+.cta-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:0.8rem;
+  margin-top:2.2rem;
+}
+
+.btn{
+  font-family:var(--display);
+  font-weight:600;
+  font-size:0.88rem;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  text-decoration:none;
+  padding:0.85rem 1.4rem;
+  border:1px solid var(--magenta);
+  background:var(--magenta);
+  color:#fff;
+  transition:background 160ms ease,border-color 160ms ease,color 160ms ease;
+}
+
+.btn:hover{background:var(--magenta-lift);border-color:var(--magenta-lift)}
+
+.btn-ghost{
+  background:transparent;
+  color:var(--sky-fg);
+  border-color:var(--rule-sky);
+}
+
+.btn-ghost:hover{
+  background:transparent;
+  color:#fff;
+  border-color:var(--sky-fg-soft);
+}
+
+/* ── the descent: the one drawn moment on the page ── */
+.trace{width:100%;height:auto;display:block;overflow:visible}
+
+.trace .grid-line{stroke:var(--rule-sky);stroke-width:1}
+.trace .path{fill:none;stroke:var(--magenta-lift);stroke-width:2.5;stroke-linecap:round}
+.trace .node{fill:var(--sky-deep);stroke-width:2.5}
+.trace .node-cloud{stroke:var(--airway)}
+.trace .node-local{stroke:var(--lift)}
+.trace text{font-family:var(--mono);font-size:11px;letter-spacing:.08em;fill:var(--sky-fg-soft)}
+.trace .t-local{fill:var(--lift)}
+
+@media(prefers-reduced-motion:no-preference){
+  /* pathLength="100" is set on the path, so the dash maths is exact
+     rather than an estimate of the curve's real length. */
+  .trace .path{
+    stroke-dasharray:100;
+    stroke-dashoffset:100;
+    animation:draw 1900ms cubic-bezier(.33,.9,.36,1) 250ms forwards;
+  }
+  .trace .node,.trace text{opacity:0;animation:appear 600ms ease forwards}
+  .trace .node-cloud,.trace .t-cloud{animation-delay:400ms}
+  .trace .glider-mark{animation-delay:1300ms}
+  .trace .node-local,.trace .t-local{animation-delay:2000ms}
+}
+
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes appear{to{opacity:1}}
+
+/* ─────────────── horizon ─────────────── */
+.horizon{
+  height:clamp(3rem,7vw,5.5rem);
+  background:linear-gradient(180deg,var(--sky) 0%,var(--chart) 100%);
+}
+
+/* ─────────────── ground ─────────────── */
+.ground{padding:clamp(3rem,7vw,5rem) 0}
+
+h2{
+  font-size:clamp(1.7rem,4vw,2.6rem);
+  max-width:20ch;
+}
+
+.section-lede{
+  max-width:var(--measure);
+  margin:1.1rem 0 2.6rem;
+  color:var(--ink-soft);
+}
+
+/* three capabilities, described by what you do — not by subsystem */
+.cards{
+  display:grid;
+  gap:1px;
+  background:var(--rule);
+  border:1px solid var(--rule);
+  grid-template-columns:1fr;
+}
+
+@media(min-width:820px){ .cards{grid-template-columns:repeat(3,1fr)} }
+
+.card{background:var(--chart);padding:1.6rem 1.5rem}
+
+.card h3{
+  font-size:1.06rem;
+  letter-spacing:-0.01em;
+  margin-bottom:0.6rem;
+}
+
+.card p{margin:0;color:var(--ink-soft);font-size:0.97rem}
+
+.card .cmd{
+  display:block;
+  font-family:var(--mono);
+  font-size:0.82rem;
+  color:var(--magenta);
+  margin-top:0.9rem;
+}
+
+/* the routing ladder — real priorities, descending like everything else */
+.ladder{
+  width:100%;
+  border-collapse:collapse;
+  font-family:var(--mono);
+  font-size:0.84rem;
+  margin-top:0.5rem;
+}
+
+.ladder th{
+  text-align:left;
+  font-weight:500;
+  font-size:0.68rem;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+  padding:0 0.9rem 0.7rem 0;
+  border-bottom:1px solid var(--rule);
+}
+
+.ladder td{
+  padding:0.62rem 0.9rem 0.62rem 0;
+  border-bottom:1px solid var(--rule);
+  vertical-align:baseline;
+}
+
+.ladder .pri{color:var(--ink-soft);width:4.5rem}
+.ladder .to{text-align:right;padding-right:0}
+.ladder .local{color:var(--lift)}
+.ladder .cloud{color:var(--airway)}
+.ladder .flag{color:var(--magenta)}
+.ladder tr:last-child td{border-bottom:0}
+
+.aside{
+  margin-top:1.6rem;
+  padding-left:1rem;
+  border-left:2px solid var(--magenta);
+  max-width:var(--measure);
+  color:var(--ink-soft);
+  font-size:0.97rem;
+}
+
+.aside.tight{margin-top:0}
+
+/* the two interception modes */
+.mode h3{
+  font-size:1.05rem;
+  letter-spacing:-0.01em;
+  margin-bottom:0.5rem;
+}
+
+.mode p{margin:0 0 0.8rem;color:var(--ink-soft)}
+
+.mode .addr{
+  font-family:var(--mono);
+  font-size:0.82rem;
+  color:var(--magenta);
+}
+
+/* install */
+pre{
+  font-family:var(--mono);
+  font-size:0.86rem;
+  line-height:1.75;
+  background:var(--sky-deep);
+  color:var(--sky-fg);
+  padding:1.3rem 1.4rem;
+  margin:0;
+  overflow-x:auto;
+  border-left:3px solid var(--lift);
+}
+
+pre .c{color:var(--sky-fg-soft)}
+
+.two-col{
+  display:grid;
+  gap:clamp(1.5rem,4vw,3rem);
+  grid-template-columns:1fr;
+  align-items:start;
+}
+
+@media(min-width:880px){ .two-col{grid-template-columns:1fr 1fr} }
+
+/* support */
+.support{
+  background:var(--chart-deep);
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+}
+
+.fund{
+  display:grid;
+  gap:1px;
+  background:var(--rule);
+  border:1px solid var(--rule);
+  grid-template-columns:1fr;
+  margin-top:2rem;
+  max-width:46rem;
+}
+
+@media(min-width:700px){ .fund{grid-template-columns:1fr 1fr} }
+
+.fund a{
+  background:var(--chart);
+  padding:1.5rem 1.5rem;
+  text-decoration:none;
+  display:block;
+  transition:background 160ms ease;
+}
+
+.fund a:hover{background:#fff}
+
+.fund .name{
+  font-family:var(--display);
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  font-size:0.95rem;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+}
+
+.fund .name span:last-child{color:var(--magenta)}
+.fund p{margin:0.55rem 0 0;color:var(--ink-soft);font-size:0.93rem}
+
+footer{
+  padding:2.4rem 0 3rem;
+  font-family:var(--mono);
+  font-size:0.76rem;
+  letter-spacing:0.06em;
+  color:var(--ink-soft);
+  display:flex;
+  flex-wrap:wrap;
+  gap:0.6rem 1.6rem;
+}
+
+footer a{text-decoration:none;border-bottom:1px solid var(--rule)}
+footer a:hover{border-bottom-color:var(--magenta)}
+footer .sep{margin-left:auto}
+</style>
+</head>
+<body>
+
+<!-- ───────────────────────── sky ───────────────────────── -->
+<div class="sky">
+  <div class="shell">
+    <nav class="nav">
+      <a class="wordmark" href="#">Glider</a>
+      <a href="docs/site/index.html">Docs</a>
+      <a href="https://github.com/singhutsav5502/Glider">GitHub</a>
+      <a href="#support">Support</a>
+    </nav>
+
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Local-first layer for AI coding CLIs</p>
+        <h1>Keep your tokens<span class="down">on the ground</span></h1>
+        <p class="lede">
+          Glider sits between your AI coding CLI and its backend. The turns that
+          do not need a frontier model — renames, explanations, formatting — land
+          on your own machine. The rest carries on to the cloud, <em>and your CLI
+          never knows the difference</em>.
+        </p>
+        <div class="cta-row">
+          <a class="btn" href="#start">Get started</a>
+          <a class="btn btn-ghost" href="docs/site/architecture.html">Read the docs</a>
+        </div>
+      </div>
+
+      <!-- The descent. Drawn once on load, then it rests. -->
+      <svg class="trace" viewBox="0 0 460 300" role="img"
+           aria-label="A request descends from the cloud, through Glider, to a local model.">
+        <line class="grid-line" x1="0" y1="60"  x2="460" y2="60"  />
+        <line class="grid-line" x1="0" y1="150" x2="460" y2="150" />
+        <line class="grid-line" x1="0" y1="240" x2="460" y2="240" />
+
+        <path class="path" pathLength="100"
+              d="M 44 52 C 150 52, 168 150, 250 196 S 372 244, 416 244" />
+
+        <circle class="node node-cloud" cx="44"  cy="52"  r="7" />
+        <circle class="node node-local" cx="416" cy="244" r="7" />
+
+        <text class="t-cloud" x="44"  y="34">api.anthropic.com</text>
+        <text class="glider-mark" x="238" y="176">glider :8080</text>
+        <text class="t-local" x="416" y="270" text-anchor="end">ollama · qwen2.5-coder</text>
+      </svg>
+    </header>
+  </div>
+</div>
+
+<div class="horizon"></div>
+
+<!-- ───────────────────────── ground ───────────────────────── -->
+<main>
+
+  <section class="band ground">
+    <div class="shell">
+      <p class="tick">4 000 ft</p>
+      <h2>Three things it does</h2>
+      <p class="section-lede">
+        Named for what you do with them, not for the subsystem underneath.
+      </p>
+
+      <div class="cards">
+        <div class="card">
+          <h3>Hand a task to another CLI</h3>
+          <p>
+            Type the target at the end of a message and stay where you are. If
+            that CLI stops to ask permission, the question comes back to you —
+            answer it, and the run picks up where it stopped.
+          </p>
+          <code class="cmd">refactor this module /agy</code>
+        </div>
+        <div class="card">
+          <h3>Send the cheap turns local</h3>
+          <p>
+            A rule ladder decides each request: explicit commands first, then a
+            task classifier, then your own Starlark, then a token ceiling. You
+            can always override it by hand.
+          </p>
+          <code class="cmd">/local explain this function</code>
+        </div>
+        <div class="card">
+          <h3>See why it chose that</h3>
+          <p>
+            Every intercepted request shows up in a local dashboard with the rule
+            that claimed it and the reason. No decision is a black box.
+          </p>
+          <code class="cmd">127.0.0.1:8081</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band ground">
+    <div class="shell">
+      <p class="tick">3 000 ft</p>
+      <h2>Two ways in</h2>
+      <p class="section-lede">
+        You do not have to choose up front. Start with the gateway; switch later
+        if a CLI ignores proxy settings.
+      </p>
+
+      <div class="two-col">
+        <div class="mode">
+          <h3>Gateway</h3>
+          <p>
+            Point the CLI at Glider with one environment variable or base-URL
+            setting. Explicit, easy to reason about, works with every CLI.
+          </p>
+          <code class="addr">http://127.0.0.1:8080/v1</code>
+        </div>
+        <div class="mode">
+          <h3>Transparent</h3>
+          <p>
+            Glider redirects the CLI's outbound HTTPS at the OS level. Nothing to
+            configure, and it works on a session that is already open.
+          </p>
+          <p class="aside tight">
+            Needs Administrator on Windows or root on Linux, and it matches by
+            process name across the whole machine. Read
+            <a href="docs/site/mitm.html">how interception works</a> before you
+            turn it on.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band ground">
+    <div class="shell">
+      <p class="tick">2 000 ft</p>
+      <h2>The ladder</h2>
+      <p class="section-lede">
+        Rules are read from the top. The first one that matches sets the route.
+        This is the default profile, shipped as it stands.
+      </p>
+
+      <table class="ladder">
+        <tr>
+          <th class="pri">Priority</th><th>Rule</th><th class="to">Goes to</th>
+        </tr>
+        <tr>
+          <td class="pri">100 / 99</td>
+          <td>Explicit <span class="flag">/local</span> or <span class="flag">/cloud</span></td>
+          <td class="to">you decide</td>
+        </tr>
+        <tr>
+          <td class="pri">95</td><td>Cursor Composer wrap-up</td>
+          <td class="to cloud">origin</td>
+        </tr>
+        <tr>
+          <td class="pri">85 – 70</td><td>Task classifier</td>
+          <td class="to local">local</td>
+        </tr>
+        <tr>
+          <td class="pri">55 / 50</td><td>Your Starlark rules</td>
+          <td class="to local">local</td>
+        </tr>
+        <tr>
+          <td class="pri">10 / 5</td><td>Context over 8 000 tokens</td>
+          <td class="to cloud">cloud</td>
+        </tr>
+        <tr>
+          <td class="pri">0</td><td>Nothing matched</td>
+          <td class="to cloud">cloud</td>
+        </tr>
+      </table>
+
+      <p class="aside">
+        A delegate flag is claimed before any of this runs, so handing work to
+        another CLI never collides with routing.
+        <a href="docs/site/routing.html">The full ladder</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="band ground" id="start">
+    <div class="shell">
+      <p class="tick">0 · on the ground</p>
+      <h2>Land it</h2>
+      <p class="section-lede">
+        Pure local mode. No cloud key needed, and nothing leaves the machine.
+      </p>
+
+      <pre><span class="c"># 1 — a local model</span>
+ollama serve
+ollama pull qwen2.5-coder:14b
+
+<span class="c"># 2 — Glider</span>
+.\glider.exe --config configs\glider.local.yaml
+
+<span class="c"># dashboard  http://127.0.0.1:8081</span>
+<span class="c"># gateway    http://127.0.0.1:8080/v1</span></pre>
+
+      <p class="aside">
+        Then point your CLI at the gateway — or turn on transparent mode and skip
+        that step. <a href="docs/site/pure-local.html">The full walkthrough</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="ground support" id="support">
+    <div class="shell">
+      <h2>Fund the work</h2>
+      <p class="section-lede">
+        Glider is free, open source, and built in the open. If it is saving you
+        tokens, you can put something back.
+      </p>
+
+      <div class="fund">
+        <!-- TODO: replace YOUR-KOFI-HANDLE with the real Ko-fi handle before publishing. -->
+        <a href="https://ko-fi.com/YOUR-KOFI-HANDLE">
+          <span class="name"><span>Ko-fi</span><span>&rarr;</span></span>
+          <p>One-off. No account needed, and it takes about a minute.</p>
+        </a>
+        <a href="https://github.com/sponsors/singhutsav5502">
+          <span class="name"><span>GitHub Sponsors</span><span>&rarr;</span></span>
+          <p>Monthly, billed with the rest of your GitHub account.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <div class="shell">
+    <footer>
+      <span>Glider</span>
+      <a href="docs/site/index.html">Docs</a>
+      <a href="https://github.com/singhutsav5502/Glider">Source</a>
+      <a href="https://github.com/singhutsav5502/Glider/issues">Issues</a>
+      <span class="sep">Runs on your machine</span>
+    </footer>
+  </div>
+
+</main>
+</body>
+</html>
