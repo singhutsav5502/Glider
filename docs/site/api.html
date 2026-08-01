@@ -27,93 +27,93 @@
     <main class="prose">
       <div class="badge">HTTP</div>
       <h1>Dashboard API</h1>
-      <p>Base: <code>http://127.0.0.1:8081</code> (unless reconfigured). Also serves <code>/ws</code>, a WebSocket feed for live dashboard updates.</p>
+      <p>The base address is <code>http://127.0.0.1:8081</code>. You can change it in the config. The dashboard also gives <code>/ws</code>, a WebSocket connection for live data.</p>
 
-      <h2>Config &amp; models</h2>
+      <h2>The config and the models</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Full config JSON; <code>?format=yaml</code></td></tr>
-        <tr><td>GET/POST</td><td><code>/api/validate</code></td><td>Validate a config without applying it</td></tr>
-        <tr><td>GET</td><td><code>/api/vram</code></td><td>GPUs + discovered models</td></tr>
-        <tr><td>PUT</td><td><code>/api/gpu-assignments</code></td><td>Per-model GPU assignment</td></tr>
-        <tr><td>GET/POST</td><td><code>/api/models</code> · <code>/api/models/{id}/load</code> · <code>/unload</code></td><td>List models / load · unload one</td></tr>
-        <tr><td>GET</td><td><code>/api/metrics</code></td><td>Route counts, local/cloud %</td></tr>
-        <tr><td>GET</td><td><code>/api/sessions</code> · <code>/{id}</code></td><td>Recorded delegate sessions</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Reads or writes the full config as JSON. Add <code>?format=yaml</code> to get YAML.</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/validate</code></td><td>Checks a config. Glider does not apply it.</td></tr>
+        <tr><td>GET</td><td><code>/api/vram</code></td><td>Lists the GPUs and the models that Glider found</td></tr>
+        <tr><td>PUT</td><td><code>/api/gpu-assignments</code></td><td>Assigns a GPU to each model</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/models</code> · <code>/api/models/{id}/load</code> · <code>/unload</code></td><td>Lists the models. Loads or unloads one model.</td></tr>
+        <tr><td>GET</td><td><code>/api/metrics</code></td><td>Gives the route counts and the local and cloud percentages</td></tr>
+        <tr><td>GET</td><td><code>/api/sessions</code> · <code>/{id}</code></td><td>Lists the recorded delegate sessions</td></tr>
       </table>
 
-      <h2 id="context">Context</h2>
+      <h2 id="context">The context store</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/context/recent</code></td><td>Recent events</td></tr>
-        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/turns/{id}</code></td><td>Turn families</td></tr>
-        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/export</code></td><td>Episode pack</td></tr>
-        <tr><td>POST</td><td><code>/api/context/prune</code></td><td>Retention prune</td></tr>
-        <tr><td>POST</td><td><code>/api/context/index-tree</code> · <code>/index-symbols</code></td><td>Ingest file tree / symbols</td></tr>
-        <tr><td>GET</td><td><code>/api/context/communities</code> · <code>/explain</code></td><td><code>?turn_id=</code></td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/context/recent</code></td><td>Lists the most recent events</td></tr>
+        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/turns/{id}</code></td><td>Lists the turn families</td></tr>
+        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/export</code></td><td>Gives the episode pack</td></tr>
+        <tr><td>POST</td><td><code>/api/context/prune</code></td><td>Deletes the data that is older than the retention time</td></tr>
+        <tr><td>POST</td><td><code>/api/context/index-tree</code> · <code>/index-symbols</code></td><td>Reads the file tree or the symbols into the store</td></tr>
+        <tr><td>GET</td><td><code>/api/context/communities</code> · <code>/explain</code></td><td>Add <code>?turn_id=</code></td></tr>
       </table>
 
-      <h2 id="router">Router &amp; playground</h2>
+      <h2 id="router">The router and the rule editor</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>POST</td><td><code>/api/playground/parse</code></td><td>Parse a Starlark routing rule</td></tr>
-        <tr><td>POST</td><td><code>/api/router/explain</code></td><td>Trace which rule a sample request would match</td></tr>
-        <tr><td>GET</td><td><code>/api/router/lint</code></td><td>Lint the active routing config</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>POST</td><td><code>/api/playground/parse</code></td><td>Reads a Starlark routing rule</td></tr>
+        <tr><td>POST</td><td><code>/api/router/explain</code></td><td>Shows which rule an example request obeys</td></tr>
+        <tr><td>GET</td><td><code>/api/router/lint</code></td><td>Examines the routing config for errors</td></tr>
       </table>
 
-      <h2 id="mitm-debug">MITM debug</h2>
+      <h2 id="mitm-debug">MITM data</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/mitm/debug/recent</code></td><td>Recent intercepted requests</td></tr>
-        <tr><td>POST</td><td><code>/api/mitm/enrollment</code></td><td>Set CA enrollment state</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/mitm/debug/recent</code></td><td>Lists the most recent intercepted requests</td></tr>
+        <tr><td>POST</td><td><code>/api/mitm/enrollment</code></td><td>Sets the CA enrollment condition</td></tr>
       </table>
 
-      <h2 id="vendors">Vendors &amp; hot-swap</h2>
+      <h2 id="vendors">The vendors and the hot-swap registry</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Persisted vendor registry (discovered CLIs, templates, default workspace)</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Rescan <code>configs/vendor_candidates.yaml</code></td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Set the default delegate workspace directory</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Toggle a vendor</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Update a vendor's command templates</td></tr>
-        <tr><td>GET/POST</td><td><code>/api/vendors/{name}/permissions</code></td><td>Read / set a vendor's remembered tool grants</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/{name}/launch-interactive</code></td><td>Open a detached interactive console for that vendor</td></tr>
-        <tr><td>POST</td><td><code>/api/vendors/response-detail</code></td><td>Set "clean" vs "raw" delegate response rendering</td></tr>
-        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>/{name}</code></td><td>Hot-swap registry</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Gives the recorded vendor registry. It contains the CLIs that Glider found, the templates and the default workspace.</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Reads <code>configs/vendor_candidates.yaml</code> again and looks for the CLIs</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Sets the default workspace directory for a delegate</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Turns a vendor on or off</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Changes the command templates of a vendor</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/vendors/{name}/permissions</code></td><td>Reads or sets the tool permissions that Glider keeps for a vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/launch-interactive</code></td><td>Opens a separate console window for that vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/response-detail</code></td><td>Selects the "clean" format or the "raw" format for a delegate reply</td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>/{name}</code></td><td>Reads or changes the hot-swap registry</td></tr>
       </table>
 
-      <h2 id="workspace">Workspace</h2>
-      <p>Browses the tools/delegation sandbox (default <code>~/.glider/workspace</code>). UI: Dashboard → <strong>Workspace</strong>.</p>
+      <h2 id="workspace">The workspace</h2>
+      <p>These endpoints read the workspace directory. The default is <code>~/.glider/workspace</code>. In the dashboard, open the <strong>Workspace</strong> page.</p>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/workspace</code></td><td><code>runs/</code> listing (no query params default to <code>path=runs</code>)</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td><code>work</code> + <code>out</code> trees for that run</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>List a relative directory</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?file=…&amp;limit=</code></td><td>Capped text preview</td></tr>
-        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Unified diff of two paths</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Lists <code>runs/</code>. With no parameters, the endpoint uses <code>path=runs</code>.</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td>Lists the <code>work</code> and <code>out</code> directories of that run</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>Lists one directory</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?file=…&amp;limit=</code></td><td>Shows the start of a text file</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Compares two paths and shows the differences</td></tr>
       </table>
 
       <h2 id="mcp">MCP</h2>
-      <p>Live <code>internal/mcp.Manager</code>. UI: Dashboard → <strong>MCP</strong>. Guide: <a href="mcp.html">Tools &amp; MCP</a>.</p>
+      <p>These endpoints use <code>internal/mcp.Manager</code>. In the dashboard, open the <strong>MCP</strong> page. For more data, refer to <a href="mcp.html">Tools &amp; MCP</a>.</p>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/mcp/servers</code> · <code>/{id}</code> · <code>/{id}/tools</code></td><td>Server status + tool catalog</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code> · <code>/disconnect</code> · <code>/reconnect</code> · <code>/refresh</code></td><td></td></tr>
-        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Token / connection status</td></tr>
-        <tr><td>POST/DELETE</td><td><code>/api/mcp/github/token</code></td><td>Paste PAT / forget token</td></tr>
-        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code> · <code>/poll</code></td><td>OAuth device flow</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers</code> · <code>/{id}</code> · <code>/{id}/tools</code></td><td>Gives the condition of a server and its list of tools</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code> · <code>/disconnect</code> · <code>/reconnect</code> · <code>/refresh</code></td><td>Controls the connection to a server</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Gives the token condition and the connection condition</td></tr>
+        <tr><td>POST/DELETE</td><td><code>/api/mcp/github/token</code></td><td>Writes a PAT, or deletes the token</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code> · <code>/poll</code></td><td>Starts and continues the OAuth device procedure</td></tr>
       </table>
 
-      <h2>Agent logs</h2>
+      <h2>The agent logs</h2>
       <table>
-        <tr><th>Method</th><th>Path</th><th>Notes</th></tr>
-        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Ring buffer, monotonic <code>seq</code>; <code>after_seq</code> for catch-up</td></tr>
-        <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Clear one ring</td></tr>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Reads a ring buffer. Each entry has a <code>seq</code> number that always increases. Use <code>after_seq</code> to get only the new entries.</td></tr>
+        <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Deletes the contents of one ring buffer</td></tr>
       </table>
-      <p class="note">This store still exists in <code>internal/agentlog</code> but nothing currently writes to it — its only writers were the hoop/swarm runners, both removed. The endpoints work but return empty.</p>
+      <p class="note">This store is still in <code>internal/agentlog</code>, but no code writes to it today. Only the removed stage runners wrote to it. The endpoints operate correctly, but they give no data.</p>
 
-      <h2>Gateway OpenAI surface</h2>
+      <h2>The gateway OpenAI endpoints</h2>
       <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code> · <code>/healthz</code></p>
-      <p><code>/v1/messages</code> is also served here — the Anthropic-shaped route Claude Code talks to, and the one that carries gateway-side <a href="delegation.html">delegate</a> commands.</p>
+      <p>The gateway also gives <code>/v1/messages</code>. This is the Anthropic endpoint that Claude Code uses. It also accepts the <a href="delegation.html">delegate</a> commands.</p>
     </main>
     <footer class="foot"><a href="pure-local.html">← Pure local</a> · <a href="mcp.html">Tools &amp; MCP →</a></footer>
   </div>

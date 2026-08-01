@@ -242,54 +242,54 @@
     "glider-prompt-input": { title: "Prompt value", body: "Value entered for the modal prompt dialog." },
     "session-select": {
       title: "Session",
-      body: "A session is one Glider process run. Live WebSocket events append to the current session; pick a past run to browse stored logs.",
+      body: "A session is one run of the Glider program. Glider adds the live WebSocket events to the current session. Select an earlier run to read its recorded log.",
     },
-    "cfg-proxy-port": { title: "Gateway proxy port", body: "OpenAI-compatible /v1 listener. Restart required after change." },
-    "cfg-dash-port": { title: "Dashboard port", body: "This UI + REST/WebSocket. Restart required after change." },
+    "cfg-proxy-port": { title: "Gateway proxy port", body: "The port of the OpenAI /v1 endpoints. You must restart Glider after a change." },
+    "cfg-dash-port": { title: "Dashboard port", body: "The port of this interface and of the REST and WebSocket endpoints. You must restart Glider after a change." },
     "cfg-log-level": {
       title: "Log level",
-      body: "slog level for the Glider process. Applied immediately on save.",
+      body: "The slog level of the Glider program. Glider applies this immediately when you save.",
       values: [
-        { v: "debug", d: "Verbose" },
-        { v: "info", d: "Default" },
-        { v: "warn", d: "Warnings+" },
-        { v: "error", d: "Errors only" },
+        { v: "debug", d: "Records all the messages" },
+        { v: "info", d: "The default level" },
+        { v: "warn", d: "Records the warnings and the errors" },
+        { v: "error", d: "Records only the errors" },
       ],
     },
-    "cfg-tokens": { title: "Max local context tokens", body: "Context size above which routing prefers cloud/origin. Hot-reloaded." },
-    "cfg-idle": { title: "Idle unload timeout", body: "Unload idle local models after this duration (e.g. 5m)." },
-    "cfg-req-timeout": { title: "Request timeout", body: "Per-request timeout for backend completions (e.g. 120s)." },
-    "cfg-mitm-enabled": { title: "MITM enabled", body: "Enable the MITM proxy listener. Restart required." },
-    "cfg-mitm-port": { title: "MITM listen port", body: "CONNECT listen port. Restart required." },
-    "cfg-mitm-passthrough": { title: "Passthrough default", body: "When true, non-local routes pass through to Cursor origin instead of BYOK." },
-    "cfg-mitm-cacert": { title: "CA cert path", body: "Path to MITM CA certificate (~ expanded)." },
-    "cfg-mitm-cakey": { title: "CA key path", body: "Path to MITM CA private key." },
-    "cfg-mitm-hosts": { title: "MITM hosts", body: "Hostnames to intercept (one per line). Supports simple wildcards like *.api5.cursor.sh." },
+    "cfg-tokens": { title: "Max local context tokens", body: "Above this context size, the router prefers the cloud or the origin. Glider applies a change immediately." },
+    "cfg-idle": { title: "Idle unload timeout", body: "Glider unloads a local model after this time with no use. For example, 5m." },
+    "cfg-req-timeout": { title: "Request timeout", body: "The time limit for one backend completion. For example, 120s." },
+    "cfg-mitm-enabled": { title: "MITM enabled", body: "Turns on the MITM proxy. You must restart Glider after a change." },
+    "cfg-mitm-port": { title: "MITM listen port", body: "The CONNECT port. You must restart Glider after a change." },
+    "cfg-mitm-passthrough": { title: "Passthrough default", body: "When this is true, a route that is not local goes to the Cursor origin. Glider does not use your own cloud key." },
+    "cfg-mitm-cacert": { title: "CA cert path", body: "The path to the MITM CA certificate. Glider expands the ~ character." },
+    "cfg-mitm-cakey": { title: "CA key path", body: "The path to the private key of the MITM CA." },
+    "cfg-mitm-hosts": { title: "MITM hosts", body: "The host names to intercept, one on each line. You can use a simple wildcard, for example *.api5.cursor.sh." },
     "cfg-vram-strategy": {
       title: "VRAM strategy",
       values: [
-        { v: "static", d: "Keep warm models" },
-        { v: "dynamic", d: "Evict aggressively" },
-        { v: "hybrid", d: "Balance both" },
+        { v: "static", d: "Keeps the models in memory" },
+        { v: "dynamic", d: "Removes a model quickly" },
+        { v: "hybrid", d: "Uses a balance of the two" },
       ],
     },
-    "cfg-vram-headroom": { title: "Headroom (MB)", body: "Reserved free VRAM the allocator will not fill." },
-    "cfg-vram-max": { title: "Max loaded models", body: "Soft cap on concurrently loaded local models." },
-    "cfg-vram-gpus": { title: "GPU assignments", body: "JSON map of model name → GPU index. Prefer the VRAM & Models tab." },
-    "cfg-dash-enabled": { title: "Dashboard enabled", body: "Serve this UI. Restart required to toggle." },
-    "cfg-xform-enabled": { title: "Transforms enabled", body: "Master switch for prompt transforms." },
-    "cfg-xform-trim": { title: "Trim context", body: "Trim oversized context toward max local tokens." },
-    "cfg-xform-prepend": { title: "Augment prepend", body: "Text prepended when transforms are enabled." },
-    "cfg-xform-append": { title: "Augment append", body: "Text appended when transforms are enabled." },
-    "cfg-aliases": { title: "Aliases JSON", body: "JSON object: client model → local model name." },
-    "cfg-rules": { title: "Rules JSON", body: "JSON array of rules. Prefer the Rules Engine tab." },
-    "cfg-models": { title: "Models JSON", body: "JSON array of model objects (name, backend, vram_estimate_mb, …)." },
-    "cfg-backends": { title: "Backends JSON", body: "JSON array: ollama / vllm entries with url and health_check_interval. Hot-reloaded into the live registry (in-flight Complete keeps the old client)." },
-    "cfg-budget": { title: "Budget cap (USD)", body: "Optional USD budget cap for cloud spend tracking." },
-    "cfg-rpm": { title: "Requests / min", body: "Rate limit across cloud providers." },
-    "cfg-tpm": { title: "Tokens / min", body: "Token rate limit across cloud providers." },
-    "cfg-providers": { title: "Providers JSON", body: "Providers array. Use api_key_env names — never paste secrets." },
-    "cfg-yaml": { title: "glider.yaml", body: "Raw YAML editor for full config. Prefer the structured form unless you need advanced keys." },
+    "cfg-vram-headroom": { title: "Headroom (MB)", body: "The quantity of free VRAM that Glider does not use." },
+    "cfg-vram-max": { title: "Max loaded models", body: "The usual maximum number of local models in memory at the same time." },
+    "cfg-vram-gpus": { title: "GPU assignments", body: "A JSON map of a model name to a GPU number. Use the VRAM & Models page instead." },
+    "cfg-dash-enabled": { title: "Dashboard enabled", body: "Serves this interface. You must restart Glider after a change." },
+    "cfg-xform-enabled": { title: "Transforms enabled", body: "The primary control for the prompt transforms." },
+    "cfg-xform-trim": { title: "Trim context", body: "Decreases a large context to the maximum local token count." },
+    "cfg-xform-prepend": { title: "Augment prepend", body: "Glider puts this text before the prompt when the transforms are on." },
+    "cfg-xform-append": { title: "Augment append", body: "Glider puts this text after the prompt when the transforms are on." },
+    "cfg-aliases": { title: "Aliases JSON", body: "A JSON object that maps a client model name to a local model name." },
+    "cfg-rules": { title: "Rules JSON", body: "A JSON array of the rules. Use the Rules Engine page instead." },
+    "cfg-models": { title: "Models JSON", body: "A JSON array of the model objects. Each object has a name, a backend and a vram_estimate_mb value." },
+    "cfg-backends": { title: "Backends JSON", body: "A JSON array of the ollama and vllm entries. Each entry has a url and a health_check_interval. Glider applies a change immediately, but a completion that is in progress keeps the old client." },
+    "cfg-budget": { title: "Budget cap (USD)", body: "An optional limit in USD for the cloud cost." },
+    "cfg-rpm": { title: "Requests / min", body: "The maximum number of requests each minute for all the cloud providers." },
+    "cfg-tpm": { title: "Tokens / min", body: "The maximum number of tokens each minute for all the cloud providers." },
+    "cfg-providers": { title: "Providers JSON", body: "The array of the providers. Use the api_key_env names. Do not write a secret here." },
+    "cfg-yaml": { title: "glider.yaml", body: "The editor for the full YAML config. Use the form instead, unless you need a key that the form does not have." },
     "stage-chip-router": { title: "Add router", body: "Chooses / updates local vs cloud bias for following stages." },
     "stage-chip-planner": { title: "Add planner", body: "Produces the cycle plan." },
     "stage-chip-actor": { title: "Add actor", body: "Implements against the plan." },
@@ -1082,7 +1082,7 @@
           <label data-tip-key="rule-name">Name<input data-f="name" value="${esc(r.name || "")}" /></label>
           <label data-tip-key="rule-priority">Priority<input data-f="priority" type="number" value="${r.priority ?? 0}" /></label>
           <label class="check" data-tip-key="rule-enabled"><input data-f="enabled" type="checkbox" ${ruleEnabled(r) ? "checked" : ""}/> Enabled</label>
-          <button type="button" class="linkish rule-del" data-tip="Remove this rule from the draft list">Remove</button>
+          <button type="button" class="linkish rule-del" data-tip="Removes this rule from the list. Push Save rules to write the change.">Remove</button>
         </div>
         <div class="rule-card-grid">
           <label data-tip-key="rule-trigger-type">Trigger type
@@ -3381,17 +3381,17 @@
       : `<span class="live-value">set GLIDER_GITHUB_OAUTH_CLIENT_ID</span>`;
     el.innerHTML = `
       <div class="mcp-github-grid">
-        <div data-tip="Whether a GitHub token is available from env or ~/.glider/credentials/github_token"><span class="live-label">Token</span>${tok}</div>
-        <div data-tip="Hosted GitHub MCP over HTTP (api.githubcopilot.com/mcp/)"><span class="live-label">HTTP (github)</span>${http}</div>
-        <div data-tip="Optional local stdio GitHub MCP process"><span class="live-label">Stdio (github-stdio)</span>${stdio}</div>
-        <div data-tip="OAuth device/browser flow readiness (needs GLIDER_GITHUB_OAUTH_CLIENT_ID)"><span class="live-label">Device flow</span>${oauth}</div>
-        <div data-tip="Remote MCP endpoint URL"><span class="live-label">Endpoint</span><code>${escapeHtml(gh.remote_url || "")}</code></div>
+        <div data-tip="Shows if a GitHub token is available. Glider looks in the environment variables and in ~/.glider/credentials/github_token."><span class="live-label">Token</span>${tok}</div>
+        <div data-tip="The GitHub MCP server on HTTP (api.githubcopilot.com/mcp/)"><span class="live-label">HTTP (github)</span>${http}</div>
+        <div data-tip="An optional local GitHub MCP process that uses stdio"><span class="live-label">Stdio (github-stdio)</span>${stdio}</div>
+        <div data-tip="Shows if the OAuth procedure is available. It needs GLIDER_GITHUB_OAUTH_CLIENT_ID."><span class="live-label">Device flow</span>${oauth}</div>
+        <div data-tip="The URL of the remote MCP server"><span class="live-label">Endpoint</span><code>${escapeHtml(gh.remote_url || "")}</code></div>
       </div>
       ${gh.hint ? `<p class="hint" style="margin:10px 0 0">${escapeHtml(gh.hint)}</p>` : ""}
       <div class="mcp-github-actions">
-        <button type="button" class="primary" data-mcp-gh="signin" data-tip="Open GitHub OAuth (browser or device flow) to store a token and connect MCP">Sign in with GitHub</button>
-        <button type="button" class="linkish" data-mcp-gh="pat" data-tip="Paste a personal access token; saved to ~/.glider/credentials/github_token">Paste PAT</button>
-        <button type="button" class="linkish" data-mcp-gh="forget" data-tip="Remove saved credential file and disconnect GitHub MCP sessions">Forget token</button>
+        <button type="button" class="primary" data-mcp-gh="signin" data-tip="Starts the GitHub OAuth procedure in the browser. If there is no client secret, Glider uses the device procedure. Glider then keeps the token and connects to MCP.">Sign in with GitHub</button>
+        <button type="button" class="linkish" data-mcp-gh="pat" data-tip="Lets you write a personal access token. Glider saves it to ~/.glider/credentials/github_token.">Paste PAT</button>
+        <button type="button" class="linkish" data-mcp-gh="forget" data-tip="Deletes the saved credential file and disconnects the GitHub MCP sessions.">Forget token</button>
       </div>
       <div id="mcp-github-device-panel" class="mcp-device-panel" hidden></div>`;
   }
@@ -6725,16 +6725,16 @@
   const PLAYGROUND_LESSONS = [
     {
       id: "delegate-run",
-      title: "1. Delegate a task",
-      goal: "Hand a task to another CLI. The flag has to be the very last thing in your message — a leading \"/name\" gets swallowed by the CLI's own slash-command handling before Glider ever sees it.",
+      title: "1. Send a task to another CLI",
+      goal: "Send a task to a different CLI. The flag must be the last item in your message. If you put \"/name\" at the start, your own CLI reads it as a local command, and Glider does not receive it.",
       hint: () => `<your prompt> /${playgroundVendorExample()}`,
       example: () => `summarize recent commits /${playgroundVendorExample()}`,
       check: (r) => r.delegate.matched && r.delegate.kind === "run",
     },
     {
       id: "delegate-template",
-      title: "2. Pick a named template",
-      goal: "Some CLIs have more than one launch shape (e.g. a fully interactive one). Add \":template-name\" right after the vendor name.",
+      title: "2. Select a template",
+      goal: "A CLI can have more than one start method. For example, it can have an interactive method. Write \":template-name\" immediately after the vendor name.",
       hint: () => `<your prompt> /${playgroundVendorExample()}:interactive`,
       example: () => `fix the auth bug /${playgroundVendorExample()}:interactive`,
       check: (r) => r.delegate.matched && r.delegate.template && r.delegate.template !== "default",
@@ -6742,26 +6742,26 @@
     {
       id: "workspace",
       title: "3. Set your workspace",
-      goal: "A delegated CLI needs to know which real folder to run in. \"/workspace\" is not vendor-specific — one flag, a property of your own session.",
+      goal: "A delegate CLI must know which folder to use. The \"/workspace\" flag applies to each vendor. It is a property of your session.",
       hint: () => `<path> /workspace`,
       example: () => `. /workspace`,
       check: (r) => r.workspace.matched,
     },
     {
       id: "permission",
-      title: "4. Answer a permission prompt",
-      goal: "When a delegated CLI needs your OK mid-task, it hands back a short token in its reply. Send that token back with \":allow\" or \":deny\".",
+      title: "4. Answer a permission question",
+      goal: "When a delegate CLI needs your permission, Glider gives you a short token in the reply. Send that token again with \":allow\" or with \":deny\".",
       hint: () => `<token> /${playgroundVendorExample()}:allow`,
       example: () => `abc123 /${playgroundVendorExample()}:allow`,
       check: (r) => r.delegate.matched && (r.delegate.kind === "allow" || r.delegate.kind === "deny"),
     },
     {
       id: "routing",
-      title: "5. Force local or cloud routing",
-      goal: "A different subsystem from the delegate flags above — this matches anywhere in the message, not just at the end, and the exact words are configured on the Rules Engine tab, not fixed.",
+      title: "5. Select the local model or the cloud",
+      goal: "This is a different mechanism from the delegate flags above. Glider finds this command at any position in the message, not only at the end. You set the words on the Rules Engine page, and they are not fixed.",
       hint: () => (playgroundInfo.routingCommands.length
         ? `${playgroundInfo.routingCommands[0]} <your message>`
-        : "(no routing override commands configured yet — add one on Rules Engine, or skip this one)"),
+        : "(There is no routing command yet. Add one on the Rules Engine page, or continue to the next lesson.)"),
       example: () => (playgroundInfo.routingCommands.length ? `${playgroundInfo.routingCommands[0]} keep this on-device` : ""),
       check: (r) => r.routing.matched,
     },
@@ -6771,27 +6771,27 @@
     {
       family: "Delegate",
       syntax: "<prompt> /vendor[:template]",
-      body: "Runs prompt headlessly against another CLI (or opens it interactively, for an \"interactive\"-mode template) and relays the answer back into this chat. Must be the trailing token — a leading \"/vendor\" is eaten by the front CLI's own slash-command handling first.",
+      body: "Sends the prompt to a different CLI and returns the answer to this chat. With an \"interactive\" template, Glider opens that CLI in its own window instead. The flag must be the last item in the message. If you put \"/vendor\" at the start, your own CLI reads it as a local command.",
     },
     {
       family: "Workspace",
       syntax: "<path> /workspace",
-      body: "Records which real folder a delegated CLI should run in for this session. Not vendor-specific — one flag, used by every delegate call from this origin.",
+      body: "Tells Glider which folder a delegate CLI must use in this session. The flag applies to each vendor, and Glider uses it for each delegate call from this session.",
     },
     {
-      family: "Permission grant / deny",
+      family: "Permission allow or deny",
       syntax: "<token> /vendor:allow   or   <token> /vendor:deny",
-      body: "Answers a pending permission prompt a delegated CLI raised mid-task. The token identifies which run and which vendor — it's issued to you in the denial message itself, never typed from scratch.",
+      body: "Answers a permission question from a delegate CLI. The token identifies the run and the vendor. Glider gives you the token in the message, and you must not write your own token.",
     },
     {
-      family: "Routing override",
-      syntax: "/local, /fast, /cloud, /heavy (configurable)",
-      body: "Forces this turn's model target; matches anywhere in the message, not just at the end — a different subsystem from the three above (request routing, not CLI delegation). The exact words are config, not fixed: see the Rules Engine tab.",
+      family: "Routing command",
+      syntax: "/local, /fast, /cloud, /heavy (you can change these words)",
+      body: "Selects the model for this turn. Glider finds this command at any position in the message, not only at the end. This is a different mechanism from the three above, because it controls the route and not the delegation. Set the words on the Rules Engine page.",
     },
     {
-      family: "Script-triggered rules",
-      syntax: "whatever a .star rule looks for",
-      body: "Rules Engine rules with a script trigger can match any phrase your own Starlark code checks for (e.g. \"/swarm\"). Not a fixed grammar, so this playground can't classify against it directly — check the Rules Engine tab for what's configured.",
+      family: "Script rules",
+      syntax: "the text that a .star rule looks for",
+      body: "A rule with a script trigger can look for any text that your Starlark code examines. For example, \"/swarm\". The text is not fixed, and this page cannot test it. Open the Rules Engine page to see your rules.",
     },
   ];
 

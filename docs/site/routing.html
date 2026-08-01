@@ -27,29 +27,29 @@
     <main class="prose">
       <div class="badge">Harness</div>
       <h1>Routing</h1>
-      <p>The router evaluates rules in <strong>descending priority</strong>. Explicit <code>/local</code> / <code>/cloud</code> always win. Token thresholds are a safety net, not the primary "is this simple?" signal.</p>
+      <p>The router reads the rules in sequence. The rule with the highest priority number has control. An explicit <code>/local</code> or <code>/cloud</code> command always has control. The token limits are the last test, not the first test of the difficulty of a task.</p>
 
-      <h2>Priority order (default profile)</h2>
+      <h2>The priority sequence (default profile)</h2>
       <table>
-        <tr><th>Pri</th><th>Rule</th><th>Effect</th></tr>
-        <tr><td>100 / 99</td><td>Explicit <code>/local</code> <code>/fast</code> / <code>/cloud</code> <code>/heavy</code></td><td>Hard force</td></tr>
-        <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Composer wrap-ups (Cursor MITM) → cloud/origin</td></tr>
-        <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Tools / must-cloud → cloud; small tasks → local</td></tr>
-        <tr><td>75</td><td>Complexity heuristic</td><td>Opt-in (<code>complexity.enabled</code>)</td></tr>
-        <tr><td>55 / 50</td><td>Starlark scripts</td><td>Opt-in fan-out (<code>/swarm</code>) → local · refactor detect → local</td></tr>
-        <tr><td>10 / 5</td><td>Context size</td><td>&gt;8000 tokens → cloud, else local</td></tr>
-        <tr><td>0</td><td>Default</td><td>Cloud when unsure (local in the pure-local profile)</td></tr>
+        <tr><th>Priority</th><th>Rule</th><th>Result</th></tr>
+        <tr><td>100 / 99</td><td>Explicit <code>/local</code> <code>/fast</code> / <code>/cloud</code> <code>/heavy</code></td><td>Sets the route. No other rule can change it.</td></tr>
+        <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Sends a Cursor Composer summary message to the cloud or to the origin</td></tr>
+        <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Sends a tool task or a cloud-only task to the cloud. Sends a small task to the local model.</td></tr>
+        <tr><td>75</td><td>Complexity test</td><td>You must turn this on with <code>complexity.enabled</code></td></tr>
+        <tr><td>55 / 50</td><td>Starlark scripts</td><td>A <code>/swarm</code> fan-out task goes local, but you must turn on fan-out first. A refactor task goes local.</td></tr>
+        <tr><td>10 / 5</td><td>Context size</td><td>More than 8000 tokens goes to the cloud. A smaller context goes to the local model.</td></tr>
+        <tr><td>0</td><td>Default</td><td>Goes to the cloud. In the pure local profile it goes to the local model.</td></tr>
       </table>
-      <p>A delegate flag (<code>/claude</code>, <code>/cursor-agent</code>, <code>/agy</code>) is claimed before any of this runs — see <a href="delegation.html">Delegation</a>.</p>
+      <p>Glider finds a delegate flag (<code>/claude</code>, <code>/cursor-agent</code>, <code>/agy</code>) before it reads these rules. Refer to <a href="delegation.html">Delegation</a>.</p>
 
-      <h2>Cursor MITM turn policy</h2>
+      <h2>The Cursor MITM turn policy</h2>
       <ul>
-        <li><strong>Turn-family sticky</strong> — after <code>/cloud</code> (or a cloud <code>DecideLocal</code> decision), reply-summary/title/mid-turn subagents stay origin for a TTL + parent-run grace.</li>
-        <li><strong>Deny-local</strong> for non-fresh-user follow-ons while sticky is live.</li>
-        <li><strong>Next real user message</strong> can re-decide (may go local again).</li>
-        <li><strong>Tool follow-up</strong> — child tool calls re-evaluate allow/deny.</li>
+        <li><strong>Turn-family sticky.</strong> Glider keeps the reply summary, the title and the mid-turn subagents at the origin. This starts after a <code>/cloud</code> command, or after a cloud <code>DecideLocal</code> decision. It continues for a TTL and for a grace time after the parent run.</li>
+        <li><strong>Deny-local.</strong> While the sticky condition is live, Glider refuses the local model for each follow-on message that is not a new user message.</li>
+        <li><strong>The next real user message</strong> can make a new decision. That message can go to the local model again.</li>
+        <li><strong>Tool follow-up.</strong> Each child tool call gets a new allow decision or deny decision.</li>
       </ul>
-      <p>This mechanism is specific to Cursor's own MITM protocol — detail in <a href="mitm.html#sticky">MITM</a>. Full policy: <code>planning/routing_and_context.md</code>.</p>
+      <p>This mechanism applies only to the Cursor MITM protocol. Refer to <a href="mitm.html#sticky">MITM</a> for the details. The full policy is in <code>planning/routing_and_context.md</code>.</p>
     </main>
     <footer class="foot"><a href="architecture.html">← Architecture</a> · <a href="delegation.html">Delegation →</a></footer>
   </div>

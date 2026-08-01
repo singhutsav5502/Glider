@@ -27,31 +27,31 @@
     <main class="prose">
       <div class="badge">Memory</div>
       <h1>Context management</h1>
-      <p>Hybrid dual-layer store: an <strong>append-only event log</strong> (runtime provenance) plus an <strong>entity/edge graph</strong> (EXTRACTED | INFERRED | RUNTIME provenance), with an in-memory turn index for sticky routing.</p>
+      <p>The store has two layers. The first layer is an event log. Glider only adds to this log, and each event has RUNTIME provenance. The second layer is a graph of entities and edges. Each entity has EXTRACTED, INFERRED or RUNTIME provenance. A turn index in memory gives sticky routing.</p>
 
-      <h2>Why</h2>
-      <p>Without a memory layer, Cursor's Composer wrap-ups and subagent chrome look like new small prompts and get mis-routed to local. The graph answers "is this still part of turn family X?" — see <a href="mitm.html#stickymachine">MITM · sticky-cloud</a>.</p>
+      <h2>Why Glider keeps a context store</h2>
+      <p>A Cursor Composer summary message and a subagent message look like new small prompts. Without a memory layer, the router sends them to the local model, which is not correct. The graph tells the router if a message is still part of turn family X. Refer to <a href="mitm.html#stickymachine">MITM · sticky-cloud</a>.</p>
 
-      <h2>Layers</h2>
+      <h2>The layers</h2>
       <table>
-        <tr><th>Layer</th><th>Role</th><th>Persist</th></tr>
-        <tr><td>Event log</td><td>Append-only verbs: <code>RouteDecided</code>, <code>FulfilledLocal</code>, <code>OriginPassthrough</code>, <code>TurnOpened</code>, <code>StickyBound</code>, …</td><td><code>~/.glider/context/events-*.jsonl</code></td></tr>
-        <tr><td>Entity/edge store</td><td>file, dir, symbol + relations</td><td><code>~/.glider/context/entities.jsonl</code></td></tr>
-        <tr><td>Episodes</td><td>Compressed session summaries for local prompt injection</td><td><code>contextkit</code> (in-process rings)</td></tr>
+        <tr><th>Layer</th><th>Function</th><th>Storage</th></tr>
+        <tr><td>Event log</td><td>Glider only adds events. The event names include <code>RouteDecided</code>, <code>FulfilledLocal</code>, <code>OriginPassthrough</code>, <code>TurnOpened</code> and <code>StickyBound</code>.</td><td><code>~/.glider/context/events-*.jsonl</code></td></tr>
+        <tr><td>Entity and edge store</td><td>Files, directories, symbols and the relations between them</td><td><code>~/.glider/context/entities.jsonl</code></td></tr>
+        <tr><td>Episodes</td><td>Short summaries of a session. Glider adds them to a local prompt.</td><td><code>contextkit</code> (rings in memory)</td></tr>
       </table>
 
-      <h2>Query</h2>
-      <p><code>context_query</code> tool / <code>Store.Query</code> search both layers:</p>
+      <h2>How to query the store</h2>
+      <p>The <code>context_query</code> tool and <code>Store.Query</code> search the two layers:</p>
       <pre>context_query: &lt;turn_id&gt; [key=clone_path|goal|plan|file-tree]
   [kind=note|file|dir|symbol] [prov=RUNTIME|EXTRACTED|INFERRED]
   [path=&lt;from&gt;-&gt;&lt;to&gt;] [neigh=id] [explain=id] [communities=1] [limit=N] keyword…</pre>
-      <p>Keywords accept <code>OR</code> / <code>|</code> for any-term match (e.g. <code>goal OR plan</code>).</p>
-      <p><code>Explain(id)</code> returns neighborhood + hub/path narrative. <code>DetectCommunities</code> is a connected-component MVP, not full Leiden.</p>
+      <p>Keywords accept <code>OR</code> or <code>|</code> to match any term. For example, <code>goal OR plan</code>.</p>
+      <p><code>Explain(id)</code> gives the neighborhood of an entity, its hubs, and the path to a hub. <code>DetectCommunities</code> finds connected components. It is a first version, and it is not the full Leiden algorithm.</p>
 
-      <h2>What locals receive</h2>
-      <p>Never the full transcript. A bounded pack: the latest user turn plus up to N compressed episodes (<code>transform.local_context</code> + <code>transform.local_episode_count</code>). Dashboard Overview shows episode chips from <code>GET /api/context/episodes</code>.</p>
+      <h2>What the local model receives</h2>
+      <p>Glider never sends the full transcript. It sends a pack with a limited size. The pack has the most recent user turn and a maximum of N short episodes. The settings <code>transform.local_context</code> and <code>transform.local_episode_count</code> control the pack. The Overview page of the dashboard shows the episodes from <code>GET /api/context/episodes</code>.</p>
 
-      <h2>Inspect</h2>
+      <h2>How to examine the store</h2>
       <pre>GET  /api/context/recent
 GET  /api/context/turns · /api/context/turns/{id}
 GET  /api/context/episodes
@@ -63,14 +63,14 @@ GET  /api/context/explain?turn_id=&amp;id=
 POST /api/context/prune</pre>
 
       <p class="note">
-        <code>contextgraph</code>'s <code>RecordHoopContext</code>/
-        <code>LookupHoopContext</code> outlived the removed stage-runner but are still live:
-        <code>IndexFileTree</code> writes the <code>file-tree</code> key and the
-        <code>key=</code> fast path in <code>QueryWith</code> reads it back. The durable
-        multi-wave "thread" facts (<code>RecordThreadWave</code>, <code>RecordEpisodeFact</code>)
-        are the leftovers — dead library code with no caller today, not a live feature.
+        The functions <code>RecordHoopContext</code> and <code>LookupHoopContext</code> in
+        <code>contextgraph</code> stay in use. The removed stage runner did not use them.
+        <code>IndexFileTree</code> writes the <code>file-tree</code> key, and the
+        <code>key=</code> path in <code>QueryWith</code> reads it. But the thread facts
+        (<code>RecordThreadWave</code> and <code>RecordEpisodeFact</code>) have no caller today.
+        They are unused library code, not a function of the product.
       </p>
-      <p>Full write-up: <code>planning/routing_and_context.md</code>.</p>
+      <p>The full description is in <code>planning/routing_and_context.md</code>.</p>
     </main>
     <footer class="foot"><a href="ngl.html">← NGL</a> · <a href="pure-local.html">Pure local →</a></footer>
   </div>

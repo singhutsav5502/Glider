@@ -28,45 +28,45 @@
       <div class="badge">Tools</div>
       <h1>Tools &amp; MCP</h1>
       <p>
-        <code>internal/tools</code> unifies builtins, plugins, and MCP servers under one registry,
-        sandboxed to a workspace directory. It's built and tested, and the dashboard/delegation's
-        edit-rendering path uses parts of it, but nothing currently drives its own agentic tool
-        loop (<code>RunAgentLoop</code>) — that ran under the removed hoop/swarm stage runner.
-        Today, multi-turn agent work happens by <a href="delegation.html">delegating</a> to a real
-        vendor CLI, which brings its own tool loop.
+        <code>internal/tools</code> holds the internal tools, the plugins and the MCP servers in one
+        registry. The registry limits each tool to a workspace directory. The code is complete and
+        tested, and the dashboard and the delegation code use parts of it. But no code today runs
+        its own agent tool loop (<code>RunAgentLoop</code>). The removed stage runner did that.
+        Today you get multi-turn agent work when you
+        <a href="delegation.html">delegate</a> to a vendor CLI. That CLI has its own tool loop.
       </p>
 
-      <h2 id="workspace">Workspace &amp; sandbox</h2>
-      <p>Default: <code>~/.glider/workspace</code> (<code>orchestration.tools.workspace</code> — never set this to <code>.</code>).</p>
+      <h2 id="workspace">The workspace</h2>
+      <p>The default workspace is <code>~/.glider/workspace</code>. The setting is <code>orchestration.tools.workspace</code>. Do not set it to <code>.</code></p>
       <pre>runs/&lt;run-id&gt;/
-  work/   ← clones, scratch, intermediate files
-  out/    ← final deliverables</pre>
-      <p>Bare paths resolve under the active run's <code>work/</code> automatically (ScopeRel). Builtins cannot escape the workspace root.</p>
+  work/   ← clones, temporary files, intermediate files
+  out/    ← final files</pre>
+      <p>A path with no prefix goes into the <code>work/</code> directory of the current run. The function is <code>ScopeRel</code>. An internal tool cannot write outside of the workspace root directory.</p>
       <table>
-        <tr><th>Tool</th><th>Role</th></tr>
-        <tr><td><code>fs_read</code>/<code>write</code>/<code>list</code>/<code>search</code>, <code>code_grep</code></td><td>Workspace files</td></tr>
-        <tr><td><code>git_status</code>/<code>diff</code>/<code>log</code>/<code>clone</code></td><td>Git helpers</td></tr>
-        <tr><td><code>shell_exec</code></td><td>Allowlisted shell — off by default</td></tr>
-        <tr><td><code>web_search</code> / <code>web_fetch</code> / <code>http_fetch</code></td><td>Brave→Tavily→SerpAPI→SearXNG→DuckDuckGo chain / readable page / raw GET</td></tr>
-        <tr><td><code>artifact_write</code></td><td>Write under <code>runs/&lt;id&gt;/{work,out}</code></td></tr>
-        <tr><td><code>context_query</code></td><td>Query <code>contextgraph</code> — see <a href="context.html">Context</a></td></tr>
+        <tr><th>Tool</th><th>Function</th></tr>
+        <tr><td><code>fs_read</code>/<code>write</code>/<code>list</code>/<code>search</code>, <code>code_grep</code></td><td>Reads and writes the workspace files</td></tr>
+        <tr><td><code>git_status</code>/<code>diff</code>/<code>log</code>/<code>clone</code></td><td>Gives access to Git</td></tr>
+        <tr><td><code>shell_exec</code></td><td>Runs approved shell commands. It is off when you start.</td></tr>
+        <tr><td><code>web_search</code> / <code>web_fetch</code> / <code>http_fetch</code></td><td>Searches with Brave, then Tavily, then SerpAPI, then SearXNG, then DuckDuckGo. Also reads a page, or does a raw GET.</td></tr>
+        <tr><td><code>artifact_write</code></td><td>Writes into <code>runs/&lt;id&gt;/{work,out}</code></td></tr>
+        <tr><td><code>context_query</code></td><td>Queries <code>contextgraph</code>. Refer to <a href="context.html">Context</a>.</td></tr>
       </table>
 
       <h2 id="mcp">MCP</h2>
-      <p>GitHub is the built-in server (HTTP hosted Copilot MCP + Docker stdio); <code>internal/mcp.Manager</code> supports any additional stdio or Streamable-HTTP server.</p>
-      <p><strong>Auth</strong> (never inline <code>auth.token</code> in config):</p>
+      <p>GitHub is the internal server. It uses the Copilot MCP server through HTTP, and Docker through stdio. <code>internal/mcp.Manager</code> also accepts other stdio servers and Streamable HTTP servers.</p>
+      <p><strong>Authorization.</strong> Do not put <code>auth.token</code> in the config file.</p>
       <pre>export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN</pre>
-      <p>Or Dashboard <strong>MCP</strong> tab → <strong>Sign in with GitHub</strong> (browser OAuth, falling back to device flow if no client secret is configured) or <strong>Paste PAT</strong> (writes <code>~/.glider/credentials/github_token</code>, mode 0600).</p>
-      <p>The Streamable HTTP client sends <code>MCP-Protocol-Version</code> + <code>X-MCP-Toolsets</code> on every request including <code>initialize</code>, persists <code>Mcp-Session-Id</code> from the response and attaches it to follow-ups, and on a 401/403 clears the session and re-<code>initialize</code>s once before retrying.</p>
-      <p>Dashboard <strong>MCP</strong> tab: server list, Connect/Disconnect/Reconnect/Refresh, live tool catalog (falls back to a documented catalog when nothing's connected). Full endpoint list: <a href="api.html#mcp">API · MCP</a>.</p>
+      <p>You can also use the <strong>MCP</strong> page of the dashboard. Push <strong>Sign in with GitHub</strong> to start the browser OAuth procedure. If there is no client secret, Glider uses the device procedure. Push <strong>Paste PAT</strong> to write the token to <code>~/.glider/credentials/github_token</code> with mode 0600.</p>
+      <p>The Streamable HTTP client sends <code>MCP-Protocol-Version</code> and <code>X-MCP-Toolsets</code> with each request. This includes the <code>initialize</code> request. The client keeps the <code>Mcp-Session-Id</code> from the reply and sends it with each subsequent request. After a 401 error or a 403 error, the client removes the session, sends <code>initialize</code> one more time, and then tries the request again.</p>
+      <p>The <strong>MCP</strong> page of the dashboard shows the servers. You can connect, disconnect, reconnect and refresh each server. The page shows the tools of a connected server. If no server is connected, the page shows a recorded list of tools. For the full list of endpoints, refer to <a href="api.html#mcp">API · MCP</a>.</p>
 
-      <h2 id="websearch">Web search setup</h2>
+      <h2 id="websearch">How to set up web search</h2>
       <pre># .env.local
 BRAVE_SEARCH_API_KEY=
 TAVILY_API_KEY=
 SERPAPI_KEY=
 SEARXNG_URL=http://127.0.0.1:8080</pre>
-      <p>Provider <code>auto</code> tries each in order, falling back to DuckDuckGo HTML (no key). Forcing a keyed provider with an empty env returns a clear error instead of inventing results.</p>
+      <p>The <code>auto</code> provider tries each service in sequence. If no key is available, it uses the DuckDuckGo HTML page. If you select a service that needs a key, and the key is empty, Glider shows an error. Glider does not make false results.</p>
     </main>
     <footer class="foot"><a href="api.html">← API</a> · <a href="index.html">Home</a></footer>
   </div>

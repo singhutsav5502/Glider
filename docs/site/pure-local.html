@@ -27,25 +27,25 @@
     <main class="prose">
       <div class="badge">Ollama</div>
       <h1>Pure local mode</h1>
-      <p>Run the harness with <strong>no cloud API keys</strong> and a local default route.</p>
+      <p>In this mode Glider does not use a cloud API key. Glider sends all requests to the local model.</p>
 
       <h2>Start</h2>
       <pre>ollama serve
 ollama pull qwen2.5-coder:14b
 .\glider.exe --config configs\glider.local.yaml</pre>
-      <p>Default local model across configs: <code>qwen2.5-coder:14b</code> (aliases map <code>gpt-4o</code> / <code>claude-3.5-sonnet</code> onto it).</p>
+      <p>The default local model is <code>qwen2.5-coder:14b</code>. The aliases <code>gpt-4o</code> and <code>claude-3.5-sonnet</code> also point to this model.</p>
 
-      <h2>Knobs in glider.local.yaml</h2>
+      <h2>The settings in glider.local.yaml</h2>
       <ul>
-        <li><code>routing.default: local</code></li>
-        <li><code>routing.allow_cloud_fallback: false</code></li>
-        <li><code>mitm.agent_rpc_canned_on_error: false</code></li>
-        <li><code>mitm.origin_on_local_error: false</code> — clear Ollama errors instead of a silent origin fallback</li>
-        <li><code>mitm.require_local_healthy: true</code></li>
+        <li><code>routing.default: local</code> — makes the local model the default route.</li>
+        <li><code>routing.allow_cloud_fallback: false</code> — stops each change to a cloud model.</li>
+        <li><code>mitm.agent_rpc_canned_on_error: false</code> — stops the fixed test reply that can hide a local failure.</li>
+        <li><code>mitm.origin_on_local_error: false</code> — shows the Ollama error. Glider does not send the request to the origin.</li>
+        <li><code>mitm.require_local_healthy: true</code> — Glider uses the local model only when that model is serviceable.</li>
       </ul>
 
-      <h2>Gateway-only (no MITM)</h2>
-      <p>Set <code>mitm.enabled: false</code>. Override Base URL → <code>http://127.0.0.1:8080/v1</code>.</p>
+      <h2>Gateway mode (no MITM)</h2>
+      <p>Set <code>mitm.enabled: false</code>. Then set Override Base URL to <code>http://127.0.0.1:8080/v1</code>.</p>
     </main>
     <footer class="foot"><a href="context.html">← Context</a> · <a href="api.html">API →</a></footer>
   </div>

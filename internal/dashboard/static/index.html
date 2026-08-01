@@ -42,14 +42,14 @@
           <span id="session-meta" class="session-meta"></span>
         </div>
         <aside class="banner warn" id="mitm-agent-gap" role="note">
-          <strong>Path B MITM — text-only Agent.</strong>
-          With <code>agent_rpc_fulfill</code>, Glider extracts <code>BidiAppend</code> prompts and can fulfill root <code>RunSSE</code> locally (Ollama; canned only if <code>agent_rpc_canned_on_error</code>).
-          Child / tool-loop RunSSE stays on Cursor origin — for Agent+tools use <strong>gateway</strong> Override Base URL → <code>http://localhost:8080/v1</code> + <code>cus-</code> model.
-          Log: <code>local</code> / <code>origin_passthrough</code> / <code>canned</code>; turn-family sticky inherits <code>/cloud</code>|<code>/local</code> for summary/title follow-ons only (~90s). Dumps: <code>~/.glider/mitm-debug</code> when <code>debug_agent_rpc</code>.
+          <strong>MITM mode gives a text reply only.</strong>
+          With <code>agent_rpc_fulfill</code>, Glider reads the <code>BidiAppend</code> prompt and can answer a root <code>RunSSE</code> from the local model. Glider uses Ollama. It sends a fixed test reply only when you set <code>agent_rpc_canned_on_error</code>.
+          A child RunSSE and a tool-loop RunSSE always go to the Cursor origin. For agent work with tools, use the <strong>gateway</strong>: set Override Base URL to <code>http://localhost:8080/v1</code> and use a <code>cus-</code> model.
+          The log shows <code>local</code>, <code>origin_passthrough</code> or <code>canned</code>. The turn-family sticky condition applies <code>/cloud</code> or <code>/local</code> to the summary message and the title message only, for about 90 seconds. Glider writes the data to <code>~/.glider/mitm-debug</code> when you set <code>debug_agent_rpc</code>.
         </aside>
         <div class="metrics">
           <div class="metric"><span class="label">REQUESTS</span><span class="value" id="m-requests">0</span></div>
-          <div class="metric"><span class="label" title="Live share of request-log outcomes from GET /api/metrics. Cloud includes gateway BYOK cloud and MITM origin_passthrough. Canned is Path B dry-run fulfill.">LOCAL / CLOUD / CANNED</span><span class="value" id="m-split">—</span></div>
+          <div class="metric"><span class="label" title="The live results from GET /api/metrics. Cloud contains the gateway cloud requests and the MITM origin requests. Canned is a fixed test reply.">LOCAL / CLOUD / CANNED</span><span class="value" id="m-split">—</span></div>
           <div class="metric"><span class="label">TOKENS</span><span class="value" id="m-tokens">0</span></div>
           <div class="metric"><span class="label">AVG LATENCY</span><span class="value" id="m-latency">—</span></div>
         </div>
@@ -58,8 +58,8 @@
           <span class="dist-seg cloud" id="dist-cloud"></span>
           <span class="dist-seg canned" id="dist-canned"></span>
         </div>
-        <div class="class-rates" id="class-rates" title="Task classifier / routing reason rates from this session"></div>
-        <div class="episode-rates" id="episode-chips" title="Recent context episodes from /api/context/episodes" hidden></div>
+        <div class="class-rates" id="class-rates" title="The task classifier results and the route causes from this session"></div>
+        <div class="episode-rates" id="episode-chips" title="The most recent context episodes from /api/context/episodes" hidden></div>
         <div class="log-wrap">
           <div class="log-head">
             <span>TIME</span><span>MODE</span><span>ACTION</span><span>HOST / MODEL</span><span>RULE</span><span>LATENCY</span><span>TOKENS</span>
@@ -69,7 +69,7 @@
       </section>
 
       <section id="panel-vram" class="panel">
-        <p class="hint">Models from config plus live discovery (Ollama <code>/api/tags</code>; optional vLLM <code>/v1/models</code>). GPU memory from nvidia-smi when available. Assign a GPU index per model; Save writes <code>vram.gpu_assignments</code>. Unreachable optional backends (e.g. vLLM when you only run Ollama) show as warnings, not failures.</p>
+        <p class="hint">This list contains the models from the config and the models that Glider found. Glider reads Ollama <code>/api/tags</code>, and vLLM <code>/v1/models</code> if you use vLLM. If nvidia-smi is available, Glider also shows the GPU memory. Give a GPU number to each model, then push Save. Glider writes the numbers to <code>vram.gpu_assignments</code>. If Glider cannot connect to an optional backend, it shows a warning and not a failure. For example, this occurs with vLLM if you use only Ollama.</p>
         <div id="gpu-gauges" class="gauges"></div>
         <p id="vram-errors" class="cfg-error" hidden></p>
         <p id="vram-warnings" class="cfg-warn" hidden></p>
@@ -89,7 +89,7 @@
 
       <section id="panel-rules" class="panel">
         <div class="rules-toolbar">
-          <p class="hint">Create and edit routing rules. Higher priority wins. Changes save into config and hot-reload the router.</p>
+          <p class="hint">Make and change the routing rules here. The rule with the highest priority number has control. Glider writes your changes to the config and gives them to the router immediately.</p>
           <button type="button" id="rule-add">Add rule</button>
         </div>
         <p id="rules-error" class="cfg-error" hidden></p>
@@ -102,15 +102,16 @@
 
         <fieldset class="cfg-section" style="margin-top:28px">
           <legend>Module manager (hot-swap)</legend>
-          <p class="hint" style="margin:0 0 12px">Enable/disable routing and infra modules. Live generation counters update while this tab is open.</p>
+          <p class="hint" style="margin:0 0 12px">Turn the routing modules and the infrastructure modules on or off. The counters change while this page is open.</p>
           <div id="hotswap-list" class="hotswap-list"></div>
         </fieldset>
 
         <fieldset class="cfg-section" style="margin-top:28px">
           <legend>Config health</legend>
           <p class="hint" style="margin:0 0 10px">
-            Advisory checks over your saved rules — two rules racing on the same trigger, or a rule that can never
-            be reached. Never blocks a save; some shadowing is intentional (a deliberate fallback pair).
+            Glider examines your rules and shows possible problems. It finds two rules with the same trigger, and
+            a rule that Glider can never use. These messages do not prevent a save. Sometimes one rule in front of
+            another rule is correct, for example a pair of backup rules.
           </p>
           <div id="rules-lint-list"><p class="hint">Loading…</p></div>
         </fieldset>
@@ -118,15 +119,15 @@
         <fieldset class="cfg-section" style="margin-top:28px">
           <legend>Explain</legend>
           <p class="hint" style="margin:0 0 10px">
-            Dry-run a message against your actual saved rules — no completion is issued. Shows every rule that was
-            considered, in the same order Route itself uses, including ones that would also have matched if a
-            higher-priority rule hadn't already won.
+            Test a message against your saved rules. Glider does not send the message to a model. It shows each
+            rule that it examined, in the sequence that the router uses. It also shows the rules that agree with
+            the message but have a lower priority.
           </p>
           <textarea id="rules-explain-input" class="pg-input" rows="2" spellcheck="false"
-            placeholder="e.g. refactor this across the whole repo"></textarea>
+            placeholder="For example: refactor this across the whole repo"></textarea>
           <div class="rules-explain-extra">
             <label class="rules-explain-field">Tools (comma-separated)
-              <input type="text" id="rules-explain-tools" placeholder="e.g. bash, read_file">
+              <input type="text" id="rules-explain-tools" placeholder="For example: bash, read_file">
             </label>
             <label class="rules-explain-field">Estimated tokens
               <input type="number" id="rules-explain-tokens" min="0" placeholder="0">
@@ -142,9 +143,8 @@
           <div>
             <h2 class="graphs-title" style="margin:0">MCP servers</h2>
             <p class="hint" style="margin:6px 0 0">
-              Live Model Context Protocol connections used by hoop stages and swarm workers.
-              Bind tools on the <button type="button" class="linkish" data-goto-tab="graphs">Graph editor</button>
-              (Edit stage). Docs: <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.
+              The live Model Context Protocol connections. Each connected server gives its tools to Glider.
+              For more data, refer to <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.
             </p>
           </div>
           <button type="button" id="mcp-refresh" class="linkish">Refresh</button>
@@ -156,8 +156,9 @@
             <p class="hint" style="margin:0">Loading…</p>
           </div>
           <p class="ux-help-note">
-            Set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code>, <code>GITHUB_TOKEN</code>, or <code>GH_TOKEN</code> in the process env (never inline in YAML).
-            Hosted endpoint: <code>https://api.githubcopilot.com/mcp/</code>.
+            Set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code>, <code>GITHUB_TOKEN</code> or <code>GH_TOKEN</code> as an
+            environment variable. Do not put a token in the YAML file.
+            The endpoint is <code>https://api.githubcopilot.com/mcp/</code>.
           </p>
         </aside>
 
@@ -188,7 +189,7 @@
 
           <fieldset class="cfg-section">
             <legend>Tools catalog <span id="mcp-tools-server-label" class="graph-hint"></span></legend>
-            <p class="hint" id="mcp-tools-hint" style="margin:0 0 10px">Select a server to list tools (live when connected; GitHub falls back to documented catalog).</p>
+            <p class="hint" id="mcp-tools-hint" style="margin:0 0 10px">Select a server to see its tools. A connected server gives the live list. For GitHub, Glider shows a recorded list when the server is not connected.</p>
             <div id="mcp-tools-list" class="mcp-tools-list"></div>
           </fieldset>
         </div>
@@ -199,9 +200,9 @@
           <div>
             <h2 class="graphs-title" style="margin:0">Agent CLIs</h2>
             <p class="hint" style="margin:6px 0 0">
-              Other AI coding CLIs found on this computer. Click <strong>Launch interactively</strong> to open one
-              in its own window, or type its name at the end of a message elsewhere (e.g. "fix this bug agy")
-              to hand it a task automatically.
+              The other AI coding CLIs on this computer. Push <strong>Launch interactively</strong> to open a CLI
+              in its own window. To send a task to a CLI, type its name at the end of a message. For example,
+              "fix this bug /agy".
             </p>
           </div>
           <button type="button" id="vendors-discover" class="linkish">Rescan for CLIs</button>
@@ -213,11 +214,11 @@
         <fieldset class="cfg-section">
           <legend>Default project folder</legend>
           <p class="hint" style="margin:0 0 8px">
-            Folder these CLIs open in when Glider can't tell which project you meant. Leave blank and Glider
-            will just ask the first time it needs to know.
+            These CLIs use this folder when Glider cannot find your project. If you leave the field empty,
+            Glider asks you the first time that it needs the folder.
           </p>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="vendors-default-workspace" placeholder="e.g. C:\Users\me\myproject" style="flex:1">
+            <input type="text" id="vendors-default-workspace" placeholder="For example: C:\Users\me\myproject" style="flex:1">
             <button type="button" id="vendors-default-workspace-save" class="linkish">Save</button>
           </div>
         </fieldset>
@@ -225,9 +226,9 @@
         <fieldset class="cfg-section">
           <legend>Delegated task replies</legend>
           <p class="hint" style="margin:0 0 8px">
-            What you see back when a task is handed to another CLI. <strong>Clean</strong> shows just the final
-            answer; <strong>Raw</strong> shows everything the CLI printed, useful when something looks wrong and
-            you want to see exactly what happened.
+            This setting controls the reply that you see when Glider sends a task to another CLI.
+            <strong>Clean</strong> shows only the final answer. <strong>Raw</strong> shows all the text of that
+            CLI. Use <strong>Raw</strong> to find the cause of a problem.
           </p>
           <label style="display:flex;gap:8px;align-items:center;font-weight:normal">
             <select id="vendors-response-detail">
@@ -247,9 +248,9 @@
           <div>
             <h2 class="graphs-title" style="margin:0">Tools workspace</h2>
             <p class="hint" style="margin:6px 0 0">
-              Browse <code>runs/&lt;id&gt;/{work,out}</code> under the agent sandbox
+              Look at the files in <code>runs/&lt;id&gt;/{work,out}</code> in the agent workspace
               (<span id="ws-root-label" class="graph-hint">…</span>).
-              Open text previews and compare files or git diffs from clones.
+              You can read a text file, compare two files, or see the Git differences in a clone.
             </p>
           </div>
           <button type="button" id="ws-refresh" class="linkish">Refresh</button>
@@ -297,7 +298,7 @@
                   <input type="text" id="ws-diff-b" spellcheck="false" placeholder="path b" />
                 </label>
                 <button type="button" id="ws-diff-files" class="linkish">Compare</button>
-                <button type="button" id="ws-diff-git" class="linkish" title="git diff in nearest .git under preview path">Git diff</button>
+                <button type="button" id="ws-diff-git" class="linkish" title="Shows the Git differences in the nearest .git directory below the preview path">Git diff</button>
               </div>
               <pre id="ws-diff" class="ws-preview ws-diff" aria-label="Diff view">Compare two paths, or run git diff on a clone.</pre>
             </fieldset>
@@ -310,9 +311,9 @@
           <div>
             <h2 class="graphs-title" style="margin:0">Command playground</h2>
             <p class="hint" style="margin:6px 0 0">
-              Learn Glider's chat-typed commands by trying them. Type a message the way you would into
-              Claude Code, cursor-agent, or agy below — this never actually runs a CLI, grants a permission,
-              or changes any real setting, so try anything you like.
+              Use this page to learn the Glider commands that you type in a chat. Write a message below in the
+              same way as in Claude Code, cursor-agent or agy. This page does not run a CLI, does not give a
+              permission, and does not change a setting. Therefore you can try each command safely.
             </p>
           </div>
         </div>
@@ -320,16 +321,16 @@
         <fieldset class="cfg-section">
           <legend>Try it</legend>
           <textarea id="pg-input" class="pg-input" rows="3" spellcheck="false"
-            placeholder="e.g. summarize recent commits /agy"></textarea>
+            placeholder="For example: summarize recent commits /agy"></textarea>
           <div class="pg-examples" id="pg-examples"></div>
           <div id="pg-result" class="pg-result">
-            <p class="hint">Type a message above to see what Glider would do with it.</p>
+            <p class="hint">Write a message above. This page then shows what Glider does with that message.</p>
           </div>
         </fieldset>
 
         <fieldset class="cfg-section">
           <legend>Lessons <span id="pg-progress" class="graph-hint"></span></legend>
-          <p class="hint" style="margin:0 0 10px">Work through these in order — each one checks your message above against what it's actually looking for. Nothing is graded except by you; skip around freely.</p>
+          <p class="hint" style="margin:0 0 10px">Do these lessons in sequence. Each lesson examines your message above and looks for one item. Glider does not record a result, and you can do the lessons in any sequence.</p>
           <div id="pg-lessons" class="pg-lessons"></div>
         </fieldset>
 
@@ -341,7 +342,7 @@
 
       <section id="panel-settings" class="panel">
         <div class="cfg-toolbar">
-          <p class="hint cfg-reload-note">Structured form is the primary editor. Save writes the config file and hot-reloads routing, aliases, context threshold, log level, and backend/model clients (Ollama/vLLM/cloud). Restart Glider to apply listen ports or MITM CA/hosts. In-flight completions keep the old backend client until the cycle ends — see Hoops → hot-swap <code>backends</code> (<code>last_ok</code> / gen) or <code>X-Glider-Backend-Reload</code> on save.</p>
+          <p class="hint cfg-reload-note">Use the form below as the primary editor. Save writes the config file. Glider then applies the routing rules, the aliases, the context limit, the log level and the backend and model clients (Ollama, vLLM and cloud). You must restart Glider to change the ports, the MITM CA or the MITM hosts. A completion that is in progress keeps the old backend client until it ends. To see this, open the Rules Engine page and look at the <code>backends</code> hot-swap module (<code>last_ok</code> and the generation number). You can also read the <code>X-Glider-Backend-Reload</code> header on a save.</p>
           <button type="button" id="cfg-toggle-yaml" class="linkish" aria-expanded="false">Edit YAML (optional)</button>
         </div>
         <p id="cfg-error" class="cfg-error" hidden></p>
@@ -350,7 +351,7 @@
 
         <form id="settings-form" class="settings-full">
           <fieldset class="cfg-section">
-            <legend title="Core process settings. Gateway proxy serves OpenAI-compatible /v1; dashboard is this UI.">Server</legend>
+            <legend title="The primary settings of the program. The gateway gives the OpenAI /v1 endpoints, and the dashboard is this interface.">Server</legend>
             <div class="cfg-grid">
               <label data-tip-key="cfg-proxy-port">Gateway proxy port<input type="number" id="cfg-proxy-port" min="1" /></label>
               <label data-tip-key="cfg-dash-port">Dashboard port<input type="number" id="cfg-dash-port" min="1" /></label>
@@ -366,7 +367,7 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Runtime limits for local inference and request handling.">Thresholds</legend>
+            <legend title="The limits for the local inference and for each request.">Thresholds</legend>
             <div class="cfg-grid">
               <label data-tip-key="cfg-tokens">Max local context tokens<input type="number" id="cfg-tokens" min="0" /></label>
               <label data-tip-key="cfg-idle">Idle unload timeout<input type="text" id="cfg-idle" placeholder="5m" /></label>
@@ -375,8 +376,8 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="HTTPS CONNECT interceptor for Cursor hosts. Decrypts TLS on allowlisted hosts. With agent_rpc_fulfill, text-only BidiAppend→RunSSE can route local; tool loops still origin. Gateway + cus- preferred for Agent+tools.">MITM</legend>
-            <p class="hint" style="margin:0 0 12px">Path B: <code>agent_rpc_fulfill</code> = text-only root RunSSE local fulfill. Tools → gateway + <code>cus-</code>. See <code>planning/cursor_agent_research.md</code> and <code>planning/routing_and_context.md</code>.</p>
+            <legend title="Intercepts the HTTPS CONNECT traffic of the Cursor hosts. Glider decrypts the TLS of the hosts in the list. With agent_rpc_fulfill, Glider can give a local text reply. A tool loop always goes to the origin. For agent work with tools, use the gateway.">MITM</legend>
+            <p class="hint" style="margin:0 0 12px"><code>agent_rpc_fulfill</code> lets Glider give a local text reply to a root RunSSE. For work with tools, use the gateway and a <code>cus-</code> model. Refer to <code>planning/cursor_agent_research.md</code> and <code>planning/routing_and_context.md</code>.</p>
             <div class="cfg-grid">
               <label class="check" data-tip-key="cfg-mitm-enabled"><input type="checkbox" id="cfg-mitm-enabled" /> Enabled</label>
               <label data-tip-key="cfg-mitm-port">Listen port<input type="number" id="cfg-mitm-port" min="1" /></label>
@@ -388,7 +389,7 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Local VRAM allocator policy. Per-model GPU indices are edited on the VRAM & Models page.">VRAM</legend>
+            <legend title="The rules for the VRAM allocation. Set the GPU number of each model on the VRAM & Models page.">VRAM</legend>
             <div class="cfg-grid">
               <label data-tip-key="cfg-vram-strategy">Strategy
                 <select id="cfg-vram-strategy">
@@ -404,14 +405,14 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Dashboard process settings.">Dashboard</legend>
+            <legend title="The settings of the dashboard.">Dashboard</legend>
             <div class="cfg-grid">
               <label class="check" data-tip-key="cfg-dash-enabled"><input type="checkbox" id="cfg-dash-enabled" /> Enabled</label>
             </div>
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Optional prompt transforms applied before local/cloud completion.">Transform</legend>
+            <legend title="Optional changes to a prompt. Glider makes them before it sends the prompt to a model.">Transform</legend>
             <div class="cfg-grid">
               <label class="check" data-tip-key="cfg-xform-enabled"><input type="checkbox" id="cfg-xform-enabled" /> Enabled</label>
               <label class="check" data-tip-key="cfg-xform-trim"><input type="checkbox" id="cfg-xform-trim" /> Trim context</label>
@@ -421,35 +422,35 @@
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Map client model IDs (e.g. Cursor) onto local registry names before routing. Hot-reloaded.">Model aliases</legend>
+            <legend title="Changes a client model name, for example a Cursor name, to a local model name before the routing. Glider applies a change immediately.">Model aliases</legend>
             <label class="block" data-tip-key="cfg-aliases">JSON map (client model → local registry name)
               <textarea id="cfg-aliases" class="cfg-mono" rows="5" spellcheck="false"></textarea>
             </label>
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Prefer the Rules Engine tab for structured editing. JSON array is available here for bulk edits.">Routing rules</legend>
+            <legend title="Use the Rules Engine page to change one rule. Use this JSON array to change many rules together.">Routing rules</legend>
             <label class="block" data-tip="JSON array of rules. Prefer Rules Engine UI; this field stays in sync after saves.">JSON array (or use Rules Engine tab)
               <textarea id="cfg-routing" class="cfg-mono" rows="10" spellcheck="false"></textarea>
             </label>
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Local models registered with Glider. Names should match backend tags when possible.">Local models</legend>
+            <legend title="The local models that Glider knows. Each name must agree with the tag of the backend.">Local models</legend>
             <label class="block" data-tip-key="cfg-models">JSON array
               <textarea id="cfg-models" class="cfg-mono" rows="10" spellcheck="false"></textarea>
             </label>
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="Local inference backends. URL / timeout / model registry hot-reload without process restart.">Local backends</legend>
+            <legend title="The local inference backends. Glider applies a change to the URL, the timeout or the model list immediately, and you do not restart the program.">Local backends</legend>
             <label class="block" data-tip-key="cfg-backends">JSON array (ollama / vllm)
               <textarea id="cfg-backends" class="cfg-mono" rows="6" spellcheck="false"></textarea>
             </label>
           </fieldset>
 
           <fieldset class="cfg-section">
-            <legend title="BYOK cloud providers for gateway mode. MITM cloud routes use origin passthrough instead.">Cloud / BYOK</legend>
+            <legend title="The cloud providers for the gateway mode. They use your own key. A cloud route in MITM mode goes to the origin instead.">Cloud / BYOK</legend>
             <div class="cfg-grid">
               <label data-tip-key="cfg-budget">Budget cap (USD)<input type="number" id="cfg-budget" step="0.01" min="0" /></label>
               <label data-tip-key="cfg-rpm">Requests / min<input type="number" id="cfg-rpm" min="0" /></label>
