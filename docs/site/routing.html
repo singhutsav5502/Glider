@@ -36,7 +36,7 @@
         <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Sends a Cursor Composer summary message to the cloud or to the origin</td></tr>
         <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Sends a tool task or a cloud-only task to the cloud. Sends a small task to the local model.</td></tr>
         <tr><td>75</td><td>Complexity test</td><td>You must turn this on with <code>complexity.enabled</code></td></tr>
-        <tr><td>55 / 50</td><td>Starlark scripts</td><td>A <code>/swarm</code> fan-out task goes local, but you must turn on fan-out first. A refactor task goes local.</td></tr>
+        <tr><td>55 / 50</td><td>Starlark scripts</td><td>A message with <code>/swarm</code> or <code>[fanout]</code> goes to the local model and uses fan-out. A refactor task also goes local. This profile sets <code>orchestration.fan_out.enabled</code>, so fan-out operates.</td></tr>
         <tr><td>10 / 5</td><td>Context size</td><td>More than 8000 tokens goes to the cloud. A smaller context goes to the local model.</td></tr>
         <tr><td>0</td><td>Default</td><td>Goes to the cloud. In the pure local profile it goes to the local model.</td></tr>
       </table>
