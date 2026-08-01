@@ -8,37 +8,39 @@
 <meta property="og:title" content="Glider — one terminal, every AI coding CLI" />
 <meta property="og:description" content="Claude Code, Cursor Agent and Antigravity, as one tool. Delegation with a permission relay, and local-first routing." />
 <meta property="og:type" content="website" />
-<meta name="theme-color" content="#0a151e" />
+<meta name="theme-color" content="#060d14" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <script>document.documentElement.classList.add('js');</script>
 <style>
 /* ───────────────────────────────────────────────────────────────
-   Palette from a VFR sectional chart: chart paper, airspace
-   magenta, airway blue. Amber has one meaning only — work that
-   stayed on your own machine.
+   Palette from a VFR sectional chart. Accent contrast is measured,
+   not eyeballed: magenta-lift is 6.7:1 on the deep navy, and the
+   sky gradient spans 1.36:1 end to end so it actually reads as a
+   gradient rather than a flat field.
 
-   Motion vocabulary is shared with utsv.work: one easing curve,
-   a short rise on entrance, lerp-smoothed following, and every
-   effect switched off under prefers-reduced-motion.
+   Motion vocabulary is shared with utsv.work: one easing curve, a
+   short rise on entrance, lerp-smoothed following, all of it off
+   under prefers-reduced-motion.
    ─────────────────────────────────────────────────────────────── */
 :root{
-  --sky-deep:#0a151e;
-  --sky:#122430;
+  --sky-deep:#060d14;
+  --sky:#162c3c;
+  --sky-panel:#0d1a24;
   --chart:#e8eae5;
-  --chart-deep:#dadfd8;
+  --chart-deep:#dce0d9;
   --ink:#0b1219;
   --ink-soft:#4c5a62;
-  --sky-fg:#e2e8ea;
+  --sky-fg:#e6ecee;
   --sky-fg-soft:#93a7b2;
   --magenta:#b8155a;
-  --magenta-lift:#e0417f;
-  --airway:#5b93b5;
-  --lift:#dda03c;
+  --magenta-lift:#ff5c95;
+  --airway:#6fa8ca;
+  --lift:#e6ad4d;
   --rule:#c6ccc4;
   --rule-soft:#d6dbd4;
-  --rule-sky:#22384a;
+  --rule-sky:#25404f;
 
   --display:"Archivo",system-ui,sans-serif;
   --body:"Newsreader",Georgia,serif;
@@ -46,28 +48,27 @@
 
   --ease:cubic-bezier(0.22,1,0.36,1);
 
-  /* type scale — one step per role */
   --fs-micro:0.7rem;
-  --fs-mono:clamp(0.78rem,2.1vw,0.85rem);
-  --fs-body:clamp(1.02rem,2.6vw,1.1rem);
-  --fs-h3:clamp(1.02rem,2.7vw,1.12rem);
-  --fs-lede:clamp(1.08rem,3.1vw,1.3rem);
-  --fs-h2:clamp(1.55rem,5.6vw,2.35rem);
-  --fs-h1:clamp(2.3rem,10vw,4.7rem);
+  --fs-mono:clamp(0.8rem,2.1vw,0.88rem);
+  --fs-body:clamp(1.06rem,2.7vw,1.15rem);
+  --fs-h3:clamp(1.1rem,2.8vw,1.28rem);
+  --fs-lede:clamp(1.05rem,2.6vw,1.18rem);
+  --fs-h2:clamp(2rem,5.4vw,3.1rem);
+  --fs-h1:clamp(3.1rem,11.5vw,7.2rem);
 
-  /* spacing scale */
   --s1:0.5rem;
   --s2:0.9rem;
   --s3:1.5rem;
   --s4:2.25rem;
   --s5:clamp(2.25rem,6vw,3.5rem);
   --s6:clamp(3.25rem,9vw,7rem);
+  --s7:clamp(5rem,15vw,11rem);   /* used once, before the support section */
 
   --gutter:clamp(1.15rem,5vw,4rem);
-  --spine-x:clamp(5px,2vw,26px);
-  --content-in:clamp(1.5rem,7vw,4.5rem);
-  --measure:36rem;
-  --wide:74rem;
+  --spine-x:clamp(6px,2vw,28px);
+  --content-in:clamp(1.5rem,7vw,5rem);
+  --measure:40rem;
+  --wide:76rem;
 }
 
 *,*::before,*::after{box-sizing:border-box}
@@ -88,14 +89,35 @@ body{
   -webkit-font-smoothing:antialiased;
 }
 
+/* Uppercase is reserved for the nav and the section eyebrows. Headings
+   run in normal case so the page has somewhere to rest. */
 h1,h2,h3{
   font-family:var(--display);
-  font-weight:800;
-  letter-spacing:-0.032em;
-  line-height:1.03;
   margin:0;
-  text-transform:uppercase;
   overflow-wrap:break-word;
+}
+
+h1{
+  font-size:var(--fs-h1);
+  font-weight:800;
+  line-height:0.95;
+  letter-spacing:-0.045em;
+  color:#fff;
+}
+
+h2{
+  font-size:var(--fs-h2);
+  font-weight:700;
+  line-height:1.04;
+  letter-spacing:-0.035em;
+  max-width:20ch;
+}
+
+h3{
+  font-size:var(--fs-h3);
+  font-weight:600;
+  line-height:1.22;
+  letter-spacing:-0.018em;
 }
 
 p{margin:0}
@@ -113,19 +135,18 @@ a{color:inherit}
   position:relative;
 }
 
-/* ═══════════ the flight path ═══════════
-   A dashed track down the page. The flown part is magenta, the rest
-   is faint, and a paper plane sits at the join. It replaces the
-   altitude labels, which asked the reader to decode a number before
-   they could tell where they were. */
+.eyebrow{
+  font-family:var(--mono);
+  font-size:var(--fs-micro);
+  font-weight:500;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+}
+
+/* ═══════════ flight path ═══════════ */
 .route{position:relative}
 
-.route-path{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  z-index:1;
-}
+.route-path{position:absolute;inset:0;pointer-events:none;z-index:1}
 
 .route-inner{
   width:min(100% - 2*var(--gutter),var(--wide));
@@ -138,76 +159,101 @@ a{color:inherit}
   position:absolute;
   left:var(--spine-x);
   top:0;
-  width:0;
-  border-left:1px dashed var(--rule);
+  width:2px;
+  margin-left:-1px;
 }
 
-.fp-track{bottom:0}
+.fp-track{
+  bottom:0;
+  background:repeating-linear-gradient(180deg,var(--rule) 0 6px,transparent 6px 13px);
+}
 
 .fp-done{
-  border-left-color:var(--magenta);
   height:calc(var(--fp,0) * 100%);
+  background:repeating-linear-gradient(180deg,var(--magenta) 0 6px,transparent 6px 13px);
 }
 
 .fp-plane{
   position:absolute;
   left:var(--spine-x);
   top:0;
-  width:18px;
-  height:18px;
-  margin-left:-9px;
-  margin-top:-9px;
+  width:26px;
+  height:26px;
+  margin-left:-13px;
+  margin-top:-13px;
   color:var(--magenta);
   transform:translateY(calc(var(--fp,0) * var(--fp-h,0px)));
+  filter:drop-shadow(0 2px 5px rgba(184,21,90,.32));
 }
 
 .fp-plane svg{display:block;width:100%;height:100%}
 
-@media(min-width:900px){
-  .fp-plane{width:22px;height:22px;margin-left:-11px;margin-top:-11px}
-}
-
-/* section waypoints sit on the spine */
+/* waypoints */
 .band > .shell::before{
   content:"";
   position:absolute;
   left:var(--spine-x);
   top:calc(var(--s6) * -0.5);
-  width:9px;
-  height:9px;
-  margin-left:-4px;
+  width:11px;
+  height:11px;
+  margin-left:-5px;
   background:var(--chart);
-  border:1px solid var(--rule);
+  border:2px solid var(--rule);
   border-radius:50%;
   z-index:2;
+  display:none;
+  transition:border-color 260ms var(--ease),background 260ms var(--ease);
 }
 
-.band.is-passed > .shell::before{
-  border-color:var(--magenta);
-  background:var(--magenta);
-}
+.band.is-passed > .shell::before{border-color:var(--magenta);background:var(--magenta)}
 
+/* On a phone the waypoint name is a section eyebrow, so it is always
+   readable. On a wide screen it moves out onto the rail. */
 .wp-label{
-  position:absolute;
-  left:calc(var(--spine-x) + 14px);
-  top:calc(var(--s6) * -0.5 - 6px);
+  display:block;
   font-family:var(--mono);
   font-size:var(--fs-micro);
-  letter-spacing:0.16em;
+  font-weight:500;
+  letter-spacing:0.2em;
   text-transform:uppercase;
-  color:var(--ink-soft);
-  white-space:nowrap;
-  display:none;
+  color:var(--magenta);
+  margin-bottom:var(--s2);
 }
 
-@media(min-width:900px){ .wp-label{display:block} }
+@media(min-width:900px){
+  .band > .shell::before{display:block}
+  .wp-label{
+    position:absolute;
+    left:calc(var(--spine-x) + 20px);
+    top:calc(var(--s6) * -0.5 - 8px);
+    margin:0;
+    color:var(--ink-soft);
+  }
+}
 
 /* ═══════════ sky ═══════════ */
 .sky{
+  position:relative;
   background:
-    radial-gradient(ellipse 120% 80% at 18% -20%,rgba(91,147,181,.16),transparent 62%),
-    linear-gradient(180deg,var(--sky-deep) 0%,var(--sky) 100%);
+    radial-gradient(ellipse 80% 60% at 50% 120%,rgba(255,92,149,.10),transparent 70%),
+    radial-gradient(ellipse 110% 70% at 15% -10%,rgba(111,168,202,.16),transparent 65%),
+    linear-gradient(178deg,var(--sky-deep) 0%,#0b1b26 46%,var(--sky) 100%);
   color:var(--sky-fg);
+  isolation:isolate;
+}
+
+/* vignette + a fine grain, so the navy has depth instead of reading flat */
+.sky::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(ellipse 130% 100% at 50% 50%,transparent 45%,rgba(0,0,0,.42) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background-blend-mode:normal,overlay;
+  opacity:.55;
+  z-index:-1;
 }
 
 .nav{
@@ -222,7 +268,7 @@ a{color:inherit}
   font-family:var(--display);
   font-weight:800;
   font-size:1.05rem;
-  letter-spacing:0.24em;
+  letter-spacing:0.26em;
   text-transform:uppercase;
   text-decoration:none;
   margin-right:auto;
@@ -232,151 +278,164 @@ a{color:inherit}
 .nav a:not(.wordmark){
   font-family:var(--mono);
   font-size:var(--fs-micro);
-  letter-spacing:0.09em;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
   color:var(--sky-fg-soft);
   text-decoration:none;
-  padding:0.4rem 0;
+  padding:0.45rem 0;
   border-bottom:1px solid transparent;
   transition:color 160ms ease,border-color 160ms ease;
 }
 
-.nav a:not(.wordmark):hover{
-  color:var(--sky-fg);
-  border-bottom-color:var(--magenta-lift);
-}
+.nav a:not(.wordmark):hover{color:var(--sky-fg);border-bottom-color:var(--magenta-lift)}
 
 .hero{
-  padding:var(--s6) 0;
+  padding:clamp(3rem,7vw,5.5rem) 0 var(--s7);
   display:grid;
   gap:var(--s5);
   grid-template-columns:1fr;
   align-items:center;
 }
 
-@media(min-width:1000px){
-  .hero{grid-template-columns:1fr 1.02fr;gap:clamp(2.5rem,5vw,4.5rem)}
+@media(min-width:1040px){
+  .hero{grid-template-columns:0.92fr 1.08fr;gap:clamp(2.5rem,5vw,4.5rem)}
 }
 
-.eyebrow{
-  font-family:var(--mono);
-  font-size:var(--fs-micro);
-  letter-spacing:0.18em;
-  text-transform:uppercase;
-  color:var(--airway);
-  margin-bottom:var(--s3);
-}
+.hero .eyebrow{color:var(--airway);margin-bottom:var(--s3)}
 
-h1{font-size:var(--fs-h1);color:#fff}
 h1 .down{display:block;color:var(--magenta-lift)}
 
+/* the lede drops a long way below the display size, and it is set
+   lighter, so the step reads as deliberate */
 .lede{
-  max-width:34rem;
-  margin-top:var(--s3);
-  color:var(--sky-fg);
+  max-width:38ch;
+  margin-top:var(--s4);
+  color:var(--sky-fg-soft);
   font-size:var(--fs-lede);
-  line-height:1.56;
+  font-weight:300;
+  line-height:1.62;
 }
 
+.lede strong{color:var(--sky-fg);font-weight:500}
 .lede + .lede{margin-top:var(--s2)}
 
-.cta-row{
-  display:flex;
-  flex-wrap:wrap;
-  gap:var(--s2);
-  margin-top:var(--s4);
-}
+.cta-row{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:var(--s5)}
 
 .btn{
   font-family:var(--display);
   font-weight:600;
-  font-size:0.86rem;
-  letter-spacing:0.06em;
-  text-transform:uppercase;
+  font-size:1rem;
+  letter-spacing:0.005em;
   text-decoration:none;
-  padding:0.95rem 1.5rem;
-  min-height:44px;
+  padding:1.05rem 1.9rem;
+  min-height:52px;
   display:inline-flex;
   align-items:center;
+  gap:0.7rem;
   border:1px solid var(--magenta);
   background:var(--magenta);
   color:#fff;
-  transition:background 160ms ease,border-color 160ms ease,color 160ms ease,transform 200ms var(--ease);
+  transition:background 160ms ease,border-color 160ms ease,color 160ms ease,transform 220ms var(--ease),box-shadow 220ms var(--ease);
 }
 
-.btn:hover{background:var(--magenta-lift);border-color:var(--magenta-lift)}
+.btn .arw{transition:transform 260ms var(--ease)}
+.btn:hover{background:var(--magenta-lift);border-color:var(--magenta-lift);color:#12060c}
 
-.btn-ghost{
-  background:transparent;
-  color:var(--sky-fg);
-  border-color:var(--rule-sky);
-}
-
+.btn-ghost{background:transparent;color:var(--sky-fg);border-color:var(--rule-sky)}
 .btn-ghost:hover{background:transparent;color:#fff;border-color:var(--sky-fg-soft)}
 
 @media(prefers-reduced-motion:no-preference){
-  .btn:hover{transform:translateY(-2px)}
+  .btn:hover{transform:translateY(-2px);box-shadow:0 10px 24px -10px rgba(255,92,149,.5)}
+  .btn:hover .arw{transform:translateX(4px)}
 }
 
-/* ── hero diagram: you, Glider, the three CLIs ── */
-.trace{width:100%;height:auto;display:block}
+/* ═══════════ hero terminal ═══════════
+   A real terminal beats a diagram of primitives: it shows the actual
+   command, the actual relay, and the actual result. Real text, so it
+   scales and selects properly on a phone. */
+.term{
+  background:var(--sky-panel);
+  border:1px solid var(--rule-sky);
+  box-shadow:0 30px 70px -30px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.02) inset;
+  font-family:var(--mono);
+  font-size:clamp(0.76rem,2.35vw,0.92rem);
+  line-height:1.95;
+  overflow:hidden;
+}
 
-.trace .grid-line{stroke:var(--rule-sky);stroke-width:1}
-.trace .link{fill:none;stroke:var(--magenta-lift);stroke-width:2.4;stroke-linecap:round}
-.trace .link-idle{stroke:var(--rule-sky);stroke-width:1.6}
-.trace .back{fill:none;stroke:var(--lift);stroke-width:1.8;stroke-dasharray:3 4;stroke-linecap:round}
-.trace .mark{fill:var(--sky-deep);stroke-width:2}
-.trace .mark-you{stroke:var(--sky-fg-soft)}
-.trace .mark-hub{stroke:var(--magenta-lift);stroke-width:2.4}
-.trace .mark-cli{stroke:var(--rule-sky)}
-.trace .mark-active{stroke:var(--magenta-lift)}
-.trace text{font-family:var(--mono);font-size:13px;letter-spacing:.04em;fill:var(--sky-fg-soft)}
-.trace .lbl-hub{fill:#fff}
-.trace .lbl-active{fill:var(--magenta-lift)}
-.trace .cmd-in{fill:var(--sky-fg);font-size:13.5px}
-.trace .cmd-back{fill:var(--lift);font-size:11.5px}
+.term-bar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--s3);
+  padding:0.7rem 1rem;
+  border-bottom:1px solid var(--rule-sky);
+  background:rgba(255,255,255,.022);
+  font-size:0.74em;
+  letter-spacing:0.09em;
+  color:var(--sky-fg-soft);
+  text-transform:uppercase;
+}
 
-/* the SVG shrinks on a phone, so the labels grow to stay legible */
-@media(max-width:760px){
-  .trace text{font-size:17px}
-  .trace .cmd-in{font-size:18px}
-  .trace .cmd-back{font-size:15px}
+.term-bar .who{color:var(--airway)}
+
+.term-body{padding:1.15rem 1rem 1.35rem}
+
+.ln{white-space:pre-wrap;overflow-wrap:break-word}
+.ln + .ln{margin-top:0.1rem}
+
+.ln.sub{padding-left:1.6em}
+.ln.gap{margin-top:0.85rem}
+
+.pr{color:var(--magenta-lift);font-weight:600}
+.cmd-txt{color:var(--sky-fg)}
+.fl{color:var(--magenta-lift);font-weight:600}
+.sys{color:var(--sky-fg-soft)}
+.hl{color:var(--airway);font-weight:500}
+.warn{color:var(--lift)}
+.tok{color:var(--lift);font-weight:600}
+.path{color:var(--sky-fg)}
+.okc{color:#5ec9a4;font-weight:500}
+.dim{color:#72899a}
+
+.caret{
+  display:inline-block;
+  width:0.55em;
+  height:1.05em;
+  margin-left:0.35em;
+  background:var(--magenta-lift);
+  vertical-align:-0.18em;
 }
 
 @media(prefers-reduced-motion:no-preference){
-  .trace .link,.trace .link-idle,.trace .back{
-    stroke-dasharray:100;
-    stroke-dashoffset:100;
-    animation:draw 900ms var(--ease) forwards;
+  .caret{animation:blink 1.15s steps(2,start) infinite}
+  .js .term .ln{opacity:0;transform:translateY(4px)}
+  .js .term.is-in .ln{
+    opacity:1;
+    transform:none;
+    transition:opacity 420ms var(--ease),transform 420ms var(--ease);
   }
-  .trace .back{animation-duration:1100ms}
-  .trace g,.trace .cmd-in,.trace .cmd-back{opacity:0;animation:appear 500ms ease forwards}
-  .trace .cmd-in{animation-delay:150ms}
-  .trace .g-you{animation-delay:300ms}
-  .trace .l-in{animation-delay:450ms}
-  .trace .g-hub{animation-delay:850ms}
-  .trace .l-out-1,.trace .l-out-2,.trace .l-out-3{animation-delay:1050ms}
-  .trace .g-cli{animation-delay:1450ms}
-  .trace .l-back{animation-delay:1750ms}
-  .trace .cmd-back{animation-delay:2150ms}
+  .js .term.is-in .ln:nth-child(1){transition-delay:120ms}
+  .js .term.is-in .ln:nth-child(2){transition-delay:480ms}
+  .js .term.is-in .ln:nth-child(3){transition-delay:820ms}
+  .js .term.is-in .ln:nth-child(4){transition-delay:960ms}
+  .js .term.is-in .ln:nth-child(5){transition-delay:1080ms}
+  .js .term.is-in .ln:nth-child(6){transition-delay:1500ms}
+  .js .term.is-in .ln:nth-child(7){transition-delay:1900ms}
 }
 
-@keyframes draw{to{stroke-dashoffset:0}}
-@keyframes appear{to{opacity:1}}
+@keyframes blink{to{opacity:0}}
 
-/* ═══════════ horizon ═══════════ */
+/* ═══════════ horizon ═══════════
+   A tall, slow transition rather than a seam. */
 .horizon{
-  height:clamp(2.5rem,7vw,5.5rem);
-  background:linear-gradient(180deg,var(--sky) 0%,var(--chart) 100%);
+  height:clamp(6rem,16vw,12rem);
+  background:linear-gradient(180deg,var(--sky) 0%,#5b6a63 42%,#b9c0b6 72%,var(--chart) 100%);
 }
 
 /* ═══════════ ground ═══════════ */
 .ground{padding:var(--s6) 0}
-
-/* every shell below the horizon clears the flight path, so the left
-   edge of the text is the same all the way down */
 .route .shell{padding-left:var(--content-in)}
-
-h2{font-size:var(--fs-h2);max-width:17ch}
 
 .section-lede{
   max-width:var(--measure);
@@ -384,45 +443,37 @@ h2{font-size:var(--fs-h2);max-width:17ch}
   color:var(--ink-soft);
 }
 
-/* Entrance, borrowed from utsv.work. Scoped to .js so the page still
-   shows every word if the script never runs. */
 @media(prefers-reduced-motion:no-preference){
-  .js .rise{opacity:0;transform:translateY(14px)}
+  .js .rise{opacity:0;transform:translateY(16px)}
   .js .rise.is-in{
     opacity:1;
     transform:none;
-    transition:opacity 640ms var(--ease),transform 640ms var(--ease);
+    transition:opacity 660ms var(--ease),transform 660ms var(--ease);
   }
-  .js .rise.is-in.d1{transition-delay:80ms}
-  .js .rise.is-in.d2{transition-delay:160ms}
-  .js .rise.is-in.d3{transition-delay:240ms}
+  .js .rise.is-in.d1{transition-delay:90ms}
+  .js .rise.is-in.d2{transition-delay:180ms}
+  .js .rise.is-in.d3{transition-delay:270ms}
 }
 
-/* the three flags */
+/* flags */
 .flags{
   font-family:var(--mono);
   font-size:var(--fs-mono);
-  line-height:2.2;
+  line-height:2.25;
   border-top:1px solid var(--rule);
   border-bottom:1px solid var(--rule);
-  padding:var(--s2) 0;
+  padding:var(--s3) 0;
   margin-top:var(--s5);
 }
 
-.flags div{
-  padding-left:1.4em;
-  text-indent:-1.4em;
-  overflow-wrap:break-word;
-}
+.flags div{padding-left:1.5em;text-indent:-1.5em;overflow-wrap:break-word}
+.flags .to{color:var(--magenta);font-weight:600;white-space:nowrap}
 
-.flags .to{color:var(--magenta);font-weight:500;white-space:nowrap}
-
-/* cards */
+/* cards — each carries its own accent rule and kicker, so the row is
+   not three identical boxes */
 .cards{
   display:grid;
-  gap:1px;
-  background:var(--rule);
-  border:1px solid var(--rule);
+  gap:var(--s3);
   grid-template-columns:1fr;
   margin-top:var(--s4);
 }
@@ -430,27 +481,43 @@ h2{font-size:var(--fs-h2);max-width:17ch}
 @media(min-width:820px){ .cards{grid-template-columns:repeat(3,1fr)} }
 
 .card{
-  background:var(--chart);
-  padding:var(--s4) var(--s3);
-  transition:background 200ms var(--ease);
+  background:#fff;
+  border:1px solid var(--rule);
+  border-top:3px solid var(--accent,var(--magenta));
+  padding:var(--s4) var(--s3) var(--s4);
+  transition:transform 260ms var(--ease),box-shadow 260ms var(--ease);
 }
 
-.card:hover{background:#f1f3ef}
+.card.c1{--accent:var(--magenta)}
+.card.c2{--accent:var(--lift)}
+.card.c3{--accent:var(--airway)}
 
-.card h3{
-  font-size:var(--fs-h3);
+@media(prefers-reduced-motion:no-preference){
+  .card:hover{transform:translateY(-3px);box-shadow:0 18px 34px -22px rgba(11,18,25,.5)}
+}
+
+.card .kick{
+  display:block;
+  font-family:var(--mono);
+  font-size:var(--fs-micro);
+  font-weight:500;
+  letter-spacing:0.18em;
+  text-transform:uppercase;
+  color:var(--accent);
   margin-bottom:var(--s2);
-  max-width:22ch;
 }
 
-.card p{color:var(--ink-soft);font-size:0.98rem}
+.card h3{margin-bottom:var(--s2);max-width:20ch}
+.card p{color:var(--ink-soft);font-size:0.99rem}
 
 .card .cmd{
   display:block;
   font-family:var(--mono);
   font-size:var(--fs-mono);
   color:var(--magenta);
-  margin-top:var(--s2);
+  margin-top:var(--s3);
+  padding-top:var(--s2);
+  border-top:1px dashed var(--rule);
   overflow-wrap:break-word;
 }
 
@@ -462,85 +529,112 @@ h2{font-size:var(--fs-h2);max-width:17ch}
   display:grid;
   gap:var(--s5);
   grid-template-columns:1fr;
-  max-width:60rem;
+  max-width:62rem;
 }
 
 @media(min-width:780px){ .why{grid-template-columns:1fr 1fr} }
 
-.why h3{font-size:var(--fs-h3);margin-bottom:var(--s2);max-width:24ch}
-.why p{color:var(--ink-soft);font-size:0.98rem;max-width:30rem}
+.why h3{margin-bottom:var(--s2);max-width:24ch}
+.why p{color:var(--ink-soft);font-size:0.99rem;max-width:30rem}
+.why .n{display:block;color:var(--magenta);margin-bottom:var(--s2)}
 
-.why .n{
-  font-family:var(--mono);
-  font-size:var(--fs-micro);
-  color:var(--magenta);
-  letter-spacing:0.14em;
-  display:block;
-  margin-bottom:var(--s2);
-}
-
-/* two modes */
-.two-col{
+/* two ways in — deliberately unequal, the gateway is the recommendation */
+.modes{
   display:grid;
-  gap:var(--s5);
+  gap:var(--s3);
   grid-template-columns:1fr;
-  align-items:start;
   margin-top:var(--s5);
 }
 
-@media(min-width:880px){ .two-col{grid-template-columns:1fr 1fr} }
+@media(min-width:920px){ .modes{grid-template-columns:1.25fr 1fr;align-items:stretch} }
 
-.mode h3{font-size:var(--fs-h3);margin-bottom:var(--s2)}
-.mode p{color:var(--ink-soft);font-size:0.98rem;max-width:30rem}
+.mode{
+  border:1px solid var(--rule);
+  padding:var(--s4) var(--s3);
+  background:#fff;
+}
+
+.mode.secondary{background:transparent;border-style:dashed}
+
+.mode .tagline{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:var(--fs-micro);
+  font-weight:500;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--magenta);
+  margin-bottom:var(--s2);
+}
+
+.mode.secondary .tagline{color:var(--ink-soft)}
+.mode h3{margin-bottom:var(--s2)}
+.mode p{color:var(--ink-soft);font-size:0.99rem}
 
 .mode .addr{
   display:inline-block;
-  margin-top:var(--s2);
+  margin-top:var(--s3);
+  padding:0.5rem 0.75rem;
+  background:var(--sky-deep);
+  color:var(--magenta-lift);
   font-family:var(--mono);
   font-size:var(--fs-mono);
-  color:var(--magenta);
   overflow-wrap:break-word;
 }
 
-/* routing ladder — scrolls inside itself, never the page */
-.table-wrap{
-  margin-top:var(--s4);
-  overflow-x:auto;
-  -webkit-overflow-scrolling:touch;
-}
-
+/* routing ladder, drawn as a ladder rather than a plain grid */
 .ladder{
-  width:100%;
-  min-width:19rem;
-  border-collapse:collapse;
+  list-style:none;
+  padding:0;
+  margin:var(--s5) 0 0;
   font-family:var(--mono);
   font-size:var(--fs-mono);
+  max-width:44rem;
 }
 
-.ladder th{
-  text-align:left;
-  font-weight:500;
-  font-size:var(--fs-micro);
-  letter-spacing:0.12em;
-  text-transform:uppercase;
-  color:var(--ink-soft);
-  padding:0 var(--s2) var(--s2) 0;
-  border-bottom:1px solid var(--rule);
-  white-space:nowrap;
-}
-
-.ladder td{
-  padding:0.7rem var(--s2) 0.7rem 0;
+.ladder li{
+  display:grid;
+  grid-template-columns:4.6rem 1fr auto;
+  align-items:center;
+  gap:var(--s2);
+  padding:0.72rem 0;
   border-bottom:1px solid var(--rule-soft);
-  vertical-align:baseline;
+  position:relative;
 }
 
-.ladder .pri{color:var(--ink-soft);white-space:nowrap}
-.ladder .to{text-align:right;padding-right:0;white-space:nowrap}
-.ladder .local{color:var(--lift)}
-.ladder .cloud{color:var(--airway)}
+.ladder li:last-child{border-bottom:0}
+
+.ladder .p{color:var(--ink-soft)}
+
+.ladder .rule-name{
+  position:relative;
+  padding-left:0.9rem;
+  overflow-wrap:break-word;
+}
+
+/* the bar is the diagram: length encodes priority */
+.ladder .rule-name::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:50%;
+  width:3px;
+  height:var(--h,50%);
+  transform:translateY(-50%);
+  background:var(--bar,var(--rule));
+}
+
+.ladder .l100::before{--h:100%;--bar:var(--magenta)}
+.ladder .l95::before{--h:88%;--bar:var(--magenta)}
+.ladder .l85::before{--h:74%;--bar:var(--lift)}
+.ladder .l55::before{--h:54%;--bar:var(--lift)}
+.ladder .l10::before{--h:26%;--bar:var(--airway)}
+.ladder .l0::before{--h:14%;--bar:var(--airway)}
+
+.ladder .dest{text-align:right;white-space:nowrap}
+.ladder .local{color:#8a5e0e}
+.ladder .cloud{color:#2f6383}
 .ladder .flag{color:var(--magenta)}
-.ladder tr:last-child td{border-bottom:0}
 
 .aside{
   margin-top:var(--s4);
@@ -548,78 +642,72 @@ h2{font-size:var(--fs-h2);max-width:17ch}
   border-left:2px solid var(--magenta);
   max-width:var(--measure);
   color:var(--ink-soft);
-  font-size:0.98rem;
+  font-size:0.99rem;
 }
 
-.aside.tight{margin-top:var(--s2)}
+.aside.tight{margin-top:var(--s3)}
 
 /* install */
 pre{
   font-family:var(--mono);
   font-size:var(--fs-mono);
-  line-height:1.9;
-  background:var(--sky-deep);
+  line-height:2;
+  background:var(--sky-panel);
   color:var(--sky-fg);
   padding:var(--s4) var(--s3);
-  margin:var(--s4) 0 0;
+  margin:var(--s5) 0 0;
   overflow-x:auto;
   -webkit-overflow-scrolling:touch;
+  border:1px solid var(--rule-sky);
   border-left:3px solid var(--lift);
+  box-shadow:0 24px 50px -30px rgba(0,0,0,.7);
+  max-width:46rem;
 }
 
-pre .c{color:var(--sky-fg-soft)}
+pre .c{color:#72899a}
+pre .bin{color:var(--magenta-lift);font-weight:600}
+pre .sub{color:var(--airway)}
+pre .arg{color:var(--lift)}
+pre .val{color:var(--sky-fg)}
 
-/* support */
+/* support — the one big gap on the page lands before this */
 .support{
   background:var(--chart-deep);
   border-top:1px solid var(--rule);
-  border-bottom:1px solid var(--rule);
+  margin-top:var(--s7);
+  padding:var(--s6) 0;
 }
 
 .fund{
-  display:grid;
-  gap:1px;
-  background:var(--rule);
-  border:1px solid var(--rule);
-  grid-template-columns:1fr;
+  display:block;
   margin-top:var(--s4);
-  max-width:48rem;
-}
-
-@media(min-width:700px){ .fund{grid-template-columns:1fr 1fr} }
-
-.fund a{
-  background:var(--chart);
+  max-width:34rem;
+  background:#fff;
+  border:1px solid var(--rule);
+  border-left:3px solid var(--magenta);
   padding:var(--s4) var(--s3);
   text-decoration:none;
-  display:block;
-  transition:background 200ms var(--ease);
+  transition:transform 260ms var(--ease),box-shadow 260ms var(--ease);
 }
 
-.fund a:hover{background:#fff}
+@media(prefers-reduced-motion:no-preference){
+  .fund:hover{transform:translateY(-3px);box-shadow:0 20px 38px -24px rgba(11,18,25,.5)}
+  .fund:hover .go{transform:translateX(5px)}
+}
 
 .fund .name{
-  font-family:var(--display);
-  font-weight:600;
-  text-transform:uppercase;
-  letter-spacing:0.05em;
-  font-size:0.94rem;
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:var(--s3);
+  font-family:var(--display);
+  font-weight:700;
+  font-size:1.28rem;
+  letter-spacing:-0.02em;
 }
 
-.fund .name .go{
-  color:var(--magenta);
-  transition:transform 220ms var(--ease);
-}
-
-@media(prefers-reduced-motion:no-preference){
-  .fund a:hover .go{transform:translateX(4px)}
-}
-
-.fund p{margin-top:var(--s1);color:var(--ink-soft);font-size:0.96rem}
+.fund .go{color:var(--magenta);transition:transform 260ms var(--ease)}
+.fund p{margin-top:var(--s1);color:var(--ink-soft);font-size:0.99rem}
 
 .built{
   margin-top:var(--s5);
@@ -628,14 +716,14 @@ pre .c{color:var(--sky-fg-soft)}
   max-width:48rem;
 }
 
-.built p{margin-bottom:var(--s2);color:var(--ink-soft);font-size:0.98rem}
+.built p{margin-bottom:var(--s2);color:var(--ink-soft);font-size:0.99rem}
 
 .built a{
   display:inline-block;
   font-family:var(--mono);
   font-size:var(--fs-mono);
   margin-right:var(--s3);
-  padding:0.35rem 0;
+  padding:0.4rem 0;
   text-decoration:none;
   border-bottom:1px solid var(--rule);
   overflow-wrap:break-word;
@@ -648,27 +736,21 @@ footer{
   padding:var(--s5) 0;
   font-family:var(--mono);
   font-size:var(--fs-micro);
-  letter-spacing:0.07em;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
   color:var(--ink-soft);
   display:flex;
   flex-wrap:wrap;
   gap:var(--s2) var(--s4);
 }
 
-footer a{
-  text-decoration:none;
-  border-bottom:1px solid var(--rule);
-  padding:0.3rem 0;
-}
-
+footer a{text-decoration:none;border-bottom:1px solid var(--rule);padding:0.35rem 0}
 footer a:hover{border-bottom-color:var(--magenta)}
 footer .sep{margin-left:auto}
 
 @media(max-width:600px){ footer .sep{margin-left:0;width:100%} }
 
-@media(prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-}
+@media(prefers-reduced-motion:reduce){ html{scroll-behavior:auto} }
 </style>
 </head>
 <body>
@@ -689,64 +771,36 @@ footer .sep{margin-left:auto}
         <p class="eyebrow">Claude Code · Cursor Agent · Antigravity</p>
         <h1>One terminal<span class="down">every CLI</span></h1>
         <p class="lede">
-          Three CLIs. Three different strengths. You already pay for more than
-          one of them.
+          Three CLIs. Three different strengths. <strong>You already pay for
+          more than one of them.</strong>
         </p>
         <p class="lede">
-          Write a CLI name at the end of any message. Glider runs the task there
-          and returns the answer — and you never leave the terminal you are in.
-          When that CLI stops to ask permission, the question comes straight to
-          you.
+          Write a CLI name at the end of any message and Glider runs the task
+          there. When it stops to ask permission, the question comes straight
+          back to you.
         </p>
         <div class="cta-row">
-          <a class="btn" href="#handoff">See the handoff</a>
-          <a class="btn btn-ghost" href="#start">Get started</a>
+          <a class="btn" href="#start">Get started <span class="arw" aria-hidden="true">&rarr;</span></a>
+          <a class="btn btn-ghost" href="#handoff">See the handoff</a>
         </div>
       </div>
 
-      <!-- Glider is the hub. One task goes out to one CLI, and the answer
-           returns on the same route. Every label sits inside the viewBox. -->
-      <svg class="trace" viewBox="0 0 450 330" role="img"
-           aria-label="Your terminal connects to Glider. Glider connects to Claude Code, Cursor Agent and Antigravity. The task goes to Antigravity, and the answer returns the same way.">
-        <line class="grid-line" x1="0" y1="90"  x2="450" y2="90"  />
-        <line class="grid-line" x1="0" y1="165" x2="450" y2="165" />
-        <line class="grid-line" x1="0" y1="240" x2="450" y2="240" />
-
-        <text class="cmd-in" x="24" y="44">refactor this /agy</text>
-
-        <path class="link l-in" pathLength="100" d="M 44 165 L 158 165" />
-
-        <path class="link-idle l-out-1" pathLength="100" d="M 196 157 L 320 98" />
-        <path class="link-idle l-out-2" pathLength="100" d="M 198 165 L 320 165" />
-        <path class="link      l-out-3" pathLength="100" d="M 196 173 L 320 232" />
-
-        <path class="back l-back" pathLength="100"
-              d="M 330 256 C 258 300, 108 300, 34 200" />
-
-        <g class="g-you">
-          <rect class="mark mark-you" x="24" y="157" width="16" height="16" />
-          <text x="32" y="192" text-anchor="middle">you</text>
-        </g>
-
-        <g class="g-hub">
-          <!-- a hexagon, the way a chart draws a navigation beacon -->
-          <path class="mark mark-hub" d="M 195 165 L 187 178 L 173 178 L 165 165 L 173 152 L 187 152 Z" />
-          <text class="lbl-hub" x="180" y="200" text-anchor="middle">glider</text>
-        </g>
-
-        <g class="g-cli">
-          <path class="mark mark-cli" d="M 330 82 L 338 96 L 322 96 Z" />
-          <text x="346" y="94">claude</text>
-
-          <path class="mark mark-cli" d="M 330 157 L 338 171 L 322 171 Z" />
-          <text x="346" y="169">cursor-agent</text>
-
-          <path class="mark mark-active" d="M 330 232 L 338 246 L 322 246 Z" />
-          <text class="lbl-active" x="346" y="244">agy</text>
-        </g>
-
-        <text class="cmd-back" x="182" y="318" text-anchor="middle">answer · permission question</text>
-      </svg>
+      <div class="term" role="img"
+           aria-label="A terminal session. The user types: refactor the auth module, slash agy. Glider hands the task to agy. Agy asks permission to edit a file, and Glider returns the question with a token. The user replies with the token, and agy finishes, changing three files.">
+        <div class="term-bar">
+          <span>~/glider</span>
+          <span class="who">claude code</span>
+        </div>
+        <div class="term-body">
+          <p class="ln"><span class="pr">›</span> <span class="cmd-txt">refactor the auth module</span> <span class="fl">/agy</span></p>
+          <p class="ln sys gap">glider <span class="dim">→</span> handing to <span class="hl">agy</span></p>
+          <p class="ln warn gap">⏸ agy needs permission</p>
+          <p class="ln sub sys">Edit <span class="path">src/auth/session.ts</span></p>
+          <p class="ln sub sys">reply <span class="tok">4472bef1 /agy:allow</span></p>
+          <p class="ln gap"><span class="pr">›</span> <span class="cmd-txt">4472bef1</span> <span class="fl">/agy:allow</span></p>
+          <p class="ln okc gap">✓ agy · 3 files changed · 41s<span class="caret"></span></p>
+        </div>
+      </div>
     </header>
   </div>
 </div>
@@ -772,11 +826,11 @@ footer .sep{margin-left:auto}
   <section class="band ground" id="handoff">
     <div class="shell">
       <span class="wp-label">Handoff</span>
-      <h2 class="rise">The handoff</h2>
+      <h2 class="rise">One flag, and the work moves</h2>
       <p class="section-lede rise d1">
-        One flag at the end of the message, naming the CLI you want. That is the
-        entire syntax. It works from any of the three CLIs, to either of the
-        other two.
+        Put the name of the CLI you want at the end of the message. That is the
+        entire syntax. It works from any of the three, to either of the other
+        two.
       </p>
 
       <div class="flags rise d2">
@@ -786,24 +840,27 @@ footer .sep{margin-left:auto}
       </div>
 
       <div class="cards rise d3">
-        <div class="card">
+        <div class="card c1">
+          <span class="kick">Stay put</span>
           <h3>You never leave your terminal</h3>
           <p>
             No second window, and no repeating the task. Glider runs the other
             CLI and puts its final answer into the session you are already in.
           </p>
         </div>
-        <div class="card">
+        <div class="card c2">
+          <span class="kick">Relay</span>
           <h3>Its permission prompts reach you</h3>
           <p>
             Headless delegation normally forces you to switch permission prompts
-            off. Glider does the opposite. It gives you the question with a
-            token, and one reply grants exactly that one thing.
+            off. Glider does the opposite, and one reply grants exactly one
+            thing.
           </p>
           <code class="cmd">4472bef1 /claude:allow</code>
         </div>
-        <div class="card">
-          <h3>The task arrives with context</h3>
+        <div class="card c3">
+          <span class="kick">Context</span>
+          <h3>The task arrives informed</h3>
           <p>
             The other CLI receives your task, the right directory, and your
             recent instructions. It starts informed, and it does not guess.
@@ -824,7 +881,7 @@ footer .sep{margin-left:auto}
 
       <ul class="why rise d2">
         <li>
-          <span class="n">STRENGTHS</span>
+          <span class="n eyebrow">Strengths</span>
           <h3>Each one is better at something</h3>
           <p>
             One handles a long refactor well. Another is quicker on a small fix.
@@ -833,7 +890,7 @@ footer .sep{margin-left:auto}
           </p>
         </li>
         <li>
-          <span class="n">BILLING</span>
+          <span class="n eyebrow">Billing</span>
           <h3>You already pay for several</h3>
           <p>
             An unused subscription is wasted money. Send work to the plan that
@@ -842,7 +899,7 @@ footer .sep{margin-left:auto}
           </p>
         </li>
         <li>
-          <span class="n">SAFETY</span>
+          <span class="n eyebrow">Safety</span>
           <h3>Delegate without weakening permissions</h3>
           <p>
             Handing a task to a headless CLI normally means switching its
@@ -851,7 +908,7 @@ footer .sep{margin-left:auto}
           </p>
         </li>
         <li>
-          <span class="n">LOCK-IN</span>
+          <span class="n eyebrow">Lock-in</span>
           <h3>A fourth CLI costs one YAML entry</h3>
           <p>
             No code in the routing or delegation core checks which CLI is
@@ -868,12 +925,13 @@ footer .sep{margin-left:auto}
       <span class="wp-label">Access</span>
       <h2 class="rise">Two ways in</h2>
       <p class="section-lede rise d1">
-        You do not have to decide now. Start with the gateway, and switch to
-        transparent mode later if a CLI ignores proxy settings.
+        You do not have to decide now. Start with the gateway, and switch later
+        if a CLI ignores proxy settings.
       </p>
 
-      <div class="two-col rise d2">
+      <div class="modes rise d2">
         <div class="mode">
+          <span class="tagline">Start here</span>
           <h3>Gateway</h3>
           <p>
             Point the CLI at Glider with one environment variable or one
@@ -882,7 +940,8 @@ footer .sep{margin-left:auto}
           </p>
           <code class="addr">http://127.0.0.1:8080/v1</code>
         </div>
-        <div class="mode">
+        <div class="mode secondary">
+          <span class="tagline">When you need it</span>
           <h3>Transparent</h3>
           <p>
             Glider redirects the outbound HTTPS of the CLI at the operating
@@ -890,11 +949,9 @@ footer .sep{margin-left:auto}
             is already running.
           </p>
           <p class="aside tight">
-            This mode needs Administrator permission on Windows, or root
-            permission on Linux. It selects the traffic by process name on the
-            full machine. Read
-            <a href="docs/site/mitm.html">how interception operates</a> before
-            you turn it on.
+            Needs Administrator on Windows or root on Linux, and it matches by
+            process name across the whole machine.
+            <a href="docs/site/mitm.html">Read this first</a>.
           </p>
         </div>
       </div>
@@ -907,42 +964,41 @@ footer .sep{margin-left:auto}
       <h2 class="rise">Cheap turns never reach the cloud</h2>
       <p class="section-lede rise d1">
         A rename, an explanation, a format pass — none of these need a frontier
-        model. Glider reads the rules from the top, and the first match sets the
-        route. You can always override it by hand.
+        model. Rules are read from the top, and the first match sets the route.
       </p>
 
-      <div class="table-wrap rise d2">
-        <table class="ladder">
-          <tr>
-            <th class="pri">Priority</th><th>Rule</th><th class="to">Goes to</th>
-          </tr>
-          <tr>
-            <td class="pri">100 / 99</td>
-            <td>Explicit <span class="flag">/local</span> or <span class="flag">/cloud</span></td>
-            <td class="to">you decide</td>
-          </tr>
-          <tr>
-            <td class="pri">95</td><td>Cursor Composer summary</td>
-            <td class="to cloud">origin</td>
-          </tr>
-          <tr>
-            <td class="pri">85 – 70</td><td>Task classifier</td>
-            <td class="to local">local</td>
-          </tr>
-          <tr>
-            <td class="pri">55 / 50</td><td>Your Starlark rules</td>
-            <td class="to local">local</td>
-          </tr>
-          <tr>
-            <td class="pri">10 / 5</td><td>More than 8 000 tokens</td>
-            <td class="to cloud">cloud</td>
-          </tr>
-          <tr>
-            <td class="pri">0</td><td>No rule agrees</td>
-            <td class="to cloud">cloud</td>
-          </tr>
-        </table>
-      </div>
+      <ul class="ladder rise d2">
+        <li>
+          <span class="p">100 / 99</span>
+          <span class="rule-name l100">Explicit <span class="flag">/local</span> or <span class="flag">/cloud</span></span>
+          <span class="dest">you decide</span>
+        </li>
+        <li>
+          <span class="p">95</span>
+          <span class="rule-name l95">Cursor Composer summary</span>
+          <span class="dest cloud">origin</span>
+        </li>
+        <li>
+          <span class="p">85 – 70</span>
+          <span class="rule-name l85">Task classifier</span>
+          <span class="dest local">local</span>
+        </li>
+        <li>
+          <span class="p">55 / 50</span>
+          <span class="rule-name l55">Your Starlark rules</span>
+          <span class="dest local">local</span>
+        </li>
+        <li>
+          <span class="p">10 / 5</span>
+          <span class="rule-name l10">More than 8 000 tokens</span>
+          <span class="dest cloud">cloud</span>
+        </li>
+        <li>
+          <span class="p">0</span>
+          <span class="rule-name l0">No rule matches</span>
+          <span class="dest cloud">cloud</span>
+        </li>
+      </ul>
 
       <p class="aside rise d3">
         Glider claims a delegate flag before any of this runs, so handing work
@@ -961,11 +1017,11 @@ footer .sep{margin-left:auto}
       </p>
 
       <pre class="rise d2"><span class="c"># 1 — the local model</span>
-ollama serve
-ollama pull qwen2.5-coder:14b
+<span class="bin">ollama</span> <span class="sub">serve</span>
+<span class="bin">ollama</span> <span class="sub">pull</span> <span class="val">qwen2.5-coder:14b</span>
 
 <span class="c"># 2 — Glider</span>
-.\glider.exe --config configs\glider.local.yaml
+<span class="bin">.\glider.exe</span> <span class="arg">--config</span> <span class="val">configs\glider.local.yaml</span>
 
 <span class="c"># dashboard  http://127.0.0.1:8081</span>
 <span class="c"># gateway    http://127.0.0.1:8080/v1</span></pre>
@@ -986,17 +1042,10 @@ ollama pull qwen2.5-coder:14b
         tokens, you can support it.
       </p>
 
-      <div class="fund rise d2">
-        <!-- TODO: replace YOUR-KOFI-HANDLE with the real Ko-fi handle before publishing. -->
-        <a href="https://ko-fi.com/YOUR-KOFI-HANDLE">
-          <span class="name"><span>Ko-fi</span><span class="go">&rarr;</span></span>
-          <p>A one-off. No account needed, and it takes about a minute.</p>
-        </a>
-        <a href="https://github.com/sponsors/singhutsav5502">
-          <span class="name"><span>GitHub Sponsors</span><span class="go">&rarr;</span></span>
-          <p>Monthly, billed with the rest of your GitHub account.</p>
-        </a>
-      </div>
+      <a class="fund rise d2" href="https://github.com/sponsors/singhutsav5502">
+        <span class="name">GitHub Sponsors <span class="go" aria-hidden="true">&rarr;</span></span>
+        <p>Monthly, billed with the rest of your GitHub account. Cancel whenever.</p>
+      </a>
 
       <div class="built rise d3">
         <p>Built and maintained by Utsav Singh.</p>
@@ -1024,20 +1073,15 @@ ollama pull qwen2.5-coder:14b
 (() => {
   const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
 
-  /* ── flight path: the plane tracks scroll, eased the same way the
-        cursor-follower on utsv.work is eased ── */
+  /* flight path — eased with the same lerp utsv.work uses on the cursor */
   const route = document.querySelector('.route');
   const inner = document.querySelector('.route-inner');
-  const plane = document.querySelector('.fp-plane');
 
-  if (route && inner && plane) {
-    let target = 0;
-    let current = 0;
-    let raf = 0;
+  if (route && inner) {
+    let target = 0, current = 0, raf = 0;
 
-    const measure = () => {
-      inner.style.setProperty('--fp-h', inner.clientHeight + 'px');
-    };
+    const measure = () => inner.style.setProperty('--fp-h', inner.clientHeight + 'px');
+    const paint = (v) => inner.style.setProperty('--fp', v.toFixed(4));
 
     const readTarget = () => {
       const rect = route.getBoundingClientRect();
@@ -1045,17 +1089,13 @@ ollama pull qwen2.5-coder:14b
       target = span > 0 ? Math.min(1, Math.max(0, -rect.top / span)) : 0;
     };
 
-    const paint = (v) => inner.style.setProperty('--fp', v.toFixed(4));
-
     const tick = () => {
       current += (target - current) * 0.12;
       paint(current);
       if (Math.abs(target - current) > 0.0005) {
         raf = requestAnimationFrame(tick);
       } else {
-        paint(target);
-        current = target;
-        raf = 0;
+        paint(target); current = target; raf = 0;
       }
     };
 
@@ -1065,37 +1105,33 @@ ollama pull qwen2.5-coder:14b
       if (!raf) raf = requestAnimationFrame(tick);
     };
 
-    measure();
-    readTarget();
-    current = target;
-    paint(target);
-
+    measure(); readTarget(); current = target; paint(target);
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', () => { measure(); onScroll(); }, { passive: true });
   }
 
-  /* ── waypoint dots fill as you pass them ── */
+  /* waypoints fill as you pass them */
   const bands = document.querySelectorAll('.band');
   if (bands.length && 'IntersectionObserver' in window) {
-    const passed = new IntersectionObserver((entries) => {
-      entries.forEach((e) => e.target.classList.toggle('is-passed', e.isIntersecting));
+    const io = new IntersectionObserver((es) => {
+      es.forEach((e) => e.target.classList.toggle('is-passed', e.isIntersecting));
     }, { rootMargin: '-45% 0px -45% 0px' });
-    bands.forEach((b) => passed.observe(b));
+    bands.forEach((b) => io.observe(b));
   }
 
-  /* ── rise on entrance ── */
-  const rises = document.querySelectorAll('.rise');
+  /* entrance */
+  const reveal = document.querySelectorAll('.rise, .term');
   if (!motionOk.matches || !('IntersectionObserver' in window)) {
-    rises.forEach((el) => el.classList.add('is-in'));
+    reveal.forEach((el) => el.classList.add('is-in'));
   } else {
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
+    const io = new IntersectionObserver((es) => {
+      es.forEach((e) => {
         if (!e.isIntersecting) return;
         e.target.classList.add('is-in');
         io.unobserve(e.target);
       });
-    }, { rootMargin: '0px 0px -12% 0px', threshold: 0.05 });
-    rises.forEach((el) => io.observe(el));
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 });
+    reveal.forEach((el) => io.observe(el));
   }
 })();
 </script>
