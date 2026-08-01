@@ -572,16 +572,18 @@ footer .sep{margin-left:auto}
         <p class="eyebrow">Claude Code · Cursor Agent · Antigravity</p>
         <h1>One terminal<span class="down">every CLI</span></h1>
         <p class="lede">
-          The three CLIs are different tools. Write the name of a CLI at the end
-          of your message, and Glider runs the task on that CLI. You stay in your
-          own terminal.
+          Three CLIs. Three different strengths. You already pay for more than
+          one of them.
         </p>
         <p class="lede">
-          If that CLI asks for a permission, Glider gives the question to you.
+          Write a CLI name at the end of any message. Glider runs the task there
+          and returns the answer — and you never leave the terminal you are in.
+          When that CLI stops to ask permission, the question comes straight to
+          you.
         </p>
         <div class="cta-row">
           <a class="btn" href="#handoff">See the handoff</a>
-          <a class="btn btn-ghost" href="#start">Start</a>
+          <a class="btn btn-ghost" href="#start">Get started</a>
         </div>
       </div>
 
@@ -645,9 +647,9 @@ footer .sep{margin-left:auto}
       <p class="tick">5 000 ft</p>
       <h2>The handoff</h2>
       <p class="section-lede">
-        Put the flag at the end of the message. The flag gives the name of the
-        CLI that you want. This is the full syntax. It operates from each of the
-        three CLIs, to each of the other two.
+        One flag at the end of the message, naming the CLI you want. That is the
+        entire syntax. It works from any of the three CLIs, to either of the
+        other two.
       </p>
 
       <div class="flags">
@@ -658,27 +660,26 @@ footer .sep{margin-left:auto}
 
       <div class="cards">
         <div class="card">
-          <h3>You stay in your terminal</h3>
+          <h3>You never leave your terminal</h3>
           <p>
-            You do not open a second window, and you do not write the task
-            again. Glider runs the other CLI and puts its final answer in your
-            session.
+            No second window, and no repeating the task. Glider runs the other
+            CLI and puts its final answer into the session you are already in.
           </p>
         </div>
         <div class="card">
-          <h3>Permission questions come to you</h3>
+          <h3>Its permission prompts reach you</h3>
           <p>
-            When the other CLI stops for a permission, Glider gives you the
-            question and a token. Reply with the token, and the run continues
-            with that one permission.
+            Headless delegation normally forces you to switch permission prompts
+            off. Glider does the opposite. It gives you the question with a
+            token, and one reply grants exactly that one thing.
           </p>
           <code class="cmd">4472bef1 /claude:allow</code>
         </div>
         <div class="card">
-          <h3>The task includes your context</h3>
+          <h3>The task arrives with context</h3>
           <p>
-            The other CLI receives the task, the correct directory, and your
-            recent instructions. It does not start with no data and then guess.
+            The other CLI receives your task, the right directory, and your
+            recent instructions. It starts informed, and it does not guess.
           </p>
         </div>
       </div>
@@ -688,48 +689,47 @@ footer .sep{margin-left:auto}
   <section class="band ground">
     <div class="shell">
       <p class="tick">4 000 ft</p>
-      <h2>Why you use more than one</h2>
+      <h2>Why run more than one</h2>
       <p class="section-lede">
-        The three CLIs are not equivalent. The differences are the reason to use
-        them together.
+        These are genuinely different tools, and that is exactly why they are
+        better together.
       </p>
 
       <ul class="why">
         <li>
           <span class="n">STRENGTHS</span>
-          <h3>Each CLI is better at a different task</h3>
+          <h3>Each one is better at something</h3>
           <p>
-            One CLI is better at a large refactor. Another is better at a quick
-            correction. Another is better when it must read an unknown
-            repository. Select the CLI for each task.
+            One handles a long refactor well. Another is quicker on a small fix.
+            Another reads an unfamiliar repository faster. Choose for each task,
+            not once and forever.
           </p>
         </li>
         <li>
           <span class="n">BILLING</span>
-          <h3>You possibly pay for more than one</h3>
+          <h3>You already pay for several</h3>
           <p>
-            A subscription that you do not use is a waste. Send the work to the
-            plan that has capacity. Do not use all of one quota while another
-            quota stays full.
+            An unused subscription is wasted money. Send work to the plan that
+            still has room, instead of draining one quota while another stays
+            full.
           </p>
         </li>
         <li>
           <span class="n">SAFETY</span>
-          <h3>Delegation keeps the permissions</h3>
+          <h3>Delegate without weakening permissions</h3>
           <p>
-            Usually, to give a task to a CLI with no console, you must stop its
-            permission questions. Glider sends each question to you, and you
-            give one permission at a time.
+            Handing a task to a headless CLI normally means switching its
+            permission prompts off entirely. Glider relays every one of them to
+            you, and grants them one at a time.
           </p>
         </li>
         <li>
           <span class="n">LOCK-IN</span>
-          <h3>To add a fourth CLI is a small task</h3>
+          <h3>A fourth CLI costs one YAML entry</h3>
           <p>
-            You write one YAML entry and one adapter. No code in the routing or
-            in the delegation examines the name of a CLI, and thus a new tool
-            does not need a rewrite.
-            <a href="docs/site/ngl.html">How that boundary operates</a>.
+            No code in the routing or delegation core checks which CLI is
+            talking. Adding a tool means new files, never a rewrite.
+            <a href="docs/site/ngl.html">How that boundary works</a>.
           </p>
         </li>
       </ul>
@@ -741,8 +741,8 @@ footer .sep{margin-left:auto}
       <p class="tick">3 000 ft</p>
       <h2>Two ways in</h2>
       <p class="section-lede">
-        You do not have to select now. Start with the gateway. Change to
-        transparent mode later if a CLI ignores the proxy settings.
+        You do not have to decide now. Start with the gateway, and switch to
+        transparent mode later if a CLI ignores proxy settings.
       </p>
 
       <div class="two-col">
@@ -750,16 +750,17 @@ footer .sep{margin-left:auto}
           <h3>Gateway</h3>
           <p>
             Point the CLI at Glider with one environment variable or one
-            base-URL setting. This mode is clear, and it operates with each CLI.
+            base-URL setting. Explicit, easy to reason about, and it works with
+            every CLI.
           </p>
           <code class="addr">http://127.0.0.1:8080/v1</code>
         </div>
         <div class="mode">
           <h3>Transparent</h3>
           <p>
-            Glider redirects the outbound HTTPS of the CLI in the operating
-            system. You configure nothing, and it operates on a session that is
-            already open.
+            Glider redirects the outbound HTTPS of the CLI at the operating
+            system level. Nothing to configure, and it works on a session that
+            is already running.
           </p>
           <p class="aside tight">
             This mode needs Administrator permission on Windows, or root
@@ -776,11 +777,11 @@ footer .sep{margin-left:auto}
   <section class="band ground">
     <div class="shell">
       <p class="tick">2 000 ft</p>
-      <h2>It also uses your own machine</h2>
+      <h2>Cheap turns never reach the cloud</h2>
       <p class="section-lede">
-        This is the other half of the work. A task that does not need a large
-        cloud model can operate on your machine. Glider reads the rules from the
-        top, and the first rule that agrees sets the route.
+        A rename, an explanation, a format pass — none of these need a frontier
+        model. Glider reads the rules from the top, and the first match sets the
+        route. You can always override it by hand.
       </p>
 
       <table class="ladder">
@@ -815,9 +816,9 @@ footer .sep{margin-left:auto}
       </table>
 
       <p class="aside">
-        Glider finds a delegate flag before it reads these rules. Thus a task
-        that you give to another CLI does not interfere with the routing.
-        <a href="docs/site/routing.html">The full sequence</a>.
+        Glider claims a delegate flag before any of this runs, so handing work
+        to another CLI never collides with routing.
+        <a href="docs/site/routing.html">The full ladder</a>.
       </p>
     </div>
   </section>
@@ -825,10 +826,9 @@ footer .sep{margin-left:auto}
   <section class="band ground" id="start">
     <div class="shell">
       <p class="tick">0 ft · ground</p>
-      <h2>Start Glider</h2>
+      <h2>Get it running</h2>
       <p class="section-lede">
-        Use pure local mode. You do not need a cloud key, and no data goes off
-        the machine.
+        Pure local mode. No cloud key, and nothing leaves the machine.
       </p>
 
       <pre><span class="c"># 1 — the local model</span>
@@ -842,9 +842,9 @@ ollama pull qwen2.5-coder:14b
 <span class="c"># gateway    http://127.0.0.1:8080/v1</span></pre>
 
       <p class="aside">
-        Then point your CLI at the gateway. Or turn on transparent mode, and you
-        do not do that step.
-        <a href="docs/site/pure-local.html">The full procedure</a>.
+        Then point your CLI at the gateway — or turn on transparent mode and
+        skip that step entirely.
+        <a href="docs/site/pure-local.html">The full walkthrough</a>.
       </p>
     </div>
   </section>
@@ -853,24 +853,24 @@ ollama pull qwen2.5-coder:14b
     <div class="shell">
       <h2>Fund the work</h2>
       <p class="section-lede">
-        Glider is free and open source. If Glider saves your tokens, you can
-        give support.
+        Glider is free, open source, and built in the open. If it is saving you
+        tokens, you can support it.
       </p>
 
       <div class="fund">
         <!-- TODO: replace YOUR-KOFI-HANDLE with the real Ko-fi handle before publishing. -->
         <a href="https://ko-fi.com/YOUR-KOFI-HANDLE">
           <span class="name"><span>Ko-fi</span><span>&rarr;</span></span>
-          <p>One payment. You do not need an account, and it takes approximately one minute.</p>
+          <p>A one-off. No account needed, and it takes about a minute.</p>
         </a>
         <a href="https://github.com/sponsors/singhutsav5502">
           <span class="name"><span>GitHub Sponsors</span><span>&rarr;</span></span>
-          <p>A monthly payment, with the other charges of your GitHub account.</p>
+          <p>Monthly, billed with the rest of your GitHub account.</p>
         </a>
       </div>
 
       <div class="built">
-        <p>Utsav Singh writes and maintains Glider.</p>
+        <p>Built and maintained by Utsav Singh.</p>
         <a href="https://utsv.work">utsv.work</a>
         <a href="https://github.com/singhutsav5502">github.com/singhutsav5502</a>
         <a href="https://github.com/singhutsav5502/Glider/issues">Report a problem</a>
