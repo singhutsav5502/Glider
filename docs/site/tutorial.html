@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Walkthrough · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a class="active" href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Walkthrough</div>
+      <h1>From nothing to a cross-CLI handoff</h1>
+      <p>
+        This page starts with an empty machine and ends with a task that you
+        send from one CLI to a different CLI. Each step gives the command and
+        the result that you must see. If a step does not agree, stop at that
+        step.
+      </p>
+
+      <h2 id="need">1 · What you must have first</h2>
+      <ul>
+        <li><strong>Go 1.22 or later</strong>, to build Glider.</li>
+        <li><strong>A minimum of one AI coding CLI</strong>: <code>claude</code>, <code>cursor-agent</code> or <code>agy</code>. Two or more give you the handoff.</li>
+        <li><strong>Windows or Linux.</strong> Transparent redirection does not operate on macOS yet.</li>
+        <li><strong>Ollama</strong> — only if you want the local model. It is not necessary for the handoff.</li>
+      </ul>
+      <p>Make sure that each CLI operates by itself first:</p>
+      <pre>claude --version
+cursor-agent --version
+agy --version</pre>
+
+      <h2 id="build">2 · Build Glider</h2>
+      <pre>git clone https://github.com/singhutsav5502/Glider
+cd Glider
+go build -o glider.exe ./cmd/glider</pre>
+      <p class="note">
+        Run Glider from the repository root. It reads
+        <code>configs/glider.yaml</code> and
+        <code>configs/vendor_candidates.yaml</code> from the current directory.
+      </p>
+
+      <h2 id="run">3 · Start it</h2>
+      <p>
+        The default config turns transparent redirection on. Therefore Glider
+        gets the traffic of each CLI with no change to any of them. On Windows,
+        start the terminal as Administrator. On Linux, use root.
+      </p>
+      <pre>.\glider.exe</pre>
+      <p>You must see these lines:</p>
+      <pre>dashboard  http://127.0.0.1:8081
+gateway    http://127.0.0.1:8080/v1</pre>
+      <p>
+        Open the dashboard. If the <strong>Vendors</strong> page is empty, push
+        <strong>Rescan for CLIs</strong>. Glider must find each CLI that you
+        installed.
+      </p>
+
+      <h2 id="gateway">4 · If you do not want Administrator</h2>
+      <p>
+        Transparent mode needs Administrator or root. Without it, use the
+        gateway instead: point one CLI at Glider and start Glider with no
+        special permission.
+      </p>
+      <pre># Claude Code
+set ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+
+# any CLI with a base-URL setting
+http://127.0.0.1:8080/v1</pre>
+      <p>
+        Everything below this point operates the same in the two modes. Refer to
+        <a href="mitm.html">MITM &amp; interception</a> for the full comparison.
+      </p>
+
+      <h2 id="workspace">5 · Tell Glider your project directory</h2>
+      <p>
+        A delegate CLI must know which directory to use. Glider asks you one
+        time for each session. Reply with the path and the flag:
+      </p>
+      <pre>. /workspace</pre>
+      <p>
+        You can also set a default on the <strong>Vendors</strong> page of the
+        dashboard. Then Glider does not ask.
+      </p>
+
+      <h2 id="firsthandoff">6 · Your first handoff</h2>
+      <p>
+        Type this in <strong>any</strong> of the three CLIs. Put the name of a
+        <strong>different</strong> CLI at the end of the message.
+      </p>
+      <pre>summarize the last ten commits /cursor-agent</pre>
+      <p>
+        Glider claims the message, runs <code>cursor-agent</code>, and puts its
+        final answer in your session. You do not open a second window.
+      </p>
+      <p class="note">
+        <strong>The flag must be at the end.</strong> If you put
+        <code>/cursor-agent</code> at the start, your own CLI reads it as a local
+        command and never sends the message. Refer to
+        <a href="delegation.html#flag">Delegation</a> for the cause.
+      </p>
+
+      <h2 id="permission">7 · Answer a permission question</h2>
+      <p>
+        A delegate CLI stops when it needs a permission. Glider gives you the
+        question and a token:
+      </p>
+      <pre>[claude] needs permission for:
+  Edit: src/auth/session.ts
+
+Reply with "4472bef1 /claude:allow" to approve and continue,
+or "4472bef1 /claude:deny" to skip this step.</pre>
+      <p>Send the token back. The run continues with that one permission only:</p>
+      <pre>4472bef1 /claude:allow</pre>
+      <p>
+        The token identifies the run and the vendor. Glider gives it to you, and
+        you must not write your own token. When the run completes, Glider shows
+        the edits as a diff.
+      </p>
+
+      <h2 id="templates">8 · Templates: another way to run a CLI</h2>
+      <p>
+        Add <code>:name</code> after the vendor to select a different command
+        template. These are the templates that
+        <code>configs/vendor_candidates.yaml</code> gives you:
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>Default</th><th>Other templates</th></tr>
+        <tr><td><code>claude</code></td><td>headless</td><td><code>:interactive</code></td></tr>
+        <tr><td><code>cursor-agent</code></td><td>headless</td><td><code>:interactive</code></td></tr>
+        <tr><td><code>agy</code></td><td><strong>interactive</strong></td><td><code>:headless</code>, <code>:interactive</code></td></tr>
+      </table>
+      <pre>fix the auth bug /claude:interactive
+refactor this module /agy:headless</pre>
+      <p>
+        An <strong>interactive</strong> template opens the native session of
+        that CLI in a new window, with your task as the first message. You then
+        control that window, and no text comes back to your chat. A
+        <strong>headless</strong> template runs the CLI with no window and
+        returns the final answer to you.
+      </p>
+      <p class="note">
+        <code>/agy</code> opens a window, because the default template of agy is
+        interactive. Its headless mode cannot ask you for a permission, so it
+        always fails at the first permission. Use <code>/agy:headless</code>
+        only when you accept that limit.
+      </p>
+
+      <h2 id="routing">9 · Send a turn to your own machine</h2>
+      <p>
+        This is a different mechanism from the handoff, and it is optional.
+        Glider can send a turn to a local model instead of the cloud.
+      </p>
+      <pre>ollama serve
+ollama pull qwen2.5-coder:14b</pre>
+      <p>Then use a routing command. It can go at any position in the message:</p>
+      <table>
+        <tr><th>Command</th><th>Result</th></tr>
+        <tr><td><code>/local</code> or <code>/fast</code></td><td>Sends this turn to your machine</td></tr>
+        <tr><td><code>/cloud</code> or <code>/heavy</code></td><td>Sends this turn to the cloud</td></tr>
+        <tr><td>no command</td><td>The rule ladder decides</td></tr>
+      </table>
+      <pre>/local explain what this function does</pre>
+      <p>
+        To use only local models, start Glider with the pure local profile. Then
+        Glider uses no cloud key at all.
+      </p>
+      <pre>.\glider.exe --config configs\glider.local.yaml</pre>
+      <p>
+        Refer to <a href="routing.html">Routing</a> for the full rule ladder, and
+        to <a href="pure-local.html">Pure local</a> for the profile.
+      </p>
+
+      <h2 id="dashboard">10 · Watch what it does</h2>
+      <p>Open <code>http://127.0.0.1:8081</code>. These pages are the useful ones:</p>
+      <table>
+        <tr><th>Page</th><th>What it gives you</th></tr>
+        <tr><td>Overview</td><td>Each request, with the rule that claimed it and the cause</td></tr>
+        <tr><td>Vendors</td><td>The CLIs that Glider found, the default workspace, and the reply format</td></tr>
+        <tr><td>Rules Engine</td><td>The routing rules, and a test that shows which rule a message obeys</td></tr>
+        <tr><td>Playground</td><td>A safe place to try the commands. It runs no CLI.</td></tr>
+        <tr><td>Config</td><td>The full config. Glider applies most changes immediately.</td></tr>
+      </table>
+      <p>
+        Start on the <strong>Playground</strong> page. It examines what you type
+        with the same parser that Glider uses, and it changes nothing.
+      </p>
+
+      <h2 id="commands">11 · Each command in one table</h2>
+      <table>
+        <tr><th>You type</th><th>Result</th></tr>
+        <tr><td><code>&lt;task&gt; /claude</code></td><td>Runs the task in Claude Code</td></tr>
+        <tr><td><code>&lt;task&gt; /cursor-agent</code></td><td>Runs the task in Cursor Agent</td></tr>
+        <tr><td><code>&lt;task&gt; /agy</code></td><td>Opens Antigravity in a window with the task</td></tr>
+        <tr><td><code>&lt;task&gt; /agy:headless</code></td><td>Runs Antigravity with no window</td></tr>
+        <tr><td><code>&lt;task&gt; /claude:interactive</code></td><td>Opens Claude Code in a window with the task</td></tr>
+        <tr><td><code>&lt;token&gt; /claude:allow</code></td><td>Gives one permission and continues the run</td></tr>
+        <tr><td><code>&lt;token&gt; /claude:deny</code></td><td>Refuses the permission and continues</td></tr>
+        <tr><td><code>&lt;path&gt; /workspace</code></td><td>Sets the directory for this session</td></tr>
+        <tr><td><code>/local</code> · <code>/cloud</code></td><td>Selects the model for this turn</td></tr>
+      </table>
+
+      <h2 id="wrong">12 · When something is wrong</h2>
+      <table>
+        <tr><th>What you see</th><th>The cause</th></tr>
+        <tr><td>"Unknown command: /agy"</td><td>The flag is at the start. Move it to the end.</td></tr>
+        <tr><td>Glider asks for a workspace each time</td><td>Set a default on the Vendors page.</td></tr>
+        <tr><td>The Vendors page is empty</td><td>Push <strong>Rescan for CLIs</strong>.</td></tr>
+        <tr><td>Transparent mode catches nothing</td><td>Start Glider as Administrator, and do the discovery first so it has the process names.</td></tr>
+        <tr><td>A delegate call needs 20 seconds or more</td><td>This is the start time of the other CLI. Glider adds no time limit.</td></tr>
+        <tr><td>The reply is a long JSON transcript</td><td>The reply format is "raw". Set it to "clean" on the Vendors page.</td></tr>
+      </table>
+
+      <p>
+        Next: <a href="delegation.html">Delegation</a> gives the full permission
+        relay, and <a href="architecture.html">Architecture</a> shows where each
+        part operates.
+      </p>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a> · <a href="architecture.html">Architecture →</a></footer>
+  </div>
+</body>
+</html>
