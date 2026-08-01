@@ -80,9 +80,6 @@ ul{margin:0;padding:0;list-style:none}
   margin-inline:auto;
 }
 
-/* every sibling group is a flex or grid track with a gap */
-.stack{display:flex;flex-direction:column}
-
 .eyebrow{
   font-family:var(--mono);
   font-size:clamp(0.66rem,1.7vw,0.72rem);
@@ -401,8 +398,6 @@ code{
   overflow-wrap:break-word;
 }
 
-.ic-list.origins li{color:var(--muted-lo)}
-
 .ic-node{
   font-family:var(--display);
   font-weight:900;
@@ -411,9 +406,28 @@ code{
   color:var(--teal-deep);
 }
 
+.ic-sub{
+  font-family:var(--mono);
+  font-size:clamp(0.72rem,1.8vw,0.8rem);
+  color:var(--teal-deep);
+  overflow-wrap:break-word;
+}
+
+/* the same three names on both sides is the whole claim: any of them
+   can send, any of them can run it */
+.ic-foot{
+  grid-column:1 / -1;
+  border-top:1px solid var(--rule);
+  padding-block:clamp(1rem,2.4vw,1.3rem);
+  color:var(--muted-lo);
+  max-width:56ch;
+}
+
+.ic-foot b{color:var(--ink);font-weight:400}
+
 .intercept-note{
   color:var(--muted-lo);
-  max-width:52ch;
+  max-width:56ch;
 }
 
 /* ═══════════ redirect: two unequal columns, one hairline ═══════════ */
@@ -776,7 +790,7 @@ code{
 
     <div class="intercept rise d2">
       <div class="ic-col">
-        <span class="ic-label">The CLIs you run</span>
+        <span class="ic-label">You type it here</span>
         <ul class="ic-list">
           <li>claude</li>
           <li>cursor-agent</li>
@@ -784,24 +798,31 @@ code{
         </ul>
       </div>
       <div class="ic-hub">
-        <span class="ic-label">Stands here</span>
+        <span class="ic-label">Reads the flag</span>
         <span class="ic-node">glider</span>
+        <span class="ic-sub">/claude · /cursor-agent · /agy</span>
       </div>
       <div class="ic-col">
-        <span class="ic-label">Their own backends</span>
-        <ul class="ic-list origins">
-          <li>api.anthropic.com</li>
-          <li>api2.cursor.sh</li>
-          <li>cloudcode-pa.googleapis.com</li>
+        <span class="ic-label">It runs over here</span>
+        <ul class="ic-list">
+          <li>claude</li>
+          <li>cursor-agent</li>
+          <li>agy</li>
         </ul>
       </div>
+      <p class="ic-foot">
+        <b>Any of the three can send. Any of the three can run it.</b> That is
+        six directions, and the answer always returns to the CLI you started
+        in — as if its own backend had replied.
+      </p>
     </div>
 
     <p class="intercept-note rise d2">
-      All three CLIs keep talking to their own backends with their own
-      credentials. Glider reads what passes through, claims the messages
-      addressed to it, and forwards the rest untouched. There are two ways to
-      put it there.
+      A message with no flag is none of Glider's business: it goes on to that
+      CLI's own backend, untouched, with that CLI's own credentials. Only a
+      flagged message is claimed, and then Glider runs the named CLI itself and
+      hands you back what it produced. There are two ways to put Glider in the
+      path.
     </p>
 
     <div class="split rise d3">
@@ -861,24 +882,30 @@ code{
 <section class="field-ink install" id="install">
   <div class="wrap install-in">
     <p class="eyebrow rise">Install</p>
-    <h2 class="rise d1">Get it running</h2>
-    <p class="rise d1">Pure local mode. No cloud key, and nothing leaves the machine.</p>
+    <h2 class="rise d1">Build it, run it, done</h2>
+    <p class="rise d1">
+      Transparent redirection is already on in the default config, so all three
+      CLIs are caught exactly as they are. You change nothing in any of them,
+      and a session that is already open gets caught too.
+    </p>
 
     <div class="termbox rise d2">
-      <span class="ln cmt"># 1 — the local model</span>
-      <span class="ln"><b class="bin">ollama</b> <b class="sub">serve</b></span>
-      <span class="ln"><b class="bin">ollama</b> <b class="sub">pull</b> qwen2.5-coder:14b</span>
+      <span class="ln cmt"># 1 — build</span>
+      <span class="ln"><b class="bin">go</b> <b class="sub">build</b> -o glider.exe ./cmd/glider</span>
       <span class="sp"></span>
-      <span class="ln cmt"># 2 — Glider</span>
-      <span class="ln"><b class="bin">.\glider.exe</b> <b class="sub">--config</b> configs\glider.local.yaml</span>
+      <span class="ln cmt"># 2 — run from the repo root, as Administrator</span>
+      <span class="ln"><b class="bin">.\glider.exe</b></span>
       <span class="sp"></span>
+      <span class="ln cmt"># claude · cursor-agent · agy are now redirected</span>
       <span class="ln cmt"># dashboard  http://127.0.0.1:8081</span>
-      <span class="ln cmt"># gateway    http://127.0.0.1:8080/v1</span>
     </div>
 
     <p class="rise d3">
-      Then point your CLI at the gateway, or turn on transparent mode and skip
-      that step. <a href="docs/site/pure-local.html">The full walkthrough</a>.
+      Administrator is what OS-level redirection costs on Windows, and root is
+      the cost on Linux. Without it, point a CLI at the gateway instead and
+      everything else works the same.
+      <a href="docs/site/pure-local.html">Running on a local model</a> is a
+      separate switch.
     </p>
   </div>
 </section>
