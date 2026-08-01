@@ -545,7 +545,6 @@ a.tab-link:hover { color: var(--fg); }
 #cfg-yaml-save,
 #vram-save-gpus,
 #vram-refresh,
-#swarm-threads-refresh,
 button.primary {
   border: 0;
   background: var(--ink);
@@ -567,7 +566,6 @@ button.primary {
 #cfg-yaml-save:hover,
 #vram-save-gpus:hover,
 #vram-refresh:hover,
-#swarm-threads-refresh:hover,
 button.primary:hover {
   background: #0f172a;
 }
