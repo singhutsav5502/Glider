@@ -103,14 +103,6 @@
         <tr><td>POST</td><td><code>/api/mcp/github/device/start</code> · <code>/poll</code></td><td>Starts and continues the OAuth device procedure</td></tr>
       </table>
 
-      <h2>The agent logs</h2>
-      <table>
-        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
-        <tr><td>GET</td><td><code>/api/agent-logs?scope=hoop|swarm&amp;id=&lt;id&gt;</code></td><td>Reads a ring buffer. Each entry has a <code>seq</code> number that always increases. Use <code>after_seq</code> to get only the new entries.</td></tr>
-        <tr><td>DELETE</td><td><code>/api/agent-logs?scope=…&amp;id=…</code></td><td>Deletes the contents of one ring buffer</td></tr>
-      </table>
-      <p class="note">This store is still in <code>internal/agentlog</code>, but no code writes to it today. Only the removed stage runners wrote to it. The endpoints operate correctly, but they give no data.</p>
-
       <h2>The gateway OpenAI endpoints</h2>
       <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code> · <code>/healthz</code></p>
       <p>The gateway also gives <code>/v1/messages</code>. This is the Anthropic endpoint that Claude Code uses. It also accepts the <a href="delegation.html">delegate</a> commands.</p>

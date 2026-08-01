@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/api"
 	"github.com/glider-ai/glider/internal/backend"
 	"github.com/glider-ai/glider/internal/backend/cloud"
@@ -479,10 +478,6 @@ func runGlider(ctx context.Context, cfgPath string) {
 		dash.Episodes = episodeStore
 		dash.ContextRetainDays = retainDays
 
-		agentLogs := agentlog.NewStore(256)
-		agentLogs.OnAppend(func(e agentlog.Entry) {
-			bus.Publish(metrics.Event{Type: metrics.EventAgentLog, Data: e})
-		})
 		mcpMgr := mcp.NewManager()
 		if hydrated, err := mcp.HydrateGitHubTokenFromStore(); err != nil {
 			log.Warn("mcp github credential hydrate", "err", err)
@@ -534,7 +529,6 @@ func runGlider(ctx context.Context, cfgPath string) {
 		fulfillHub.Tools = toolReg
 		dash.HotSwap = hotSwap
 		dash.Workspace = workspace
-		dash.AgentLogs = agentLogs
 		if st, err := os.Stat("docs/site"); err == nil && st.IsDir() {
 			dash.DocsDir = "docs/site"
 			log.Info("docs available", "url", fmt.Sprintf("http://127.0.0.1:%d/docs/", cfg.Server.DashboardPort))

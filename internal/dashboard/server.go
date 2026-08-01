@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/glider-ai/glider/internal/agentlog"
 	"github.com/glider-ai/glider/internal/contextgraph"
 	"github.com/glider-ai/glider/internal/contextkit"
 	"github.com/glider-ai/glider/internal/hotswap"
@@ -48,8 +47,6 @@ type Server struct {
 	Workspace string
 	// HotSwap is optional module registry (GET /api/hotswap/modules).
 	HotSwap *hotswap.Registry
-	// AgentLogs is per-run activity rings (NOT a global mixed log).
-	AgentLogs *agentlog.Store
 	// DocsDir optional static docs root (e.g. docs/site). Served at /docs/.
 	DocsDir string
 	// MCP is optional live MCP manager (GET /api/mcp/*, connect/disconnect/tools).
@@ -226,7 +223,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context/index-symbols", s.handleContextIndexSymbols)
 	mux.HandleFunc("/api/context/communities", s.handleContextCommunities)
 	mux.HandleFunc("/api/context/explain", s.handleContextExplain)
-	mux.HandleFunc("/api/agent-logs", s.handleAgentLogs)
 	mux.HandleFunc("/api/workspace", s.handleWorkspace)
 	mux.HandleFunc("/api/mcp/servers", s.handleMCPServers)
 	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)
