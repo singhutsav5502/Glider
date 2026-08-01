@@ -426,6 +426,102 @@ h1 .down{display:block;color:var(--magenta-lift)}
 
 @keyframes blink{to{opacity:0}}
 
+/* ═══════════ what the terminal does not show ═══════════
+   The session above is what you see. This is the traffic underneath
+   it: Glider standing in the path, and the packets moving through. */
+.flow{
+  margin-top:var(--s3);
+  border:1px solid var(--rule-sky);
+  background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));
+  padding:var(--s3) var(--s3) calc(var(--s3) - 0.2rem);
+}
+
+.flow-label{
+  display:block;
+  font-family:var(--mono);
+  font-size:var(--fs-micro);
+  font-weight:500;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+  color:var(--sky-fg-soft);
+}
+
+.flow-rail{
+  display:flex;
+  align-items:center;
+  margin-top:var(--s3);
+  font-family:var(--mono);
+  font-size:clamp(0.68rem,2vw,0.8rem);
+}
+
+.node{
+  padding:0.42rem 0.7rem;
+  white-space:nowrap;
+  letter-spacing:0.02em;
+  border:1px solid transparent;
+}
+
+.node.origin{
+  background:rgba(230,236,238,.08);
+  border-color:var(--rule-sky);
+  color:var(--sky-fg);
+}
+
+.node.hub{
+  background:var(--magenta);
+  color:#fff;
+  font-weight:600;
+  box-shadow:0 6px 18px -8px rgba(255,92,149,.75);
+}
+
+.node.dest{
+  background:rgba(230,173,77,.13);
+  border-color:rgba(230,173,77,.4);
+  color:var(--lift);
+}
+
+.wire{
+  flex:1 1 auto;
+  min-width:18px;
+  height:2px;
+  position:relative;
+  background:linear-gradient(90deg,var(--rule-sky),rgba(255,92,149,.55));
+}
+
+.wire::after{
+  content:"";
+  position:absolute;
+  top:-2px;
+  left:0;
+  width:6px;
+  height:6px;
+  background:var(--magenta-lift);
+  border-radius:50%;
+  opacity:0;
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .term.is-in ~ .flow .wire::after{animation:travel 2.6s var(--ease) infinite}
+  .term.is-in ~ .flow .wire.w2::after{animation-delay:.55s}
+}
+
+@keyframes travel{
+  0%{left:0;opacity:0}
+  12%{opacity:1}
+  88%{opacity:1}
+  100%{left:100%;opacity:0}
+}
+
+.flow-note{
+  margin-top:var(--s3);
+  color:var(--sky-fg-soft);
+  font-family:var(--body);
+  font-size:0.95rem;
+  line-height:1.55;
+}
+
+.flow-note b{color:var(--sky-fg);font-weight:500}
+
 /* ═══════════ horizon ═══════════
    A tall, slow transition rather than a seam. */
 .horizon{
@@ -582,59 +678,74 @@ h1 .down{display:block;color:var(--magenta-lift)}
   overflow-wrap:break-word;
 }
 
-/* routing ladder, drawn as a ladder rather than a plain grid */
-.ladder{
+/* ═══════════ the bonus ═══════════
+   Local routing is a second feature, not the pitch. It gets a panel
+   rather than a section, so the page does not change subject. */
+.bonus{
+  border:1px solid var(--rule);
+  border-left:3px solid var(--lift);
+  background:#fff;
+  padding:var(--s5) var(--s4);
+  max-width:52rem;
+}
+
+.bonus-kick{
+  display:block;
+  font-family:var(--mono);
+  font-size:var(--fs-micro);
+  font-weight:500;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+  color:#8a5e0e;
+  margin-bottom:var(--s2);
+}
+
+.bonus h2{font-size:clamp(1.55rem,4vw,2.1rem);max-width:22ch}
+
+.bonus-lede{
+  margin-top:var(--s3);
+  max-width:40rem;
+  color:var(--ink-soft);
+  font-size:1.02rem;
+}
+
+.mini{
   list-style:none;
   padding:0;
-  margin:var(--s5) 0 0;
+  margin:var(--s4) 0 0;
   font-family:var(--mono);
   font-size:var(--fs-mono);
-  max-width:44rem;
+  max-width:36rem;
 }
 
-.ladder li{
-  display:grid;
-  grid-template-columns:4.6rem 1fr auto;
-  align-items:center;
-  gap:var(--s2);
-  padding:0.72rem 0;
+.mini li{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:0.75rem;
+  padding:0.6rem 0;
   border-bottom:1px solid var(--rule-soft);
-  position:relative;
+  color:var(--ink-soft);
 }
 
-.ladder li:last-child{border-bottom:0}
+.mini li:last-child{border-bottom:0}
 
-.ladder .p{color:var(--ink-soft)}
-
-.ladder .rule-name{
-  position:relative;
-  padding-left:0.9rem;
-  overflow-wrap:break-word;
+.mini .mk{
+  flex:0 0 auto;
+  min-width:4.6rem;
+  color:var(--magenta);
+  font-weight:600;
 }
 
-/* the bar is the diagram: length encodes priority */
-.ladder .rule-name::before{
-  content:"";
-  position:absolute;
-  left:0;
-  top:50%;
-  width:3px;
-  height:var(--h,50%);
-  transform:translateY(-50%);
-  background:var(--bar,var(--rule));
+.mini .mk.auto{color:#8a5e0e}
+
+.bonus-note{
+  margin-top:var(--s4);
+  font-size:0.96rem;
+  color:var(--ink-soft);
 }
 
-.ladder .l100::before{--h:100%;--bar:var(--magenta)}
-.ladder .l95::before{--h:88%;--bar:var(--magenta)}
-.ladder .l85::before{--h:74%;--bar:var(--lift)}
-.ladder .l55::before{--h:54%;--bar:var(--lift)}
-.ladder .l10::before{--h:26%;--bar:var(--airway)}
-.ladder .l0::before{--h:14%;--bar:var(--airway)}
-
-.ladder .dest{text-align:right;white-space:nowrap}
-.ladder .local{color:#8a5e0e}
-.ladder .cloud{color:#2f6383}
-.ladder .flag{color:var(--magenta)}
+.bonus-note a{text-decoration-color:var(--rule)}
 
 .aside{
   margin-top:var(--s4);
@@ -646,6 +757,15 @@ h1 .down{display:block;color:var(--magenta-lift)}
 }
 
 .aside.tight{margin-top:var(--s3)}
+
+/* a quiet closing note — no accent rule, so it does not compete with
+   the warning inside the panel above it */
+.section-note{
+  margin-top:var(--s5);
+  max-width:var(--measure);
+  color:var(--ink-soft);
+  font-size:0.99rem;
+}
 
 /* install */
 pre{
@@ -801,6 +921,21 @@ footer .sep{margin-left:auto}
           <p class="ln okc gap">✓ agy · 3 files changed · 41s<span class="caret"></span></p>
         </div>
       </div>
+
+      <div class="flow" aria-hidden="true">
+        <span class="flow-label">Underneath</span>
+        <div class="flow-rail">
+          <span class="node origin">claude</span>
+          <span class="wire"></span>
+          <span class="node hub">glider</span>
+          <span class="wire w2"></span>
+          <span class="node dest">agy</span>
+        </div>
+        <p class="flow-note">
+          Glider stands in the CLI's own HTTPS path. <b>Neither end is
+          reconfigured</b>, and neither one knows it is there.
+        </p>
+      </div>
     </header>
   </div>
 </div>
@@ -922,11 +1057,12 @@ footer .sep{margin-left:auto}
 
   <section class="band ground" id="access">
     <div class="shell">
-      <span class="wp-label">Access</span>
-      <h2 class="rise">Two ways in</h2>
+      <span class="wp-label">Redirect</span>
+      <h2 class="rise">Getting into the path</h2>
       <p class="section-lede rise d1">
-        You do not have to decide now. Start with the gateway, and switch later
-        if a CLI ignores proxy settings.
+        The handoff only works because Glider is already standing in the CLI's
+        traffic. There are two ways to put it there, and you do not have to
+        decide now.
       </p>
 
       <div class="modes rise d2">
@@ -941,12 +1077,12 @@ footer .sep{margin-left:auto}
           <code class="addr">http://127.0.0.1:8080/v1</code>
         </div>
         <div class="mode secondary">
-          <span class="tagline">When you need it</span>
+          <span class="tagline">When a CLI will not cooperate</span>
           <h3>Transparent</h3>
           <p>
-            Glider redirects the outbound HTTPS of the CLI at the operating
-            system level. Nothing to configure, and it works on a session that
-            is already running.
+            Some CLIs ignore proxy settings entirely. Glider redirects their
+            outbound HTTPS at the operating system level instead — nothing to
+            configure, and it catches a session that is already running.
           </p>
           <p class="aside tight">
             Needs Administrator on Windows or root on Linux, and it matches by
@@ -955,56 +1091,42 @@ footer .sep{margin-left:auto}
           </p>
         </div>
       </div>
+
+      <p class="section-note rise d3">
+        Either way the CLI keeps its own credentials and its own backend. Glider
+        reads the traffic, claims the messages meant for it, and passes
+        everything else straight through.
+        <a href="docs/site/architecture.html">How interception works</a>.
+      </p>
     </div>
   </section>
 
   <section class="band ground" id="routing">
     <div class="shell">
-      <span class="wp-label">Routing</span>
-      <h2 class="rise">Cheap turns never reach the cloud</h2>
-      <p class="section-lede rise d1">
-        A rename, an explanation, a format pass — none of these need a frontier
-        model. Rules are read from the top, and the first match sets the route.
-      </p>
+      <span class="wp-label">Bonus</span>
 
-      <ul class="ladder rise d2">
-        <li>
-          <span class="p">100 / 99</span>
-          <span class="rule-name l100">Explicit <span class="flag">/local</span> or <span class="flag">/cloud</span></span>
-          <span class="dest">you decide</span>
-        </li>
-        <li>
-          <span class="p">95</span>
-          <span class="rule-name l95">Cursor Composer summary</span>
-          <span class="dest cloud">origin</span>
-        </li>
-        <li>
-          <span class="p">85 – 70</span>
-          <span class="rule-name l85">Task classifier</span>
-          <span class="dest local">local</span>
-        </li>
-        <li>
-          <span class="p">55 / 50</span>
-          <span class="rule-name l55">Your Starlark rules</span>
-          <span class="dest local">local</span>
-        </li>
-        <li>
-          <span class="p">10 / 5</span>
-          <span class="rule-name l10">More than 8 000 tokens</span>
-          <span class="dest cloud">cloud</span>
-        </li>
-        <li>
-          <span class="p">0</span>
-          <span class="rule-name l0">No rule matches</span>
-          <span class="dest cloud">cloud</span>
-        </li>
-      </ul>
+      <div class="bonus rise">
+        <span class="bonus-kick">One more thing</span>
+        <h2>Since it is already in the path</h2>
+        <p class="bonus-lede">
+          Glider can send the cheap turns to a model on your own machine instead
+          of out to the cloud. A rename, an explanation, a format pass — none of
+          them need a frontier model. Anything real still goes out as normal.
+        </p>
 
-      <p class="aside rise d3">
-        Glider claims a delegate flag before any of this runs, so handing work
-        to another CLI never collides with routing.
-        <a href="docs/site/routing.html">The full ladder</a>.
-      </p>
+        <ul class="mini">
+          <li><span class="mk">/local</span> <span>forces this turn onto your machine</span></li>
+          <li><span class="mk">/cloud</span> <span>forces it straight back out</span></li>
+          <li><span class="mk auto">auto</span> <span>a rule ladder decides, and you can rewrite it</span></li>
+        </ul>
+
+        <p class="bonus-note">
+          Off until you turn it on, and the delegate flag is always claimed
+          first — so handing work to another CLI never collides with this.
+          <a href="docs/site/routing.html">The routing rules</a> ·
+          <a href="docs/site/pure-local.html">Pure local mode</a>
+        </p>
+      </div>
     </div>
   </section>
 
