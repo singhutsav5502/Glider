@@ -157,8 +157,9 @@ ul{margin:0;padding:0;list-style:none}
   min-height:80vh;
   display:flex;
   align-items:center;
-  /* the single permitted wash */
-  background:radial-gradient(ellipse 90% 70% at 12% 0%,rgba(201,242,77,.055),transparent 62%);
+  /* background-image, never the shorthand — `background:` here would
+     reset the ink colour .field-ink sets and drop the field to paper */
+  background-image:radial-gradient(ellipse 90% 70% at 12% 0%,rgba(201,242,77,.055),transparent 62%);
 }
 
 .hero-in{display:flex;flex-direction:column;gap:clamp(1.6rem,4vw,2.4rem);padding-block:clamp(3.5rem,10vw,6rem)}
@@ -211,7 +212,9 @@ ul{margin:0;padding:0;list-style:none}
 
 .pos p{max-width:46ch;color:var(--citron-ink)}
 
-.cta{
+/* selector must outrank `.field-citron a`, or the label renders ink on
+   ink and the button reads as an empty black block */
+.field-citron a.cta{
   align-self:flex-start;
   display:inline-flex;
   align-items:center;
@@ -227,7 +230,7 @@ ul{margin:0;padding:0;list-style:none}
   transition:background 160ms ease,color 160ms ease;
 }
 
-.cta:hover{background:#000;color:var(--citron);text-decoration:none}
+.field-citron a.cta:hover{background:#000;color:var(--citron);text-decoration:none}
 .cta .arw{transition:transform 260ms var(--ease)}
 
 @media(prefers-reduced-motion:no-preference){
@@ -336,6 +339,82 @@ code{
 
 .flagblock span{overflow-wrap:break-word}
 .flagblock b{color:var(--teal);font-weight:600}
+
+/* ═══════════ where Glider actually stands ═══════════
+   Drawn in the spec register: hairlines and mono, no fills, no boxes.
+   It runs before the two setup routes, because the position is the
+   point and the routes are only two ways of reaching it. */
+.intercept{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:0;
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+}
+
+@media(min-width:800px){
+  .intercept{grid-template-columns:1fr auto 1fr;align-items:stretch}
+}
+
+.ic-col{
+  display:flex;
+  flex-direction:column;
+  gap:0.55rem;
+  padding-block:clamp(1.3rem,3vw,1.7rem);
+}
+
+.ic-hub{
+  display:flex;
+  flex-direction:column;
+  gap:0.55rem;
+  justify-content:center;
+  padding:clamp(1.3rem,3vw,1.7rem) clamp(1.4rem,4vw,2.6rem);
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+  background:var(--bone);
+}
+
+@media(min-width:800px){
+  .ic-hub{border-top:0;border-bottom:0;border-left:1px solid var(--rule);border-right:1px solid var(--rule)}
+  .ic-col:last-child{padding-left:clamp(1.4rem,4vw,2.6rem)}
+}
+
+.ic-label{
+  font-family:var(--mono);
+  font-size:clamp(0.64rem,1.6vw,0.7rem);
+  font-weight:600;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+/* the hub sits on a bone tint, so it takes the deeper teal — plain
+   --teal is 4.36:1 there and these labels are small */
+.ic-hub .ic-label{color:var(--teal-deep)}
+
+.ic-list{display:flex;flex-direction:column;gap:0.3rem}
+
+.ic-list li{
+  font-family:var(--mono);
+  font-size:clamp(0.8rem,2vw,0.9rem);
+  color:var(--ink);
+  overflow-wrap:break-word;
+}
+
+.ic-list.origins li{color:var(--muted-lo)}
+
+.ic-node{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:clamp(1.15rem,3vw,1.5rem);
+  letter-spacing:-0.02em;
+  color:var(--teal-deep);
+}
+
+.intercept-note{
+  color:var(--muted-lo);
+  max-width:52ch;
+}
 
 /* ═══════════ redirect: two unequal columns, one hairline ═══════════ */
 .split{
@@ -695,7 +774,37 @@ code{
       The handoff works because Glider is already in the traffic.
     </h2>
 
-    <div class="split rise d2">
+    <div class="intercept rise d2">
+      <div class="ic-col">
+        <span class="ic-label">The CLIs you run</span>
+        <ul class="ic-list">
+          <li>claude</li>
+          <li>cursor-agent</li>
+          <li>agy</li>
+        </ul>
+      </div>
+      <div class="ic-hub">
+        <span class="ic-label">Stands here</span>
+        <span class="ic-node">glider</span>
+      </div>
+      <div class="ic-col">
+        <span class="ic-label">Their own backends</span>
+        <ul class="ic-list origins">
+          <li>api.anthropic.com</li>
+          <li>api2.cursor.sh</li>
+          <li>cloudcode-pa.googleapis.com</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="intercept-note rise d2">
+      All three CLIs keep talking to their own backends with their own
+      credentials. Glider reads what passes through, claims the messages
+      addressed to it, and forwards the rest untouched. There are two ways to
+      put it there.
+    </p>
+
+    <div class="split rise d3">
       <div class="col">
         <span class="tag on">Start here</span>
         <h3>Gateway</h3>
