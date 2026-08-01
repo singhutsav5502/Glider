@@ -1829,7 +1829,7 @@ button.open-graph-editor.linkish {
 }
 
 /* ── Dialogs ── */
-.stage-edit-dialog {
+.glider-dialog {
   border: 1px solid var(--border);
   border-left: var(--trim);
   border-radius: var(--radius);
@@ -1841,12 +1841,12 @@ button.open-graph-editor.linkish {
   box-shadow: var(--shadow-md);
 }
 
-.stage-edit-dialog::backdrop {
+.glider-dialog::backdrop {
   background: rgba(15, 23, 42, 0.42);
   backdrop-filter: blur(2px);
 }
 
-.stage-edit-form h3 {
+.glider-dialog-form h3 {
   margin: 0 0 8px;
   font-family: var(--display);
   font-size: 1.1rem;

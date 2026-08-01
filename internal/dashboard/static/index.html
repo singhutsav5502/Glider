@@ -479,6 +479,36 @@
     </main>
   </div>
   <div id="glider-tip" class="glider-tip" role="tooltip" hidden></div>
+
+  <!-- Application dialogs. gliderPrompt and gliderConfirm in app.js replace
+       window.prompt and window.confirm, which cannot be styled and which stop
+       the JavaScript event loop. Keep these two elements here, outside #app and
+       outside each panel. They were in the panel-graphs section before, and the
+       removal of that feature deleted them. The MCP token controls then stopped
+       silently, because the two functions did not find their elements. -->
+  <dialog id="glider-prompt-dialog" class="glider-dialog">
+    <form id="glider-prompt-form" class="glider-dialog-form" method="dialog">
+      <h3 id="glider-prompt-title">Input</h3>
+      <p class="hint" id="glider-prompt-hint" style="margin:0 0 10px"></p>
+      <label class="span2" data-tip-key="glider-prompt-input">Value<input type="text" id="glider-prompt-input" autocomplete="off" /></label>
+      <div class="cfg-actions" style="margin-top:14px">
+        <button type="submit" id="glider-prompt-ok">OK</button>
+        <button type="button" id="glider-prompt-cancel" class="linkish" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="glider-confirm-dialog" class="glider-dialog">
+    <form id="glider-confirm-form" class="glider-dialog-form" method="dialog">
+      <h3 id="glider-confirm-title">Confirm</h3>
+      <p class="hint" id="glider-confirm-message" style="margin:0 0 10px"></p>
+      <div class="cfg-actions" style="margin-top:14px">
+        <button type="submit" id="glider-confirm-ok">OK</button>
+        <button type="button" id="glider-confirm-cancel" class="linkish">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/app.js"></script>
 </body>
 </html>

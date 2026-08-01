@@ -58,6 +58,10 @@
 
   /** @type {Record<string, { title: string, body?: string, values?: { v: string, d: string }[] }>} */
   const TIP_CATALOG = {
+    "glider-prompt-input": {
+      title: "Value",
+      body: "The text that you write for the question in the dialog.",
+    },
     "session-select": {
       title: "Session",
       body: "A session is one run of the Glider program. Glider adds the live WebSocket events to the current session. Select an earlier run to read its recorded log.",
