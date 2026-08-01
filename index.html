@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Glider — keep your tokens on the ground</title>
-<meta name="description" content="Glider sits between your AI coding CLI and its backend. It routes simple turns to a local model, and lets you hand a task from one CLI to another." />
-<meta property="og:title" content="Glider — keep your tokens on the ground" />
-<meta property="og:description" content="A local-first routing and permission-relay layer for Claude Code, Cursor Agent and Antigravity." />
+<title>Glider — one terminal, every AI coding CLI</title>
+<meta name="description" content="Hand a task from Claude Code to Cursor Agent to Antigravity without leaving the terminal you are in. Glider relays the other CLI's permission prompts back to you, and can route cheap turns to a local model." />
+<meta property="og:title" content="Glider — one terminal, every AI coding CLI" />
+<meta property="og:description" content="Claude Code, Cursor Agent and Antigravity, working as one. Delegation with permission relay, plus local-first routing." />
 <meta property="og:type" content="website" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -239,25 +239,28 @@ h1 .down{
 .trace{width:100%;height:auto;display:block;overflow:visible}
 
 .trace .grid-line{stroke:var(--rule-sky);stroke-width:1}
-.trace .path{fill:none;stroke:var(--magenta-lift);stroke-width:2.5;stroke-linecap:round}
-.trace .node{fill:var(--sky-deep);stroke-width:2.5}
-.trace .node-cloud{stroke:var(--airway)}
-.trace .node-local{stroke:var(--lift)}
-.trace text{font-family:var(--mono);font-size:11px;letter-spacing:.08em;fill:var(--sky-fg-soft)}
-.trace .t-local{fill:var(--lift)}
+.trace .leg{fill:none;stroke:var(--magenta-lift);stroke-width:2.5;stroke-linejoin:round}
+/* Enroute waypoints are drawn as triangles on aeronautical charts. */
+.trace .mark{stroke-width:2;fill:var(--sky-deep)}
+.trace .wp-here .mark{stroke:var(--lift)}
+.trace .wp-to .mark{stroke:var(--magenta-lift)}
+.trace text{font-family:var(--mono);font-size:11px;letter-spacing:.06em;fill:var(--sky-fg-soft)}
+.trace .wp-here text{fill:var(--lift)}
+.trace .hop{fill:var(--magenta-lift);font-size:10px}
 
 @media(prefers-reduced-motion:no-preference){
   /* pathLength="100" is set on the path, so the dash maths is exact
-     rather than an estimate of the curve's real length. */
-  .trace .path{
+     rather than an estimate of the route's real length. */
+  .trace .leg{
     stroke-dasharray:100;
     stroke-dashoffset:100;
-    animation:draw 1900ms cubic-bezier(.33,.9,.36,1) 250ms forwards;
+    animation:draw 1800ms cubic-bezier(.33,.9,.36,1) 250ms forwards;
   }
-  .trace .node,.trace text{opacity:0;animation:appear 600ms ease forwards}
-  .trace .node-cloud,.trace .t-cloud{animation-delay:400ms}
-  .trace .glider-mark{animation-delay:1300ms}
-  .trace .node-local,.trace .t-local{animation-delay:2000ms}
+  .trace .wp,.trace .hop{opacity:0;animation:appear 550ms ease forwards}
+  .trace .wp-1{animation-delay:350ms}
+  .trace .hop{animation-delay:1150ms}
+  .trace .wp-2{animation-delay:1350ms}
+  .trace .wp-3{animation-delay:1950ms}
 }
 
 @keyframes draw{to{stroke-dashoffset:0}}
@@ -371,6 +374,72 @@ h2{
   color:var(--magenta);
 }
 
+/* the three flags, side by side — the whole pitch in nine words */
+.flags{
+  font-family:var(--mono);
+  font-size:clamp(.82rem,1.6vw,.95rem);
+  line-height:2.1;
+  margin:0 0 2rem;
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+  padding:1.1rem 0;
+}
+
+.flags div{white-space:nowrap;overflow-x:auto}
+.flags .to{color:var(--magenta);font-weight:500}
+
+/* why you would mix CLIs at all */
+.why{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:grid;
+  gap:1.6rem 2.6rem;
+  grid-template-columns:1fr;
+  max-width:58rem;
+}
+
+@media(min-width:780px){ .why{grid-template-columns:1fr 1fr} }
+
+.why h3{
+  font-size:1rem;
+  letter-spacing:-0.005em;
+  margin-bottom:0.45rem;
+}
+
+.why p{margin:0;color:var(--ink-soft);font-size:0.97rem}
+
+.why .n{
+  font-family:var(--mono);
+  font-size:0.7rem;
+  color:var(--magenta);
+  letter-spacing:0.12em;
+  display:block;
+  margin-bottom:0.5rem;
+}
+
+/* built by */
+.built{
+  margin-top:2.4rem;
+  padding-top:1.6rem;
+  border-top:1px solid var(--rule);
+  max-width:46rem;
+}
+
+.built p{margin:0 0 0.8rem;color:var(--ink-soft);font-size:0.97rem}
+
+.built a{
+  font-family:var(--mono);
+  font-size:0.82rem;
+  letter-spacing:0.04em;
+  margin-right:1.4rem;
+  text-decoration:none;
+  border-bottom:1px solid var(--rule);
+  white-space:nowrap;
+}
+
+.built a:hover{border-bottom-color:var(--magenta)}
+
 /* install */
 pre{
   font-family:var(--mono);
@@ -462,6 +531,7 @@ footer .sep{margin-left:auto}
   <div class="shell">
     <nav class="nav">
       <a class="wordmark" href="#">Glider</a>
+      <a href="#handoff">Handoff</a>
       <a href="docs/site/index.html">Docs</a>
       <a href="https://github.com/singhutsav5502/Glider">GitHub</a>
       <a href="#support">Support</a>
@@ -469,36 +539,47 @@ footer .sep{margin-left:auto}
 
     <header class="hero">
       <div>
-        <p class="eyebrow">Local-first layer for AI coding CLIs</p>
-        <h1>Keep your tokens<span class="down">on the ground</span></h1>
+        <p class="eyebrow">Claude Code · Cursor Agent · Antigravity</p>
+        <h1>One terminal<span class="down">every CLI</span></h1>
         <p class="lede">
-          Glider sits between your AI coding CLI and its backend. The turns that
-          do not need a frontier model — renames, explanations, formatting — land
-          on your own machine. The rest carries on to the cloud, <em>and your CLI
-          never knows the difference</em>.
+          They are not the same tool, and you already pay for more than one. Put
+          the target at the end of a message and Glider runs the task on that
+          CLI instead — <em>without you leaving the one you are in</em>. When it
+          stops to ask permission, the question comes back to you.
         </p>
         <div class="cta-row">
-          <a class="btn" href="#start">Get started</a>
-          <a class="btn btn-ghost" href="docs/site/architecture.html">Read the docs</a>
+          <a class="btn" href="#handoff">See the handoff</a>
+          <a class="btn btn-ghost" href="#start">Get started</a>
         </div>
       </div>
 
-      <!-- The descent. Drawn once on load, then it rests. -->
+      <!-- A flight plan: straight legs between named waypoints, which is how
+           enroute charts actually draw a route. The waypoints are the CLIs. -->
       <svg class="trace" viewBox="0 0 460 300" role="img"
-           aria-label="A request descends from the cloud, through Glider, to a local model.">
-        <line class="grid-line" x1="0" y1="60"  x2="460" y2="60"  />
+           aria-label="A route with three waypoints. The task starts at Claude Code, is handed to Cursor Agent, then to Antigravity.">
+        <line class="grid-line" x1="0" y1="70"  x2="460" y2="70"  />
         <line class="grid-line" x1="0" y1="150" x2="460" y2="150" />
-        <line class="grid-line" x1="0" y1="240" x2="460" y2="240" />
+        <line class="grid-line" x1="0" y1="230" x2="460" y2="230" />
 
-        <path class="path" pathLength="100"
-              d="M 44 52 C 150 52, 168 150, 250 196 S 372 244, 416 244" />
+        <path class="leg" pathLength="100" d="M 56 76 L 232 152 L 400 218" />
 
-        <circle class="node node-cloud" cx="44"  cy="52"  r="7" />
-        <circle class="node node-local" cx="416" cy="244" r="7" />
+        <g class="wp wp-here wp-1">
+          <path class="mark" d="M 56 66 L 65 81 L 47 81 Z" />
+          <text x="56" y="52" text-anchor="middle">claude</text>
+          <text x="56" y="99" text-anchor="middle" font-size="9">you are here</text>
+        </g>
 
-        <text class="t-cloud" x="44"  y="34">api.anthropic.com</text>
-        <text class="glider-mark" x="238" y="176">glider :8080</text>
-        <text class="t-local" x="416" y="270" text-anchor="end">ollama · qwen2.5-coder</text>
+        <text class="hop" x="150" y="105">refactor this /cursor-agent</text>
+
+        <g class="wp wp-to wp-2">
+          <path class="mark" d="M 232 142 L 241 157 L 223 157 Z" />
+          <text x="232" y="177" text-anchor="middle">cursor-agent</text>
+        </g>
+
+        <g class="wp wp-to wp-3">
+          <path class="mark" d="M 400 208 L 409 223 L 391 223 Z" />
+          <text x="400" y="243" text-anchor="middle">agy</text>
+        </g>
       </svg>
     </header>
   </div>
@@ -509,42 +590,98 @@ footer .sep{margin-left:auto}
 <!-- ───────────────────────── ground ───────────────────────── -->
 <main>
 
-  <section class="band ground">
+  <section class="band ground" id="handoff">
     <div class="shell">
-      <p class="tick">4 000 ft</p>
-      <h2>Three things it does</h2>
+      <p class="tick">5 000 ft</p>
+      <h2>The handoff</h2>
       <p class="section-lede">
-        Named for what you do with them, not for the subsystem underneath.
+        The flag goes at the end of the message, and it names the CLI you want.
+        That is the whole syntax. It works from any of the three, to any of the
+        other two.
       </p>
+
+      <div class="flags">
+        <div>fix the failing test in internal/foo <span class="to">/claude</span></div>
+        <div>refactor this module <span class="to">/agy</span></div>
+        <div>summarize the last ten commits <span class="to">/cursor-agent</span></div>
+      </div>
 
       <div class="cards">
         <div class="card">
-          <h3>Hand a task to another CLI</h3>
+          <h3>You stay where you are</h3>
           <p>
-            Type the target at the end of a message and stay where you are. If
-            that CLI stops to ask permission, the question comes back to you —
-            answer it, and the run picks up where it stopped.
+            No second window, no re-explaining the task. Glider runs the other
+            CLI for you and brings its final answer back into the session you
+            were already in.
           </p>
-          <code class="cmd">refactor this module /agy</code>
         </div>
         <div class="card">
-          <h3>Send the cheap turns local</h3>
+          <h3>Its permission prompts reach you</h3>
           <p>
-            A rule ladder decides each request: explicit commands first, then a
-            task classifier, then your own Starlark, then a token ceiling. You
-            can always override it by hand.
+            When the other CLI stops for a permission, Glider hands you the
+            question with a token. Answer it and the run resumes with just that
+            grant — no blanket skip-permissions flag.
           </p>
-          <code class="cmd">/local explain this function</code>
+          <code class="cmd">4472bef1 /claude:allow</code>
         </div>
         <div class="card">
-          <h3>See why it chose that</h3>
+          <h3>The task arrives with context</h3>
           <p>
-            Every intercepted request shows up in a local dashboard with the rule
-            that claimed it and the reason. No decision is a black box.
+            The delegate gets the task, the right working directory, and your
+            recent instructions from the calling session — so it does not start
+            cold and guess.
           </p>
-          <code class="cmd">127.0.0.1:8081</code>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="band ground">
+    <div class="shell">
+      <p class="tick">4 000 ft</p>
+      <h2>Why run more than one</h2>
+      <p class="section-lede">
+        Because they are genuinely different tools, and the differences are the
+        point.
+      </p>
+
+      <ul class="why">
+        <li>
+          <span class="n">STRENGTHS</span>
+          <h3>Each is better at something</h3>
+          <p>
+            One is stronger at a long refactor, another at a quick grep-and-fix,
+            another at reading an unfamiliar repo. Picking per task beats
+            picking once and living with it.
+          </p>
+        </li>
+        <li>
+          <span class="n">BILLING</span>
+          <h3>You already pay for several</h3>
+          <p>
+            A subscription you are not using is wasted. Send work to whichever
+            plan has room, instead of burning one quota while another sits idle.
+          </p>
+        </li>
+        <li>
+          <span class="n">SAFETY</span>
+          <h3>Delegation without lowering the bar</h3>
+          <p>
+            Handing a task to a headless CLI usually means skipping its
+            permission prompts entirely. Here they are relayed to you and
+            granted one at a time.
+          </p>
+        </li>
+        <li>
+          <span class="n">LOCK-IN</span>
+          <h3>Adding a fourth is a small job</h3>
+          <p>
+            One YAML entry and one adapter. Nothing in the routing or delegation
+            core branches on which CLI is talking, so a new tool does not mean a
+            rewrite. <a href="docs/site/ngl.html">How that boundary works</a>.
+          </p>
+        </li>
+      </ul>
     </div>
   </section>
 
@@ -586,10 +723,11 @@ footer .sep{margin-left:auto}
   <section class="band ground">
     <div class="shell">
       <p class="tick">2 000 ft</p>
-      <h2>The ladder</h2>
+      <h2>It also keeps tokens on the ground</h2>
       <p class="section-lede">
-        Rules are read from the top. The first one that matches sets the route.
-        This is the default profile, shipped as it stands.
+        The other half of the job. Turns that do not need a frontier model —
+        renames, explanations, formatting — can run on your own machine instead.
+        Rules are read from the top, and the first match sets the route.
       </p>
 
       <table class="ladder">
@@ -675,6 +813,14 @@ ollama pull qwen2.5-coder:14b
           <p>Monthly, billed with the rest of your GitHub account.</p>
         </a>
       </div>
+
+      <div class="built">
+        <p>Built by Utsav Singh.</p>
+        <!-- TODO: replace YOUR-SITE.example with the real personal site before publishing. -->
+        <a href="https://github.com/singhutsav5502">github.com/singhutsav5502</a>
+        <a href="https://YOUR-SITE.example">Personal site</a>
+        <a href="https://github.com/singhutsav5502/Glider/issues">Report an issue</a>
+      </div>
     </div>
   </section>
 
@@ -683,7 +829,7 @@ ollama pull qwen2.5-coder:14b
       <span>Glider</span>
       <a href="docs/site/index.html">Docs</a>
       <a href="https://github.com/singhutsav5502/Glider">Source</a>
-      <a href="https://github.com/singhutsav5502/Glider/issues">Issues</a>
+      <a href="https://github.com/singhutsav5502">Utsav Singh</a>
       <span class="sep">Runs on your machine</span>
     </footer>
   </div>
