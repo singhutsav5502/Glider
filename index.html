@@ -715,7 +715,7 @@ code{
   <div class="wrap hero-in">
     <p class="eyebrow">The whole syntax</p>
     <p class="syntax">
-      <span>refactor this</span><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span>
+      <span>fix this</span><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span>
     </p>
     <p class="hero-line">
       That is it. The task runs in the other CLI and the answer comes back here.
@@ -829,12 +829,12 @@ code{
     <div class="plate rise d2">
       <div class="plate-head">
         <span>Route plate · one turn</span>
-        <span class="active">/claude</span>
+        <span class="active" id="fx-flag">/claude</span>
       </div>
 
       <div class="plate-body">
         <svg viewBox="0 0 1120 520" preserveAspectRatio="xMidYMid meet" role="img"
-             aria-label="A routing plate. The CLI you are typing in sends one turn to Glider, which routes it to Claude Code and returns the answer and any permission question. Glider can equally route a turn to Cursor Agent, to Antigravity, to a local Ollama model, or to a provider on your own key. A message with no flag passes straight through to the CLI's own backend.">
+             aria-label="A routing plate. The CLI you are typing in sends one turn to Glider, which routes it to whichever CLI the trailing flag names — Claude Code, Cursor Agent or Antigravity — and returns the answer and any permission question. Glider can equally route a turn to a local Ollama model or to a provider on your own key. A message with no flag passes straight through to the CLI's own backend.">
 
           <!-- register: destination rows and two column marks, held clear
                of the plate edges so they read as a grid, not a border -->
@@ -861,10 +861,10 @@ code{
 
           <!-- the turn being illustrated: origin, hub, spine, claude -->
           <path class="route-on" d="M 87 254 L 407 254" />
-          <path class="route-on" d="M 453 254 L 600 254 L 600 110 L 763 110" />
+          <path class="route-on" id="fx-route" d="M 453 254 L 600 254 L 600 110 L 763 110" />
 
           <!-- and the answer coming back, round the outside -->
-          <path class="ret" d="M 797 110 L 806 110 L 806 470 L 70 470 L 70 271" />
+          <path class="ret" id="fx-ret" d="M 797 110 L 806 110 L 806 470 L 70 470 L 70 271" />
           <text x="440" y="456" text-anchor="middle">answer · permission question</text>
 
           <!-- origin -->
@@ -876,14 +876,14 @@ code{
           <text class="t-hub" x="430" y="302" text-anchor="middle">GLIDER</text>
 
           <!-- CLI destinations -->
-          <path class="sym sym-on" d="M 780 95 L 795 125 L 765 125 Z" />
-          <text class="t-on" x="812" y="115">claude</text>
+          <path class="sym sym-on" data-dest d="M 780 95 L 795 125 L 765 125 Z" />
+          <text class="t-on" data-dest-lbl x="812" y="115">claude</text>
 
-          <path class="sym" d="M 780 159 L 795 189 L 765 189 Z" />
-          <text x="812" y="179">cursor-agent</text>
+          <path class="sym" data-dest d="M 780 159 L 795 189 L 765 189 Z" />
+          <text data-dest-lbl x="812" y="179">cursor-agent</text>
 
-          <path class="sym" d="M 780 223 L 795 253 L 765 253 Z" />
-          <text x="812" y="243">agy</text>
+          <path class="sym" data-dest d="M 780 223 L 795 253 L 765 253 Z" />
+          <text data-dest-lbl x="812" y="243">agy</text>
 
           <!-- not a CLI -->
           <line class="reg" x1="763" y1="290" x2="1080" y2="290" />
@@ -1053,6 +1053,78 @@ code{
     });
   }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 });
   rises.forEach((el) => io.observe(el));
+
+  /* ── cycle the three CLIs ──────────────────────────────────────
+     One index drives both the hero and the plate, so the flag being
+     typed upstairs is always the destination lit downstairs. The
+     markup ships a valid state, so nothing here is load-bearing. */
+  const VENDORS = [
+    { flag: '/agy',          row: 238 },
+    { flag: '/claude',       row: 110 },
+    { flag: '/cursor-agent', row: 174 },
+  ];
+
+  const heroFlag = document.querySelector('.syntax .flag');
+  const plateFlag = document.getElementById('fx-flag');
+  const plateRoute = document.getElementById('fx-route');
+  const plateRet = document.getElementById('fx-ret');
+  const destSyms = document.querySelectorAll('[data-dest]');
+  const destLbls = document.querySelectorAll('[data-dest-lbl]');
+
+  // plate rows run claude, cursor-agent, agy top to bottom
+  const ROW_ORDER = [110, 174, 238];
+
+  function paintPlate(v) {
+    if (plateFlag) plateFlag.textContent = v.flag;
+    if (plateRoute) plateRoute.setAttribute('d',
+      'M 453 254 L 600 254 L 600 ' + v.row + ' L 763 ' + v.row);
+    if (plateRet) plateRet.setAttribute('d',
+      'M 797 ' + v.row + ' L 806 ' + v.row + ' L 806 470 L 70 470 L 70 271');
+    const i = ROW_ORDER.indexOf(v.row);
+    destSyms.forEach((el, k) => el.classList.toggle('sym-on', k === i));
+    destLbls.forEach((el, k) => el.classList.toggle('t-on', k === i));
+  }
+
+  if (!heroFlag || !motionOk.matches) return;
+
+  let vi = 0;
+  let timer = 0;
+  const at = (fn, ms) => { timer = window.setTimeout(fn, ms); };
+
+  function hold() {
+    at(erase, 2400);
+  }
+
+  function erase() {
+    const t = heroFlag.textContent;
+    if (t.length > 1) {          // keep the leading slash on screen
+      heroFlag.textContent = t.slice(0, -1);
+      at(erase, 38);
+      return;
+    }
+    vi = (vi + 1) % VENDORS.length;
+    paintPlate(VENDORS[vi]);
+    at(type, 220);
+  }
+
+  function type() {
+    const want = VENDORS[vi].flag;
+    const t = heroFlag.textContent;
+    if (t.length < want.length) {
+      heroFlag.textContent = want.slice(0, t.length + 1);
+      at(type, 72);
+      return;
+    }
+    hold();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { window.clearTimeout(timer); timer = 0; }
+    else if (!timer) hold();
+  });
+
+  paintPlate(VENDORS[0]);
+  hold();
 })();
 </script>
 </body>
