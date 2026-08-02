@@ -369,6 +369,7 @@ code{
 /* the flag block, bounded by hairlines */
 .flagblock{
   display:flex;
+  min-width:0;
   flex-direction:column;
   gap:0.55rem;
   border-top:1px solid var(--rule);
@@ -434,7 +435,18 @@ code{
   font-size:10.5px;
 }
 
-.plate-body{padding:clamp(0.5rem,1.4vw,0.9rem)}
+.plate-body{padding:clamp(0.5rem,1.4vw,0.9rem);min-width:0}
+
+/* only shown once the plate has to be scrolled */
+.plate-hint{
+  display:none;
+  padding:0 clamp(0.8rem,2vw,1.1rem) 0.7rem;
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
 
 .plate svg{
   display:block;
@@ -685,6 +697,7 @@ code{
 
 .term-lines{
   display:flex;
+  min-width:0;
   flex-direction:column;
   padding:clamp(1.75rem,3vw,2.5rem);
   font-family:var(--mono);
@@ -830,6 +843,133 @@ code{
 }
 
 @media(prefers-reduced-motion:reduce){ html{scroll-behavior:auto} }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE PASS — everything below is additive and scoped to a
+   breakpoint, so the desktop composition above is untouched.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* notched devices */
+.nav{padding-top:env(safe-area-inset-top)}
+body{padding-bottom:env(safe-area-inset-bottom)}
+
+/* scroll progress: the mobile replacement for the section links, since
+   those are hidden below 720. Off with JS off, off with reduced motion. */
+.nav-progress{display:none}
+
+@media(max-width:720px) and (prefers-reduced-motion:no-preference){
+  .js .nav-progress{
+    display:block;
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:-1px;
+    height:2px;
+  }
+  .js .nav-progress span{
+    display:block;
+    height:100%;
+    width:calc(var(--sp,0) * 100%);
+    background:var(--citron);
+  }
+}
+
+@media(max-width:900px){
+  /* ── global hygiene ── */
+  :root{--gutter:1.25rem}
+
+  body{font-size:1rem}                 /* 16px floor: readability + no iOS zoom */
+
+  .hero-line,.pos p,.install p,.spec-top p,.row p,.col p,
+  .cell p,.footnote p,.support p{max-width:38ch}
+
+  .spec,.install-in,.support-in,.pos-in,.proof-in{
+    padding-block:clamp(3rem,12vw,5rem);
+  }
+
+  /* ── hero: two deliberate lines, never small ── */
+  .hero{min-height:72svh}
+  .hero-in{padding-block:clamp(1.75rem,6vw,3rem)}
+
+  .syntax{font-size:clamp(2.25rem,9vw,3.4rem)}
+  .cmd-verb{flex:0 0 100%}             /* forces the flag onto line two */
+  .cmd-tail{white-space:nowrap;display:inline-block}
+
+  /* ── positioning field ── */
+  .pos h1{font-size:clamp(2rem,9vw,2.75rem);line-height:0.98}
+
+  .field-citron a.cta{
+    width:100%;
+    justify-content:space-between;
+    min-height:56px;
+  }
+
+  /* ── spec rows: the margin column collapses to an inline number ── */
+  .row{grid-template-columns:auto 1fr;column-gap:0.75rem}
+  .row .idx{padding-top:0.15rem}
+
+  /* a wrapped CLI command reads as broken, so it scrolls instead */
+  .flagblock{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .flagblock span{white-space:nowrap;text-indent:0;padding-left:0}
+
+  /* ── route plate ── */
+  .plate-hint{display:block}
+
+  /* ── install ── */
+  .term-lines{font-size:0.8rem;padding:1.25rem}
+  .term-strip{padding:0.6rem 1.25rem}
+}
+
+@media(max-width:860px){
+  /* the divider between the two modes turns horizontal when they stack */
+  .split > * + *{
+    border-left:0;
+    padding-left:0;
+    border-top:1px solid var(--rule);
+    padding-top:clamp(2rem,5vw,3rem);
+  }
+}
+
+@media(max-width:720px){
+  .nav-in{padding-block:0.75rem}
+  .nav-actions{gap:0.5rem;border-left:0;padding-left:0}
+
+  /* ── proof cells: numeral inline, hairline between ── */
+  .proof-in{gap:0}
+
+  .cell{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    column-gap:0.75rem;
+    row-gap:0.5rem;
+    max-width:none;
+  }
+
+  .cell .num{font-size:28px;grid-column:1;grid-row:1}
+  .cell h2{grid-column:2;grid-row:1;align-self:center}
+  .cell p{grid-column:2;grid-row:2}
+
+  .cell + .cell{
+    border-top:1px solid var(--rule);
+    padding-top:clamp(1.75rem,6vw,2.5rem);
+    margin-top:clamp(1.75rem,6vw,2.5rem);
+  }
+}
+
+/* ── touch: no hover state is reachable, so nothing may depend on one ── */
+/* Touch has no hover, so a lift that only fires on tap feels broken, and
+   an affordance that only appears on hover is unreachable. Every hover
+   transform on this page is listed here — .cta, .sponsor and the
+   walkthrough link — and each hover-only cue gets a resting state. */
+@media(hover:none){
+  .field-citron a.cta:hover,.sponsor:hover{transform:none;box-shadow:none}
+  .cta:hover .arw,.sponsor:hover .go,.install-out .go:hover .arw{transform:none}
+
+  .install-out .go{text-decoration:underline;text-decoration-color:var(--citron)}
+  .sponsor .go{transform:translateX(2px)}
+  .nav-links a.is-here{box-shadow:0 1px 0 var(--citron)}
+}
+
 </style>
 </head>
 <body>
@@ -858,6 +998,7 @@ code{
       <a class="nav-site" href="https://utsv.work">utsv.work</a>
     </div>
   </div>
+  <div class="nav-progress" aria-hidden="true"><span></span></div>
 </div>
 
 <!-- ══════════ hero: the syntax ══════════ -->
@@ -865,7 +1006,7 @@ code{
   <div class="wrap hero-in">
     <p class="eyebrow">The whole syntax</p>
     <p class="syntax">
-      <span>fix this</span><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span>
+      <span class="cmd-verb">fix this</span><span class="cmd-tail"><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span></span>
     </p>
     <p class="hero-line">
       That is it. The task runs in the other CLI and the answer comes back here.
@@ -1046,6 +1187,8 @@ code{
           <text x="812" y="403">your own key</text>
         </svg>
       </div>
+
+      <p class="plate-hint">Scroll the plate sideways &rarr;</p>
 
       <div class="plate-legend">
         <span>Square = you</span>
@@ -1229,6 +1372,25 @@ code{
     });
   } else if (copyBtn) {
     copyBtn.hidden = true;   // no clipboard access, so do not offer it
+  }
+
+  /* ── scroll progress ────────────────────────────────────────────
+     Stands in for the section links below 720, where they are hidden.
+     CSS decides whether it is visible; this only supplies the fraction,
+     and it is skipped entirely under reduced motion. */
+  const prog = document.querySelector('.nav-progress span');
+  if (prog && motionOk.matches) {
+    let raf = 0;
+    const paint = () => {
+      raf = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const f = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+      prog.style.setProperty('--sp', f.toFixed(4));
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    paint();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
   }
 
   /* ── mark the section you are reading ────────────────────────────
