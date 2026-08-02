@@ -501,33 +501,65 @@ code{
 
 /* ═══════════ the same plate, told vertically ═══════════
    Below 760 the wide plate cannot show its subject without a sideways
-   drag, and a diagram you have to drag is not a diagram. This is the
-   same content as a DOM list that reads top to bottom, the way a phone
-   already scrolls. Same five shapes, same idle/active treatment — that
-   is what makes the two obviously one diagram, and what the legend
-   refers to. */
+   drag. This is the same content as a DOM list reading top to bottom.
+
+   Colour carries hierarchy, not decoration: teal marks only the leg the
+   turn travels — GLIDER, the live destination and the reply. Everything
+   idle is --muted-lo, so "active" means something. */
 .plate-tall{display:none}
 
 @media(max-width:760px){
   .plate-wide{display:none}
-  .plate-tall{display:block;padding:1.25rem 1rem 1.5rem}
+  .plate-tall{display:block;padding:1.5rem 1rem}
+}
+
+/* the spine is one continuous line, drawn behind the rows. Glyphs sit in
+   a fixed 28px column so it stays straight past the larger hub. */
+.pt-flow{position:relative}
+
+.pt-flow::before,.pt-flow::after{
+  content:"";
+  position:absolute;
+  left:13px;
+  width:2px;
+}
+
+.pt-flow::before{                       /* idle: the whole run */
+  top:22px;
+  bottom:22px;
+  background:var(--rule-strong);
+}
+
+.pt-flow::after{                        /* teal: only you -> hub */
+  top:22px;
+  height:44px;
+  background:var(--teal);
 }
 
 .pt-row{
   display:flex;
   align-items:center;
   gap:0.75rem;
-  min-height:40px;
+  min-height:44px;
   font-family:var(--mono);
   font-size:13px;
-  color:var(--ink);
 }
 
-.pt-glyph{flex:0 0 auto;width:20px;height:20px}
-.pt-glyph svg{display:block;width:20px;height:20px}
-.pt-glyph .sh{fill:none;stroke:var(--rule-strong);stroke-width:1.6}
-.pt-glyph .sh-hub{fill:var(--teal);stroke:#3ba0ae}
+.pt-glyph{
+  position:relative;
+  z-index:1;
+  flex:0 0 28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  background:var(--paper);
+}
 
+.pt-glyph svg{display:block}
+.pt-glyph .sh{fill:none;stroke:var(--rule-strong);stroke-width:1.75}
+.pt-glyph .sh-hub{fill:var(--teal);stroke:var(--teal);stroke-width:1.75}
+
+.pt-label{color:var(--muted-lo)}
 .pt-note{color:var(--muted-lo);font-size:11px;letter-spacing:0.1em;text-transform:uppercase}
 
 .pt-hub .pt-label{
@@ -538,48 +570,16 @@ code{
   color:var(--teal);
 }
 
-/* the spine: an absolutely positioned rule behind the rows, centred on
-   the 20px glyph column */
-.pt-trunk{position:relative}
-
-.pt-trunk::before{
-  content:"";
-  position:absolute;
-  left:9px;
-  top:20px;
-  bottom:20px;
-  width:2px;
-  background:var(--teal);
-}
-
-/* the branch: a bypass hanging off the you node, not a second track */
-.pt-branch{
-  margin-left:2.4rem;
-  padding:0.5rem 0.75rem;
-  border:1px dashed var(--rule-strong);
-  color:var(--muted-lo);
-  font-size:12px;
-  min-height:0;
-}
-
-.pt-branch .pt-mark{color:var(--muted-lo)}
-
-/* destinations fan off the spine: the list carries the rule, each row a stub */
-.pt-dests{
-  margin-left:9px;
-  border-left:1px solid var(--rule-strong);
-  padding-left:1.25rem;
-  position:relative;
-}
-
+/* destinations sit to the right of the spine, each met by a 16px hairline */
+.pt-dests{padding-left:30px}
 .pt-dests > li{position:relative}
 
 .pt-dests > li.pt-row::before{
   content:"";
   position:absolute;
-  left:-1.25rem;
+  left:-16px;
   top:50%;
-  width:1.25rem;
+  width:16px;
   height:1px;
   background:var(--rule-strong);
 }
@@ -588,11 +588,12 @@ code{
 .pt-dests > li.is-on .sh{stroke:var(--teal)}
 .pt-dests > li.is-on .pt-label{color:var(--teal);font-weight:600}
 
+/* a real divider: rule, label, rule, across the destination column */
 .pt-divider{
   display:flex;
   align-items:center;
   gap:0.75rem;
-  padding-block:0.9rem;
+  margin-block:1.25rem;
   font-family:var(--mono);
   font-size:11px;
   letter-spacing:0.16em;
@@ -600,17 +601,44 @@ code{
   color:var(--muted-lo);
 }
 
-.pt-divider::after{content:"";flex:1 1 auto;height:1px;background:var(--rule)}
+.pt-divider::before,.pt-divider::after{
+  content:"";
+  flex:1 1 auto;
+  height:1px;
+  background:var(--rule);
+}
 
-/* the return closes the loop, as a dashed segment rather than an arc */
-.pt-return{align-items:center;padding-top:0.5rem}
+/* an alternative, not a step — so it hangs off the bottom as a footnote
+   rather than sitting between you and the hub as if it happened first */
+.pt-branch{
+  margin:1rem 0 0 30px;
+  padding-left:0.9rem;
+  border-left:1px dashed var(--rule-strong);
+  font-family:var(--mono);
+  font-size:12px;
+  line-height:1.6;
+  color:var(--muted-lo);
+}
+
+/* the reply half of the loop */
+.pt-return{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  margin-top:1.5rem;
+  padding-top:1.5rem;
+  border-top:1px solid var(--rule);
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--teal);
+  white-space:nowrap;
+}
 
 .pt-return-line{
-  flex:0 0 auto;
-  width:2px;
+  flex:0 0 2px;
   align-self:stretch;
-  margin-left:9px;
-  margin-right:calc(0.75rem + 9px);
+  min-height:24px;
+  margin-left:13px;
   background-image:repeating-linear-gradient(180deg,var(--teal) 0 6px,transparent 6px 12px);
   background-size:2px 12px;
 }
@@ -621,15 +649,16 @@ code{
 
 @keyframes ptflow{to{background-position:0 -12px}}
 
-.pt-return .pt-mark{color:var(--teal);font-weight:600}
+.pt-return .pt-mark{font-weight:600}
 
-/* six legend items on one wrapping line is noise; two columns of three */
+/* two columns, and nothing breaks mid-phrase */
 @media(max-width:760px){
   .plate-legend{
     display:grid;
     grid-template-columns:1fr 1fr;
     gap:0.5rem 1rem;
   }
+  .plate-legend span{white-space:nowrap}
 }
 
 
@@ -1319,49 +1348,44 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 
 
       <div class="plate-tall">
-        <div class="pt-trunk">
+        <div class="pt-flow">
           <div class="pt-row">
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="sh" x="3" y="3" width="14" height="14"/></svg></span>
+            <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect class="sh" x="5" y="5" width="14" height="14"/></svg></span>
             <span class="pt-label">you</span>
           </div>
 
-          <div class="pt-row pt-branch">
-            <span class="pt-mark" aria-hidden="true">&#8627;</span>
-            <span>no flag &rarr; passes through, untouched</span>
-          </div>
-
           <div class="pt-row pt-hub">
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh sh-hub" d="M17 10 L13.5 16 L6.5 16 L3 10 L6.5 4 L13.5 4 Z"/></svg></span>
+            <span class="pt-glyph"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path class="sh sh-hub" d="M26 14 L20 24.4 L8 24.4 L2 14 L8 3.6 L20 3.6 Z"/></svg></span>
             <span class="pt-label">GLIDER</span>
             <span class="pt-note">reads the flag</span>
           </div>
+
+          <ul class="pt-dests">
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">claude</span>
+            </li>
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">cursor-agent</span>
+            </li>
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">agy</span>
+            </li>
+            <li class="pt-divider"><span>Not a CLI</span></li>
+            <li class="pt-row">
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle class="sh" cx="12" cy="12" r="8"/></svg></span><span class="pt-label">ollama · qwen2.5-coder</span>
+            </li>
+            <li class="pt-row">
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></span><span class="pt-label">your own key</span>
+            </li>
+          </ul>
         </div>
 
-        <ul class="pt-dests">
-          <li class="pt-row" data-dest-tall>
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">claude</span>
-          </li>
-          <li class="pt-row" data-dest-tall>
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">cursor-agent</span>
-          </li>
-          <li class="pt-row" data-dest-tall>
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">agy</span>
-          </li>
-          <li class="pt-divider"><span>Not a CLI</span></li>
-          <li class="pt-row">
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="sh" cx="10" cy="10" r="7"/></svg></span><span class="pt-label">ollama · qwen2.5-coder</span>
-          </li>
-          <li class="pt-row">
-            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 2.5 L17.5 10 L10 17.5 L2.5 10 Z"/></svg></span><span class="pt-label">your own key</span>
-          </li>
-        </ul>
+        <p class="pt-branch">&#8627; no flag · passes through, untouched</p>
 
-        <div class="pt-row pt-return">
+        <div class="pt-return">
           <span class="pt-return-line" aria-hidden="true"></span>
-          <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="sh" x="3" y="3" width="14" height="14"/></svg></span>
           <span class="pt-mark" aria-hidden="true">&uarr;</span>
-          <span class="pt-label">you</span>
-          <span class="pt-note">answer · permission question</span>
+          <span>answer · permission question</span>
         </div>
       </div>
 
@@ -1370,9 +1394,10 @@ body{padding-bottom:env(safe-area-inset-bottom)}
         <span>Hexagon = Glider</span>
         <span>Triangle = CLI</span>
         <span>Circle = local model</span>
-        <span>Diamond = your own key</span>
+        <span>Diamond = BYOK</span>
         <span>Solid = this turn</span>
-        <span>Dashed = passes through</span>
+        <span>Hairline = idle route</span>
+        <span>Dashed = pass-through</span>
       </div>
     </div>
 
