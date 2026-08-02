@@ -366,6 +366,10 @@ code{
   color:var(--teal);
 }
 
+/* teal is a light-field accent: on ink it measures 3.86:1 and fails AA,
+   so inline code there takes the ink field's own accent instead */
+.field-ink code{color:var(--citron)}
+
 /* the flag block, bounded by hairlines */
 .flagblock{
   display:flex;
@@ -437,16 +441,7 @@ code{
 
 .plate-body{padding:clamp(0.5rem,1.4vw,0.9rem);min-width:0}
 
-/* only shown once the plate has to be scrolled */
-.plate-hint{
-  display:none;
-  padding:0 clamp(0.8rem,2vw,1.1rem) 0.7rem;
-  font-family:var(--mono);
-  font-size:10.5px;
-  letter-spacing:0.14em;
-  text-transform:uppercase;
-  color:var(--muted-lo);
-}
+
 
 .plate svg{
   display:block;
@@ -457,9 +452,12 @@ code{
   margin-inline:auto;
 }
 
+/* Nothing in this section scrolls sideways. Between 760 and 1180 the wide
+   plate scales down, so its type is set larger to land back near 13px. */
 @media(max-width:1180px){
-  .plate-body{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .plate svg{min-width:1120px}
+  .plate-wide text{font-size:16px}
+  .plate-wide .t-sub{font-size:13.5px}
+  .plate-wide .t-hub{font-size:18px}
 }
 
 .plate .reg{stroke:var(--rule);stroke-width:1;fill:none}
@@ -500,6 +498,140 @@ code{
   letter-spacing:0.06em;
   fill:var(--teal);
 }
+
+/* ═══════════ the same plate, told vertically ═══════════
+   Below 760 the wide plate cannot show its subject without a sideways
+   drag, and a diagram you have to drag is not a diagram. This is the
+   same content as a DOM list that reads top to bottom, the way a phone
+   already scrolls. Same five shapes, same idle/active treatment — that
+   is what makes the two obviously one diagram, and what the legend
+   refers to. */
+.plate-tall{display:none}
+
+@media(max-width:760px){
+  .plate-wide{display:none}
+  .plate-tall{display:block;padding:1.25rem 1rem 1.5rem}
+}
+
+.pt-row{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  min-height:40px;
+  font-family:var(--mono);
+  font-size:13px;
+  color:var(--ink);
+}
+
+.pt-glyph{flex:0 0 auto;width:20px;height:20px}
+.pt-glyph svg{display:block;width:20px;height:20px}
+.pt-glyph .sh{fill:none;stroke:var(--rule-strong);stroke-width:1.6}
+.pt-glyph .sh-hub{fill:var(--teal);stroke:#3ba0ae}
+
+.pt-note{color:var(--muted-lo);font-size:11px;letter-spacing:0.1em;text-transform:uppercase}
+
+.pt-hub .pt-label{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:15px;
+  letter-spacing:0.04em;
+  color:var(--teal);
+}
+
+/* the spine: an absolutely positioned rule behind the rows, centred on
+   the 20px glyph column */
+.pt-trunk{position:relative}
+
+.pt-trunk::before{
+  content:"";
+  position:absolute;
+  left:9px;
+  top:20px;
+  bottom:20px;
+  width:2px;
+  background:var(--teal);
+}
+
+/* the branch: a bypass hanging off the you node, not a second track */
+.pt-branch{
+  margin-left:2.4rem;
+  padding:0.5rem 0.75rem;
+  border:1px dashed var(--rule-strong);
+  color:var(--muted-lo);
+  font-size:12px;
+  min-height:0;
+}
+
+.pt-branch .pt-mark{color:var(--muted-lo)}
+
+/* destinations fan off the spine: the list carries the rule, each row a stub */
+.pt-dests{
+  margin-left:9px;
+  border-left:1px solid var(--rule-strong);
+  padding-left:1.25rem;
+  position:relative;
+}
+
+.pt-dests > li{position:relative}
+
+.pt-dests > li.pt-row::before{
+  content:"";
+  position:absolute;
+  left:-1.25rem;
+  top:50%;
+  width:1.25rem;
+  height:1px;
+  background:var(--rule-strong);
+}
+
+.pt-dests > li.is-on::before{background:var(--teal);height:2px}
+.pt-dests > li.is-on .sh{stroke:var(--teal)}
+.pt-dests > li.is-on .pt-label{color:var(--teal);font-weight:600}
+
+.pt-divider{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  padding-block:0.9rem;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+.pt-divider::after{content:"";flex:1 1 auto;height:1px;background:var(--rule)}
+
+/* the return closes the loop, as a dashed segment rather than an arc */
+.pt-return{align-items:center;padding-top:0.5rem}
+
+.pt-return-line{
+  flex:0 0 auto;
+  width:2px;
+  align-self:stretch;
+  margin-left:9px;
+  margin-right:calc(0.75rem + 9px);
+  background-image:repeating-linear-gradient(180deg,var(--teal) 0 6px,transparent 6px 12px);
+  background-size:2px 12px;
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .pt-return-line{animation:ptflow 900ms linear infinite}
+}
+
+@keyframes ptflow{to{background-position:0 -12px}}
+
+.pt-return .pt-mark{color:var(--teal);font-weight:600}
+
+/* six legend items on one wrapping line is noise; two columns of three */
+@media(max-width:760px){
+  .plate-legend{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:0.5rem 1rem;
+  }
+}
+
 
 /* ═══════════ redirect: two unequal columns, one hairline ═══════════ */
 .split{
@@ -912,9 +1044,6 @@ body{padding-bottom:env(safe-area-inset-bottom)}
   .flagblock{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .flagblock span{white-space:nowrap;text-indent:0;padding-left:0}
 
-  /* ── route plate ── */
-  .plate-hint{display:block}
-
   /* ── install ── */
   .term-lines{font-size:0.8rem;padding:1.25rem}
   .term-strip{padding:0.6rem 1.25rem}
@@ -1123,7 +1252,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
         <span class="active" id="fx-flag">/claude</span>
       </div>
 
-      <div class="plate-body">
+      <div class="plate-body plate-wide">
         <svg viewBox="0 0 1120 520" preserveAspectRatio="xMidYMid meet" role="img"
              aria-label="A routing plate. The CLI you are typing in sends one turn to Glider, which routes it to whichever CLI the trailing flag names — Claude Code, Cursor Agent or Antigravity — and returns the answer and any permission question. Glider can equally route a turn to a local Ollama model or to a provider on your own key. A message with no flag passes straight through to the CLI's own backend.">
 
@@ -1188,7 +1317,53 @@ body{padding-bottom:env(safe-area-inset-bottom)}
         </svg>
       </div>
 
-      <p class="plate-hint">Scroll the plate sideways &rarr;</p>
+
+      <div class="plate-tall">
+        <div class="pt-trunk">
+          <div class="pt-row">
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="sh" x="3" y="3" width="14" height="14"/></svg></span>
+            <span class="pt-label">you</span>
+          </div>
+
+          <div class="pt-row pt-branch">
+            <span class="pt-mark" aria-hidden="true">&#8627;</span>
+            <span>no flag &rarr; passes through, untouched</span>
+          </div>
+
+          <div class="pt-row pt-hub">
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh sh-hub" d="M17 10 L13.5 16 L6.5 16 L3 10 L6.5 4 L13.5 4 Z"/></svg></span>
+            <span class="pt-label">GLIDER</span>
+            <span class="pt-note">reads the flag</span>
+          </div>
+        </div>
+
+        <ul class="pt-dests">
+          <li class="pt-row" data-dest-tall>
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">claude</span>
+          </li>
+          <li class="pt-row" data-dest-tall>
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">cursor-agent</span>
+          </li>
+          <li class="pt-row" data-dest-tall>
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 3.5 L17 16 L3 16 Z"/></svg></span><span class="pt-label">agy</span>
+          </li>
+          <li class="pt-divider"><span>Not a CLI</span></li>
+          <li class="pt-row">
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="sh" cx="10" cy="10" r="7"/></svg></span><span class="pt-label">ollama · qwen2.5-coder</span>
+          </li>
+          <li class="pt-row">
+            <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><path class="sh" d="M10 2.5 L17.5 10 L10 17.5 L2.5 10 Z"/></svg></span><span class="pt-label">your own key</span>
+          </li>
+        </ul>
+
+        <div class="pt-row pt-return">
+          <span class="pt-return-line" aria-hidden="true"></span>
+          <span class="pt-glyph"><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="sh" x="3" y="3" width="14" height="14"/></svg></span>
+          <span class="pt-mark" aria-hidden="true">&uarr;</span>
+          <span class="pt-label">you</span>
+          <span class="pt-note">answer · permission question</span>
+        </div>
+      </div>
 
       <div class="plate-legend">
         <span>Square = you</span>
@@ -1444,6 +1619,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
   const plateRet = document.getElementById('fx-ret');
   const destSyms = document.querySelectorAll('[data-dest]');
   const destLbls = document.querySelectorAll('[data-dest-lbl]');
+  const destTall = document.querySelectorAll('[data-dest-tall]');
 
   // plate rows run claude, cursor-agent, agy top to bottom
   const ROW_ORDER = [110, 174, 238];
@@ -1457,6 +1633,8 @@ body{padding-bottom:env(safe-area-inset-bottom)}
     const i = ROW_ORDER.indexOf(v.row);
     destSyms.forEach((el, k) => el.classList.toggle('sym-on', k === i));
     destLbls.forEach((el, k) => el.classList.toggle('t-on', k === i));
+    // the tall rendering lights the same index, so the two never disagree
+    destTall.forEach((el, k) => el.classList.toggle('is-on', k === i));
   }
 
   if (!heroFlag || !motionOk.matches) return;
