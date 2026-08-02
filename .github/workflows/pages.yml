@@ -1,0 +1,82 @@
+name: Deploy site to GitHub Pages
+
+# The published site is assembled, not the repo root: only the landing page
+# and docs/ go up, so Pages never serves the Go source, configs or planning
+# notes as browsable files.
+
+on:
+  push:
+    branches: [master, v1-cli-interop]
+    paths:
+      - index.html
+      - docs/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r docs _site/docs
+          # tells Pages to serve the files as they are instead of running
+          # them through Jekyll
+          touch _site/.nojekyll
+
+      - name: Check every internal link resolves in the built site
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          bad = []
+          for root, _, files in os.walk('_site'):
+              for f in files:
+                  if not f.endswith('.html'):
+                      continue
+                  p = os.path.join(root, f)
+                  html = open(p, encoding='utf-8').read()
+                  ids = set(re.findall(r'id="([^"]+)"', html))
+                  for href in re.findall(r'href="([^"]+)"', html):
+                      if href.startswith(('http', 'mailto:', '#')) and not href.startswith('#'):
+                          continue
+                      page, _, anchor = href.partition('#')
+                      if page:
+                          target = os.path.normpath(os.path.join(root, page))
+                          if not os.path.exists(target):
+                              bad.append(f'{p}: missing {page}')
+                              continue
+                      elif anchor and anchor not in ids:
+                          bad.append(f'{p}: missing anchor #{anchor}')
+          if bad:
+              print('\n'.join(bad))
+              sys.exit(1)
+          print('all internal links resolve')
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
