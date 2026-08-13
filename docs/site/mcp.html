@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tools &amp; MCP · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a class="active" href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Tools</div>
+      <h1>Tools &amp; MCP</h1>
+      <p>
+        <code>internal/tools</code> holds the internal tools, the plugins and the MCP servers in one
+        registry. The registry limits each tool to a workspace directory. The code is complete and
+        tested, and the dashboard and the delegation code use parts of it. But no code today runs
+        its own agent tool loop (<code>RunAgentLoop</code>). The removed stage runner did that.
+        Today you get multi-turn agent work when you
+        <a href="delegation.html">delegate</a> to a vendor CLI. That CLI has its own tool loop.
+      </p>
+
+      <h2 id="workspace">The workspace</h2>
+      <p>The default workspace is <code>~/.glider/workspace</code>. The setting is <code>orchestration.tools.workspace</code>. Do not set it to <code>.</code></p>
+      <pre>runs/&lt;run-id&gt;/
+  work/   ← clones, temporary files, intermediate files
+  out/    ← final files</pre>
+      <p>A path with no prefix goes into the <code>work/</code> directory of the current run. The function is <code>ScopeRel</code>. An internal tool cannot write outside of the workspace root directory.</p>
+      <h2 id="tools">The 17 internal tools</h2>
+      <p>These are each tool, and the input of each one. A name in <strong>bold</strong> is necessary.</p>
+      <table>
+        <tr><th>Tool</th><th>Input</th><th>Function</th></tr>
+        <tr><td><code>fs_read</code></td><td><code>path</code></td><td>Reads a text file in the workspace.</td></tr>
+        <tr><td><code>fs_write</code></td><td><strong><code>path</code></strong>, <strong><code>content</code></strong></td><td>Writes a UTF-8 file. Glider makes the parent directories. For a run, prefer <code>artifact_write</code>.</td></tr>
+        <tr><td><code>fs_list</code></td><td><code>path</code></td><td>Lists a directory.</td></tr>
+        <tr><td><code>fs_search</code></td><td><strong><code>pattern</code></strong></td><td>Finds a file by a glob on its name.</td></tr>
+        <tr><td><code>code_grep</code></td><td><code>query</code></td><td>Finds text in the files of the workspace.</td></tr>
+        <tr><td><code>git_status</code></td><td>—</td><td>The status of the repository in the workspace.</td></tr>
+        <tr><td><code>git_diff</code></td><td><code>stat</code></td><td>The changes. <code>stat</code> gives the short form.</td></tr>
+        <tr><td><code>git_log</code></td><td><code>n</code></td><td>The most recent <code>n</code> commits.</td></tr>
+        <tr><td><code>git_clone</code></td><td><strong><code>url</code></strong>, <code>dir</code></td><td>Clones into the workspace. The default directory is <code>repo</code>. <code>targetDir</code> is another name for <code>dir</code>.</td></tr>
+        <tr><td><code>shell_exec</code></td><td><code>command</code></td><td>Runs a command. <strong>It is off when you start.</strong> Refer to <a href="#limits">the limits</a>.</td></tr>
+        <tr><td><code>web_search</code></td><td><code>query</code>, <code>limit</code></td><td>Searches. Refer to <a href="#websearch">the providers</a>.</td></tr>
+        <tr><td><code>web_fetch</code></td><td><code>url</code></td><td>Reads a page as text.</td></tr>
+        <tr><td><code>http_fetch</code></td><td><code>url</code></td><td>A raw GET.</td></tr>
+        <tr><td><code>artifact_write</code></td><td><strong><code>kind</code></strong>, <strong><code>path</code></strong>, <strong><code>content</code></strong></td><td>Writes into <code>runs/&lt;id&gt;/work</code> or <code>/out</code>. <code>kind</code> is <code>work</code> or <code>out</code>.</td></tr>
+        <tr><td><code>context_query</code></td><td><code>turn_id</code>, <code>query</code>, <code>key</code>, <code>kind</code>, <code>prov</code>, <code>path</code>, <code>neigh</code></td><td>Queries <code>contextgraph</code>. Refer to <a href="context.html">Context</a>. The text form also accepts <code>explain=</code>, <code>communities=</code> and <code>limit=</code>.</td></tr>
+        <tr><td><code>datetime</code></td><td>—</td><td>The time now, UTC, in RFC 3339.</td></tr>
+        <tr><td><code>calculator</code></td><td><code>expr</code></td><td>One operation: <code>a+b</code>, <code>a-b</code>, <code>a*b</code> or <code>a/b</code>.</td></tr>
+      </table>
+
+      <h2 id="limits">What limits a tool</h2>
+      <table>
+        <tr><th>Setting</th><th>Default</th><th>Effect</th></tr>
+        <tr><td><code>orchestration.tools.workspace</code></td><td><code>~/.glider/workspace</code></td><td>No tool reads or writes outside this root.</td></tr>
+        <tr><td><code>orchestration.tools.allow_shell</code></td><td><code>false</code></td><td><code>shell_exec</code> does nothing until you turn it on.</td></tr>
+        <tr><td><code>orchestration.tools.shell_allowlist</code></td><td>—</td><td>The commands that <code>shell_exec</code> can run.</td></tr>
+        <tr><td><code>orchestration.tools.allow_hosts</code></td><td>each host</td><td>Limits <code>http_fetch</code> and <code>web_fetch</code>.</td></tr>
+      </table>
+      <p>
+        The <a href="configuration.html#orchestration">configuration reference</a> gives each of
+        these settings, and each setting of <code>web_search</code>.
+      </p>
+
+      <h2 id="mcp">MCP</h2>
+      <p>
+        Glider configures two servers when it starts, and the two are GitHub: the Copilot MCP server
+        through HTTP, and the same server in Docker through stdio.
+      </p>
+      <p class="note">
+        <strong>Today you cannot add a server of your own from the config or the API.</strong>
+        <code>internal/mcp.Manager</code> supports each stdio server and each Streamable HTTP server,
+        and <code>ServerConfig</code> has the fields for one — an id, a transport, a command with its
+        arguments and environment, or a URL, the authorization, and the toolsets. But no key of the
+        config reads it, and the endpoints under <code>/api/mcp/servers</code> only connect,
+        disconnect, reconnect and refresh a server that already exists. To add one needs a change in
+        the code, at the call to <code>Configure</code> in <code>cmd/glider</code>.
+      </p>
+      <p><strong>Authorization.</strong> Do not put <code>auth.token</code> in the config file.</p>
+      <pre>export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN</pre>
+      <p>You can also use the <strong>MCP</strong> page of the dashboard. Push <strong>Sign in with GitHub</strong> to start the browser OAuth procedure. If there is no client secret, Glider uses the device procedure. Push <strong>Paste PAT</strong> to write the token to <code>~/.glider/credentials/github_token</code> with mode 0600.</p>
+      <p>The Streamable HTTP client sends <code>MCP-Protocol-Version</code> and <code>X-MCP-Toolsets</code> with each request. This includes the <code>initialize</code> request. The client keeps the <code>Mcp-Session-Id</code> from the reply and sends it with each subsequent request. After a 401 error or a 403 error, the client removes the session, sends <code>initialize</code> one more time, and then tries the request again.</p>
+      <p>The <strong>MCP</strong> page of the dashboard shows the servers. You can connect, disconnect, reconnect and refresh each server. The page shows the tools of a connected server. If no server is connected, the page shows a recorded list of tools. For the full list of endpoints, refer to <a href="api.html#mcp">API · MCP</a>.</p>
+
+      <h2 id="websearch">How to set up web search</h2>
+      <pre># .env.local
+BRAVE_SEARCH_API_KEY=
+TAVILY_API_KEY=
+SERPAPI_KEY=
+SEARXNG_URL=http://127.0.0.1:8080</pre>
+      <p>The <code>auto</code> provider tries each service in sequence. If no key is available, it uses the DuckDuckGo HTML page. If you select a service that needs a key, and the key is empty, Glider shows an error. Glider does not make false results.</p>
+    </main>
+    <footer class="foot"><a href="api.html">← API</a> · <a href="index.html">Home</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

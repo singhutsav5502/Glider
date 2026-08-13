@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a class="active" href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">HTTP</div>
+      <h1>Dashboard API</h1>
+      <p>The base address is <code>http://127.0.0.1:8081</code>. You can change it in the config. The dashboard also gives <code>/ws</code>, a WebSocket connection for live data.</p>
+
+      <h2>The config and the models</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET/PUT</td><td><code>/api/config</code></td><td>Reads or writes the full config as JSON. Add <code>?format=yaml</code> to get YAML.</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/validate</code></td><td>Checks a config. Glider does not apply it.</td></tr>
+        <tr><td>GET</td><td><code>/api/vram</code></td><td>Lists the GPUs and the models that Glider found</td></tr>
+        <tr><td>PUT</td><td><code>/api/gpu-assignments</code></td><td>Assigns a GPU to each model</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/models</code> · <code>/api/models/{id}/load</code> · <code>/unload</code></td><td>Lists the models. Loads or unloads one model.</td></tr>
+        <tr><td>GET</td><td><code>/api/metrics</code></td><td>Gives the route counts and the local and cloud percentages</td></tr>
+        <tr><td>GET</td><td><code>/api/sessions</code> · <code>/{id}</code></td><td>Lists the recorded delegate sessions</td></tr>
+      </table>
+
+      <h2 id="context">The context store</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/context/recent</code></td><td>Lists the most recent events</td></tr>
+        <tr><td>GET</td><td><code>/api/context/turns</code> · <code>/turns/{id}</code></td><td>Lists the turn families</td></tr>
+        <tr><td>GET</td><td><code>/api/context/episodes</code> · <code>/export</code></td><td>Gives the episode pack</td></tr>
+        <tr><td>POST</td><td><code>/api/context/prune</code></td><td>Deletes the data that is older than the retention time</td></tr>
+        <tr><td>POST</td><td><code>/api/context/index-tree</code> · <code>/index-symbols</code></td><td>Reads the file tree or the symbols into the store</td></tr>
+        <tr><td>GET</td><td><code>/api/context/communities</code> · <code>/explain</code></td><td>Add <code>?turn_id=</code></td></tr>
+      </table>
+
+      <h2 id="router">The router and the rule editor</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>POST</td><td><code>/api/playground/parse</code></td><td>Reads a Starlark routing rule</td></tr>
+        <tr><td>POST</td><td><code>/api/router/explain</code></td><td>Shows which rule an example request obeys</td></tr>
+        <tr><td>GET</td><td><code>/api/router/lint</code></td><td>Examines the routing config for errors</td></tr>
+      </table>
+
+      <h2 id="mitm-debug">MITM data</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/mitm/debug/recent</code></td><td>Lists the most recent intercepted requests</td></tr>
+        <tr><td>POST</td><td><code>/api/mitm/enrollment</code></td><td>Sets the CA enrollment condition</td></tr>
+      </table>
+
+      <h2 id="vendors">The vendors and the hot-swap registry</h2>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/vendors</code></td><td>Gives the recorded vendor registry. It contains the CLIs that Glider found, the templates and the default workspace.</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/discover</code></td><td>Reads <code>configs/vendor_candidates.yaml</code> again and looks for the CLIs</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/workspace</code></td><td>Sets the default workspace directory for a delegate</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/enable</code> · <code>/disable</code></td><td>Turns a vendor on or off</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/templates</code></td><td>Changes the command templates of a vendor</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/vendors/{name}/permissions</code></td><td>Reads or sets the tool permissions that Glider keeps for a vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/{name}/launch-interactive</code></td><td>Opens a separate console window for that vendor</td></tr>
+        <tr><td>POST</td><td><code>/api/vendors/response-detail</code></td><td>Selects the "clean" format or the "raw" format for a delegate reply</td></tr>
+        <tr><td>GET/PUT</td><td><code>/api/hotswap/modules</code> · <code>/{name}</code></td><td>Reads or changes the hot-swap registry</td></tr>
+      </table>
+
+      <h2 id="workspace">The workspace</h2>
+      <p>These endpoints read the workspace directory. The default is <code>~/.glider/workspace</code>. In the dashboard, open the <strong>Workspace</strong> page.</p>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/workspace</code></td><td>Lists <code>runs/</code>. With no parameters, the endpoint uses <code>path=runs</code>.</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?run=&lt;id&gt;</code></td><td>Lists the <code>work</code> and <code>out</code> directories of that run</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?path=runs/&lt;id&gt;/out</code></td><td>Lists one directory</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?file=…&amp;limit=</code></td><td>Shows the start of a text file</td></tr>
+        <tr><td>GET</td><td><code>/api/workspace?diff=1&amp;a=…&amp;b=…</code></td><td>Compares two paths and shows the differences</td></tr>
+      </table>
+
+      <h2 id="mcp">MCP</h2>
+      <p>These endpoints use <code>internal/mcp.Manager</code>. In the dashboard, open the <strong>MCP</strong> page. For more data, refer to <a href="mcp.html">Tools &amp; MCP</a>.</p>
+      <table>
+        <tr><th>Method</th><th>Path</th><th>Function</th></tr>
+        <tr><td>GET</td><td><code>/api/mcp/servers</code> · <code>/{id}</code> · <code>/{id}/tools</code></td><td>Gives the condition of a server and its list of tools</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/servers/{id}/connect</code> · <code>/disconnect</code> · <code>/reconnect</code> · <code>/refresh</code></td><td>Controls the connection to a server</td></tr>
+        <tr><td>GET</td><td><code>/api/mcp/github</code></td><td>Gives the token condition and the connection condition</td></tr>
+        <tr><td>POST/DELETE</td><td><code>/api/mcp/github/token</code></td><td>Writes a PAT, or deletes the token</td></tr>
+        <tr><td>POST</td><td><code>/api/mcp/github/device/start</code> · <code>/poll</code></td><td>Starts and continues the OAuth device procedure</td></tr>
+        <tr><td>GET/POST</td><td><code>/api/mcp/github/oauth/start</code></td><td>Starts the OAuth procedure of the browser. It is the alternative to the device procedure.</td></tr>
+        <tr><td>GET</td><td><code>/oauth/callback</code></td><td>Where the browser returns after that procedure. A person does not call it.</td></tr>
+      </table>
+
+      <h2 id="gateway">The gateway endpoints</h2>
+      <p><code>http://127.0.0.1:8080/v1/chat/completions</code> · <code>/v1/responses</code> · <code>/v1/models</code> · <code>/healthz</code></p>
+      <p>The gateway also gives <code>/v1/messages</code>. This is the Anthropic endpoint that Claude Code uses. It also accepts the <a href="delegation.html">delegate</a> commands.</p>
+
+      <h2 id="ws">The WebSocket</h2>
+      <p>
+        <code>ws://127.0.0.1:8081/ws</code> sends an event each time something occurs. The client
+        sends nothing. Each message is one JSON object with two fields:
+      </p>
+      <pre>{"type": "request", "data": { … }}
+{"type": "vram_update", "data": { … }}</pre>
+      <p><code>request</code> gives these fields. A field with no value is absent.</p>
+      <table>
+        <tr><th>Field</th><th>Values</th></tr>
+        <tr><td><code>id</code> · <code>session_id</code> · <code>client_session</code></td><td>The identity of the request and of its session.</td></tr>
+        <tr><td><code>mode</code></td><td><code>gateway</code> or <code>mitm</code></td></tr>
+        <tr><td><code>action</code></td><td><code>local</code>, <code>cloud</code>, <code>origin_passthrough</code>, <code>canned</code> or <code>error</code></td></tr>
+        <tr><td><code>route</code></td><td><code>local</code> or <code>cloud</code></td></tr>
+        <tr><td><code>model</code> · <code>original_model</code></td><td>The model that answered, and the model that the CLI asked for before an alias.</td></tr>
+        <tr><td><code>host</code> · <code>path</code></td><td>The target of the request.</td></tr>
+        <tr><td><code>rule</code> · <code>reason</code></td><td>The rule that claimed the request, and the cause. An example of a cause is <code>small_offload</code> or <code>must_cloud</code>.</td></tr>
+        <tr><td><code>role</code></td><td><code>plan</code>, <code>exec</code> or <code>research</code></td></tr>
+        <tr><td><code>tokens</code> · <code>latency_ms</code></td><td>The size and the time.</td></tr>
+      </table>
+      <p><code>vram_update</code> gives <code>total</code>, <code>used</code>, <code>free</code> and a list <code>models</code>. Each item has <code>name</code>, <code>vram</code>, <code>state</code> and <code>backend</code>.</p>
+
+      <h2 id="examples">Examples</h2>
+      <pre># the config that operates now, as YAML
+curl http://127.0.0.1:8081/api/config?format=yaml
+
+# test a config, and apply nothing.
+# Give a YAML content type, or the body must be JSON.
+curl -X POST -H 'content-type: application/yaml' \
+     --data-binary @configs/glider.yaml \
+     http://127.0.0.1:8081/api/validate
+
+# which rule does this message obey?
+curl -X POST -H 'content-type: application/json' \
+     -d '{"text":"rename this function"}' \
+     http://127.0.0.1:8081/api/router/explain
+
+# the same, with the other inputs of a decision
+curl -X POST -H 'content-type: application/json' \
+     -d '{"text":"refactor the auth module","tools":["Edit"],"estimatedTokens":12000}' \
+     http://127.0.0.1:8081/api/router/explain
+
+# find the CLIs on this machine again
+curl -X POST http://127.0.0.1:8081/api/vendors/discover
+
+# set the default workspace of a delegate
+curl -X POST -H 'content-type: application/json' \
+     -d '{"path":"C:/projects/myapp"}' \
+     http://127.0.0.1:8081/api/vendors/workspace
+
+# the route counts
+curl http://127.0.0.1:8081/api/metrics</pre>
+
+      <h2 id="conventions">The conventions</h2>
+      <table>
+        <tr><th>Item</th><th>Behaviour</th></tr>
+        <tr><td>Authorization</td><td>None. Each endpoint listens on <code>127.0.0.1</code> only. Do not put this port on a network that you do not control.</td></tr>
+        <tr><td>The format</td><td>JSON, in and out. <code>/api/config</code> also gives YAML with <code>?format=yaml</code>.</td></tr>
+        <tr><td>An incorrect method</td><td><code>405</code>, with the text "method not allowed".</td></tr>
+        <tr><td>An error</td><td><code>400</code> for input that Glider cannot read, and <code>500</code> for a failure inside. The body is text, and it is not JSON.</td></tr>
+        <tr><td>Turning it off</td><td><code>dashboard.enabled: false</code> removes each of these endpoints.</td></tr>
+      </table>
+    </main>
+    <footer class="foot"><a href="pure-local.html">← Pure local</a> · <a href="mcp.html">Tools &amp; MCP →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

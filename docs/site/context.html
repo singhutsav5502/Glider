@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a class="active" href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Memory</div>
+      <h1>Context management</h1>
+      <p>The store has two layers. The first layer is an event log. Glider only adds to this log, and each event has RUNTIME provenance. The second layer is a graph of entities and edges. Each entity has EXTRACTED, INFERRED or RUNTIME provenance. A turn index in memory gives sticky routing.</p>
+
+      <h2>Why Glider keeps a context store</h2>
+      <p>A Cursor Composer summary message and a subagent message look like new small prompts. Without a memory layer, the router sends them to the local model, which is not correct. The graph tells the router if a message is still part of turn family X. Refer to <a href="mitm.html#stickymachine">MITM · sticky-cloud</a>.</p>
+
+      <h2>The layers</h2>
+      <table>
+        <tr><th>Layer</th><th>Function</th><th>Storage</th></tr>
+        <tr><td>Event log</td><td>Glider only adds events. The event names include <code>RouteDecided</code>, <code>FulfilledLocal</code>, <code>OriginPassthrough</code>, <code>TurnOpened</code> and <code>StickyBound</code>.</td><td><code>~/.glider/context/events-*.jsonl</code></td></tr>
+        <tr><td>Entity and edge store</td><td>Files, directories, symbols and the relations between them</td><td><code>~/.glider/context/entities.jsonl</code></td></tr>
+        <tr><td>Episodes</td><td>Short summaries of a session. Glider adds them to a local prompt.</td><td><code>contextkit</code> (rings in memory)</td></tr>
+      </table>
+
+      <h3>What Glider keeps, and for how long</h3>
+      <table>
+        <tr><th>Setting</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>context.max_events</code></td><td>4096</td><td>The size of the event ring in memory</td></tr>
+        <tr><td><code>context.retain_days</code></td><td>14</td><td>How long the <code>events-*.jsonl</code> files stay on disk. <code>POST /api/context/prune</code> uses this value.</td></tr>
+        <tr><td><code>context.warm_load_days</code></td><td>2</td><td>How many days of JSONL Glider reads again when it starts</td></tr>
+      </table>
+
+      <h2>How to query the store</h2>
+      <p>The <code>context_query</code> tool and <code>Store.Query</code> search the two layers:</p>
+      <pre>context_query: &lt;turn_id&gt; [key=clone_path|goal|plan|file-tree]
+  [kind=note|file|dir|symbol] [prov=RUNTIME|EXTRACTED|INFERRED]
+  [path=&lt;from&gt;-&gt;&lt;to&gt;] [neigh=id] [explain=id] [communities=1] [limit=N] keyword…</pre>
+      <p>Keywords accept <code>OR</code> or <code>|</code> to match any term. For example, <code>goal OR plan</code>.</p>
+      <p><code>Explain(id)</code> gives the neighborhood of an entity, its hubs, and the path to a hub. <code>DetectCommunities</code> finds connected components. It is a first version, and it is not the full Leiden algorithm.</p>
+
+      <h2>What the local model receives</h2>
+      <p>Glider never sends the full transcript. It sends a pack with a limited size. The pack has the most recent user turn and a maximum of N short episodes. The settings <code>transform.local_context</code> and <code>transform.local_episode_count</code> control the pack. The Overview page of the dashboard shows the episodes from <code>GET /api/context/episodes</code>.</p>
+
+      <h2 id="continuity">What a delegate receives</h2>
+      <p>
+        This is a different layer from the store above, and it has a different file. Glider keeps one
+        <strong>continuity record</strong> for each workspace. The record holds what occurred in the
+        calling session: the turns of the user, and what each earlier delegate changed. Glider puts a
+        block from this record at the start of every delegate call. The delegate sees the block with
+        the name "Earlier in the calling session".
+      </p>
+
+      <h3 id="across-clis">How context moves across CLIs</h3>
+      <p>
+        The diagram shows one session with three turns. The person stays in Claude Code for all
+        three. Turn 2 goes to cursor-agent, and turn 3 goes to agy. Neither delegate can see the
+        Claude Code session, and neither can see the other. The continuity record is the only thing
+        that connects them.
+      </p>
+
+      <figure class="ctxfig">
+        <svg viewBox="0 0 720 372" role="img"
+             aria-label="Three turns in one Claude Code session. Glider records every turn in a continuity record for the workspace. Turn 2 is delegated to cursor-agent and turn 3 to agy. Each delegate receives a context file built from that record, and its outcome is written back into the record.">
+          <defs>
+            <marker id="ctx-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <!-- lanes: labels sit ABOVE each band, never beside it, so they
+               cannot collide with a box as the band grows -->
+          <text class="ctx-lane" x="40" y="26">You — Claude Code</text>
+          <text class="ctx-lane" x="40" y="132">Glider</text>
+          <text class="ctx-lane" x="40" y="242">Delegate</text>
+
+          <!-- turn columns -->
+          <g class="ctx-turn">
+            <text x="118" y="52">turn 1</text>
+            <text x="330" y="52">turn 2</text>
+            <text x="542" y="52">turn 3</text>
+          </g>
+
+          <!-- the three user turns -->
+          <g class="ctx-box">
+            <rect x="40" y="62" width="156" height="40" rx="4" />
+            <rect x="252" y="62" width="156" height="40" rx="4" />
+            <rect x="464" y="62" width="156" height="40" rx="4" />
+          </g>
+          <g class="ctx-txt">
+            <text x="118" y="80">"the auth test fails"</text>
+            <text x="118" y="94">no flag</text>
+            <text x="330" y="80">"fix it</text>
+            <text x="330" y="94">/cursor-agent"</text>
+            <text x="542" y="80">"now document it</text>
+            <text x="542" y="94">/agy"</text>
+          </g>
+
+          <!-- down into the record -->
+          <g class="ctx-line">
+            <path d="M 118 102 L 118 138" marker-end="url(#ctx-arrow)" />
+            <path d="M 330 102 L 330 138" marker-end="url(#ctx-arrow)" />
+            <path d="M 542 102 L 542 138" marker-end="url(#ctx-arrow)" />
+          </g>
+
+          <!-- continuity record -->
+          <rect class="ctx-store" x="40" y="140" width="580" height="46" rx="4" />
+          <text class="ctx-store-lbl" x="52" y="158">continuity record — one per workspace</text>
+          <text class="ctx-store-sub" x="52" y="176">~/.glider/continuity/&lt;name&gt;-&lt;hash&gt;.md · a ring of 60 entries</text>
+
+          <!-- record ticks under each turn -->
+          <g class="ctx-tick">
+            <circle cx="118" cy="186" r="3" />
+            <circle cx="330" cy="186" r="3" />
+            <circle cx="542" cy="186" r="3" />
+          </g>
+
+          <!-- context packs down to delegates -->
+          <g class="ctx-line">
+            <path d="M 330 186 L 330 246" marker-end="url(#ctx-arrow)" />
+            <path d="M 542 186 L 542 246" marker-end="url(#ctx-arrow)" />
+          </g>
+          <g class="ctx-note">
+            <text x="338" y="214">ranked against</text>
+            <text x="338" y="228">THIS task, not by time</text>
+            <text x="550" y="214">includes what</text>
+            <text x="550" y="228">cursor-agent did</text>
+          </g>
+
+          <!-- delegate boxes -->
+          <g class="ctx-box">
+            <rect x="252" y="248" width="156" height="44" rx="4" />
+            <rect x="464" y="248" width="156" height="44" rx="4" />
+          </g>
+          <g class="ctx-txt">
+            <text x="330" y="266">cursor-agent</text>
+            <text x="330" y="282">reads AGENTS.md</text>
+            <text x="542" y="266">agy</text>
+            <text x="542" y="282">reads AGENTS.md</text>
+          </g>
+
+          <!-- outcomes written back: routed below both delegate boxes and
+               up the right margin, so it crosses no label and no box -->
+          <g class="ctx-line ctx-back">
+            <path d="M 330 292 L 330 314 L 660 314 L 660 163 L 626 163" marker-end="url(#ctx-arrow)" />
+          </g>
+          <text class="ctx-note" x="40" y="336">the outcome is written back under YOUR identity,</text>
+          <text class="ctx-note" x="40" y="350">so the next delegate does not redo or undo it</text>
+        </svg>
+        <figcaption>
+          One session, three turns, two different delegates. Turn 1 carries no flag and still enters
+          the record — that is why the delegate in turn 2 knows which test was failing.
+        </figcaption>
+      </figure>
+
+      <p>
+        Two properties matter, and both are easy to miss:
+      </p>
+      <table>
+        <tr><th>Property</th><th>Why it is there</th></tr>
+        <tr>
+          <td>A turn with no flag is still recorded</td>
+          <td>
+            Most turns in a session are ordinary chat. If Glider recorded only the delegate turns,
+            a delegate would receive the instruction and nothing that led to it.
+          </td>
+        </tr>
+        <tr>
+          <td>The outcome returns under the identity of the front CLI</td>
+          <td>
+            The result belongs to the session that sent the work, and not to the delegate that did
+            it. A later delegate in the same workspace then knows the run occurred. Without this,
+            a second delegate can undo the change the first one made.
+          </td>
+        </tr>
+      </table>
+
+      <p class="note">
+        A delegate receives a <em>file</em>, and not a longer prompt. Glider makes a private
+        directory for each run and writes the context into the file that the vendor already reads
+        by itself: <code>AGENTS.md</code> for cursor-agent and agy,
+        <code>glider-context.md</code> for claude. The directory goes away when the run ends.
+      </p>
+      <table>
+        <tr><th>Item</th><th>Value</th></tr>
+        <tr><td>The file</td><td><code>~/.glider/continuity/&lt;name&gt;-&lt;hash&gt;.md</code>, one for each workspace</td></tr>
+        <tr><td>The record</td><td>A ring of 60 entries</td></tr>
+        <tr><td>The block</td><td>A maximum of 20 entries, and a maximum of 20000 tokens</td></tr>
+      </table>
+      <p class="note">
+        The record stays in <code>~/.glider</code>, and not in your project. Glider does the
+        bookkeeping, and the project does not own that data. A file in your repository would show in
+        <code>git status</code> permanently.
+      </p>
+
+      <h3>How Glider selects the entries</h3>
+      <p>
+        Glider does not take the last N entries. Time is not relevance: a person who does five turns
+        about CSS, and then delegates a defect in Go, must not receive five turns about CSS. Three
+        rules control the selection:
+      </p>
+      <table>
+        <tr><th>Rule</th><th>What it does</th></tr>
+        <tr><td>Ranking</td><td>Glider scores each entry against the task of THIS delegate. A rare term has more weight than a frequent one. At equal relevance, the result of an earlier delegate wins against an ordinary turn, because it describes a change that a delegate already made to these files.</td></tr>
+        <tr><td>A protected tail</td><td>The 2 most recent entries go in the block with no score. What the user says now is never noise.</td></tr>
+        <tr><td>Middle-out truncation</td><td>An entry that is too long loses its MIDDLE. The start gives the objective, and the end gives the condition.</td></tr>
+      </table>
+      <p>Three settings control the size. Each one is a ceiling, and not a target:</p>
+      <table>
+        <tr><th>Setting</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>context.background.token_budget</code></td><td>20000</td><td>The full block</td></tr>
+        <tr><td><code>context.background.max_entries</code></td><td>20</td><td>The count of entries</td></tr>
+        <tr><td><code>context.background.max_entry_chars</code></td><td>4000</td><td>One entry, before middle-out truncation</td></tr>
+      </table>
+      <p class="note">
+        Know the cost. This block goes with EVERY delegate call. Therefore a large budget gives
+        better orientation, and it makes each delegation more expensive and more slow.
+      </p>
+
+      <h3>Compaction</h3>
+      <p>
+        A record with more than 40 entries gets compaction: Glider replaces the older entries with
+        one summary, and keeps a tail of entries with no change. This always occurs. The
+        <code>context.summary</code> settings only select WHO writes the summary.
+      </p>
+      <p>
+        Compaction runs in the background. It never runs on the clock of a request. Therefore the
+        list of sources can contain an option as slow as the cold start of a CLI.
+      </p>
+      <table>
+        <tr><th>Source</th><th>What it uses</th><th>What it costs</th></tr>
+        <tr><td><code>origin</code></td><td>An installed agent CLI, with no window</td><td>The subscription that you have. No API credits. Approximately 20 s.</td></tr>
+        <tr><td><code>cloud</code></td><td>A BYOK cloud backend</td><td>Your own API credits</td></tr>
+        <tr><td><code>local</code></td><td>A local model</td><td>Nothing</td></tr>
+        <tr><td><code>none</code></td><td>Stops the list here</td><td>Nothing</td></tr>
+      </table>
+      <p>
+        The default order is <code>[origin, cloud, local]</code>. Glider tries each source until one
+        gives an answer. A source with no configuration does not cause an error. Glider goes to the
+        next source.
+      </p>
+      <p>
+        If each source fails, or if <code>context.summary.enabled</code> is <code>false</code>,
+        Glider uses a <strong>deterministic digest</strong>. The digest keeps the first turns and
+        every delegate outcome, and it counts what it removed. Compaction never fails and leaves
+        nothing.
+      </p>
+      <p class="note">
+        Glider puts <code>[session summary]</code> at the start of a compacted entry. A later pass
+        reads that mark and never makes a summary of a summary. Repeated compaction is where these
+        systems lose data.
+      </p>
+
+      <h2>How to examine the store</h2>
+      <pre>GET  /api/context/recent
+GET  /api/context/turns · /api/context/turns/{id}
+GET  /api/context/episodes
+GET  /api/context/export
+POST /api/context/index-tree
+POST /api/context/index-symbols
+GET  /api/context/communities?turn_id=
+GET  /api/context/explain?turn_id=&amp;id=
+POST /api/context/prune</pre>
+
+      <p class="note">
+        The functions <code>RecordHoopContext</code> and <code>LookupHoopContext</code> in
+        <code>contextgraph</code> stay in use. The removed stage runner did not use them.
+        <code>IndexFileTree</code> writes the <code>file-tree</code> key, and the
+        <code>key=</code> path in <code>QueryWith</code> reads it. But the thread facts
+        (<code>RecordThreadWave</code> and <code>RecordEpisodeFact</code>) have no caller today.
+        They are unused library code, not a function of the product.
+      </p>
+      <p>The full description is in <code>planning/routing_and_context.md</code>.</p>
+    </main>
+    <footer class="foot"><a href="ngl.html">← NGL</a> · <a href="pure-local.html">Pure local →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

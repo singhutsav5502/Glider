@@ -1,0 +1,302 @@
+package metrics
+
+import (
+	"sort"
+	"sync"
+	"time"
+)
+
+type Collector struct {
+	mu sync.Mutex
+
+	routeCounts map[string]int
+	tokenTotal  int
+	tokenMin    int
+	tokenMax    int
+	tokenN      int
+
+	latencies []time.Duration
+
+	localReqs          int
+	localTokens        int // tokens on local + canned turns (tokens_saved_est)
+	cloudCostPerReqUSD float64
+	actualCostUSD      float64
+
+	bus        *Bus
+	history    *HistoryStore
+	sessionID  string
+}
+
+func NewCollector(bus *Bus) *Collector {
+	return &Collector{
+		routeCounts:        make(map[string]int),
+		tokenMin:           -1,
+		cloudCostPerReqUSD: 0.10,
+		bus:                bus,
+	}
+}
+
+// SetHistory adds permanent storage, and that storage puts the events in groups
+// by session. The code writes SessionID on each live event.
+func (c *Collector) SetHistory(h *HistoryStore) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.history = h
+	if h != nil {
+		c.sessionID = h.SessionID()
+	}
+}
+
+func (c *Collector) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionID
+}
+
+func (c *Collector) History() *HistoryStore {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.history
+}
+
+func (c *Collector) SetCloudCostPerRequest(usd float64) {
+	c.mu.Lock()
+	c.cloudCostPerReqUSD = usd
+	c.mu.Unlock()
+}
+
+type RequestRecord struct {
+	ID            string
+	ClientSession string // optional client/correlation id from request metadata
+	Mode          string // gateway | mitm
+	Action        string // local | cloud | origin_passthrough | canned | error (completion outcomes)
+	Route         string // local | cloud
+	Model         string
+	OriginalModel string
+	Host          string
+	Path          string
+	Rule          string
+	Reason        string // routing reason chip (small_offload, must_cloud, tools_present, …)
+	Role          string // plan | exec | research
+	Tokens        int
+	Latency       time.Duration
+	ActualUSD     float64
+}
+
+// IncAction bumps mode/action counters without publishing a request-log / history row.
+// Use for tunnel lifecycle (decrypt, blind_tunnel) and non-LLM skip paths.
+func (c *Collector) IncAction(mode, action string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if action != "" {
+		c.routeCounts["action:"+action]++
+	}
+	if mode != "" {
+		c.routeCounts["mode:"+mode]++
+	}
+}
+
+// IsRequestLogAction says if an action belongs in the request log of the
+// Overview page. Those are the results of the LLM and of the harness. A tunnel
+// that opens, and a skip that has no relation to an LLM, do not belong there.
+//
+// A person added "delegate" on 2026-07-30. Without that value, a call to
+// Record(RequestRecord{Action: "delegate"}) from DelegateHandler or from
+// Messages went to the branch below for an action that is not in the request
+// log, and it gave no message.
+//
+// The code then only increased a counter with IncAction. It never wrote the
+// event to History, and it never published the event to the Bus.
+//
+// That is exactly the condition that this action value corrects, but one level
+// deeper. A person found it with a true test: that test says that a delegate
+// call truly appears in History. It does not only say that Record did not
+// panic.
+func IsRequestLogAction(action string) bool {
+	switch action {
+	case "local", "cloud", "origin_passthrough", "canned", "error", "delegate":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Collector) Record(rec RequestRecord) {
+	if rec.Action == "" {
+		rec.Action = rec.Route
+	}
+	// Tunnel lifecycle / non-LLM skips use IncAction; never publish fake 0-metric rows.
+	if rec.Action != "" && !IsRequestLogAction(rec.Action) {
+		c.IncAction(rec.Mode, rec.Action)
+		return
+	}
+	c.mu.Lock()
+	c.routeCounts[rec.Route]++
+	if rec.Action != "" {
+		c.routeCounts["action:"+rec.Action]++
+	}
+	if rec.Mode != "" {
+		c.routeCounts["mode:"+rec.Mode]++
+	}
+	if rec.Reason != "" {
+		c.routeCounts["class:"+rec.Reason]++
+	}
+	if rec.Role != "" {
+		c.routeCounts["role:"+rec.Role]++
+	}
+	c.tokenTotal += rec.Tokens
+	c.tokenN++
+	if c.tokenMin < 0 || rec.Tokens < c.tokenMin {
+		c.tokenMin = rec.Tokens
+	}
+	if rec.Tokens > c.tokenMax {
+		c.tokenMax = rec.Tokens
+	}
+	c.latencies = append(c.latencies, rec.Latency)
+	if rec.Route == "local" || rec.Action == "local" || rec.Action == "canned" {
+		c.localReqs++
+		c.localTokens += rec.Tokens
+	}
+	c.actualCostUSD += rec.ActualUSD
+	sessionID := c.sessionID
+	history := c.history
+	c.mu.Unlock()
+
+	latencyMs := float64(rec.Latency.Microseconds()) / 1000.0
+	if history != nil {
+		_ = history.Record(StoredRequest{
+			ClientSession: rec.ClientSession,
+			ID:            rec.ID,
+			Mode:          rec.Mode,
+			Action:        rec.Action,
+			Route:         rec.Route,
+			Model:         rec.Model,
+			OriginalModel: rec.OriginalModel,
+			Host:          rec.Host,
+			Path:          rec.Path,
+			Rule:          rec.Rule,
+			Tokens:        rec.Tokens,
+			LatencyMs:     latencyMs,
+		})
+	}
+
+	if c.bus != nil {
+		c.bus.Publish(Event{
+			Type: EventRequest,
+			Data: RequestEventData{
+				ID:            rec.ID,
+				SessionID:     sessionID,
+				ClientSession: rec.ClientSession,
+				Mode:          rec.Mode,
+				Action:        rec.Action,
+				Route:         rec.Route,
+				Model:         rec.Model,
+				OriginalModel: rec.OriginalModel,
+				Host:          rec.Host,
+				Path:          rec.Path,
+				Rule:          rec.Rule,
+				Reason:        rec.Reason,
+				Role:          rec.Role,
+				Tokens:        rec.Tokens,
+				LatencyMs:     latencyMs,
+			},
+		})
+	}
+}
+
+func (c *Collector) GetRouteCounts() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int, len(c.routeCounts))
+	for k, v := range c.routeCounts {
+		out[k] = v
+	}
+	return out
+}
+
+type TokenStats struct {
+	Total int `json:"total"`
+	Avg   int `json:"avg"`
+	Min   int `json:"min"`
+	Max   int `json:"max"`
+}
+
+func (c *Collector) GetTokenStats() TokenStats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tokenN == 0 {
+		return TokenStats{}
+	}
+	min := c.tokenMin
+	if min < 0 {
+		min = 0
+	}
+	return TokenStats{
+		Total: c.tokenTotal,
+		Avg:   c.tokenTotal / c.tokenN,
+		Min:   min,
+		Max:   c.tokenMax,
+	}
+}
+
+type CostSavings struct {
+	EstimatedCloudCost float64 `json:"estimated_cloud_cost"`
+	ActualCost         float64 `json:"actual_cost"`
+	Savings            float64 `json:"savings"`
+}
+
+func (c *Collector) GetCostSavings() CostSavings {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	est := float64(c.localReqs) * c.cloudCostPerReqUSD
+	return CostSavings{
+		EstimatedCloudCost: est,
+		ActualCost:         c.actualCostUSD,
+		Savings:            est - c.actualCostUSD,
+	}
+}
+
+type LatencyPercentiles struct {
+	P50 time.Duration `json:"p50"`
+	P90 time.Duration `json:"p90"`
+	P99 time.Duration `json:"p99"`
+}
+
+func (c *Collector) GetLatencyPercentiles() LatencyPercentiles {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := len(c.latencies)
+	if n == 0 {
+		return LatencyPercentiles{}
+	}
+	cp := append([]time.Duration(nil), c.latencies...)
+	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	return LatencyPercentiles{
+		P50: percentile(cp, 50),
+		P90: percentile(cp, 90),
+		P99: percentile(cp, 99),
+	}
+}
+
+func percentile(sorted []time.Duration, p int) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := (p * len(sorted)) / 100
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	return sorted[idx]
+}
+
+func (c *Collector) PublishVRAM(data VRAMEventData) {
+	if c.bus != nil {
+		c.bus.Publish(Event{Type: EventVRAMUpdate, Data: data})
+	}
+}

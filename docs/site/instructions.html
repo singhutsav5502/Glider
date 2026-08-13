@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Automatic rules · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a class="active" href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Cross-CLI</div>
+      <h1>Automatic delegation rules</h1>
+      <p>
+        This page gives a template. You copy the template into the context file of your project.
+        Then your CLI sends some tasks to a different CLI without your help. You do not type a
+        flag each time.
+      </p>
+      <p>
+        This operates because the delegate flag is only text at the end of a message
+        (<code>&lt;prompt&gt; /vendor</code>). No component must know a new protocol. If the model
+        in your CLI writes that flag, Glider sends the task. Thus automatic delegation needs no new
+        function in Glider. It needs only rules that your CLI reads when it starts.
+      </p>
+
+      <h2 id="where">1. Where to put the rules</h2>
+      <p>Each CLI reads a different file. Put the rules in the file that your CLI reads. The file goes at the top level of your repository.</p>
+      <table>
+        <thead>
+          <tr><th>Your CLI</th><th>The file that it reads</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Code</td><td><code>CLAUDE.md</code>. It does <strong>not</strong> read <code>AGENTS.md</code>, but it accepts an <code>@AGENTS.md</code> import.</td></tr>
+          <tr><td>cursor-agent</td><td><code>AGENTS.md</code></td></tr>
+          <tr><td>agy (Antigravity)</td><td><code>AGENTS.md</code> and <code>GEMINI.md</code>. It reads both. <code>GEMINI.md</code> has control if the two disagree.</td></tr>
+        </tbody>
+      </table>
+      <p>To keep all the rules in one file, write <code>AGENTS.md</code>. Then put one line in <code>CLAUDE.md</code>:</p>
+      <pre>@AGENTS.md</pre>
+      <p>
+        Glider does not write in this file. When Glider sends a task to a different CLI, it gives
+        the context in a private directory for that one run. Refer to
+        <a href="#receives">section 5</a>. Therefore your own rules are the only content in the file.
+      </p>
+
+      <h2 id="template">2. The template</h2>
+      <p>
+        Copy this text. Then change the rules. The selection of routes is <strong>your</strong>
+        decision. This page cannot make that decision for you. Refer to
+        <a href="#writing">section 4</a>.
+      </p>
+      <pre>## Delegating to other CLIs
+
+Glider is running, so I can hand a task to another installed agent CLI by
+ending my message with a trailing flag. The flag must be the LAST thing in
+the message: a *leading* `/claude` is intercepted by my own CLI as a slash
+command and never reaches Glider at all.
+
+    &lt;the full task description&gt; /cursor-agent
+
+| Flag | Mode | Answer returns to me? |
+|---|---|---|
+| `/claude` | headless | yes |
+| `/cursor-agent` | headless | yes |
+| `/agy:headless` | headless | yes |
+| `/claude:interactive` | interactive | no |
+| `/cursor-agent:interactive` | interactive | no |
+| `/agy` | interactive | **no** — this is agy's default |
+
+I never delegate to the CLI I am running as. I never type `:resume`; Glider
+drives those itself when the user approves a denied tool.
+
+### Which mode
+
+| If | Then |
+|---|---|
+| I need the answer to continue my own work | headless |
+| A person should make a judgment call part-way through | interactive |
+| The change is destructive or wide-reaching | interactive |
+| The work is the user's to drive and mine only to set up | interactive |
+
+An interactive delegate hands the task to the user in a separate window. I
+never see what happens in it, so I must not open one and then wait for
+findings — there is no channel for them to arrive on. I say I opened it, say
+nothing returns here, and carry on with my own work.
+
+### When to delegate, and what to do instead
+
+| Delegate when | Because |
+|---|---|
+| I have failed twice at the same problem | A different model family fails differently; a third try of mine correlates with the first two |
+| A bulk mechanical edit — a rename, a codemod, a repetitive signature change | It is long, not hard |
+| A judgment call is needed mid-task | Open `/agy` and let the user drive |
+
+| Never delegate | Do this instead |
+|---|---|
+| Anything destructive: deleting files, `git push`, migrations, releases, dependency upgrades | Do it myself, or ask the user first |
+| Anything I already know how to do | Do it myself — delegation costs ~20s before any work starts |
+| Anything under a couple of minutes of my own work | Do it myself |
+| Anything I cannot state completely in one message | Narrow it until I can, or do it myself |
+
+Worked example — a second opinion, with what I already tried:
+
+    The session cookie is dropped on the OAuth redirect. I tried widening
+    the cookie domain and switching SameSite to Lax; both still drop it,
+    and the Set-Cookie header is present in the 302. Scope:
+    internal/auth/. Find the cause. /cursor-agent
+
+### Doing several at once
+
+Glider runs delegates concurrently — each gets its own context, so nothing
+queues. If I have a subagent mechanism I dispatch one per task and collect
+the replies; if not, I delegate the highest-value task and do the rest
+myself. I split only where the parts are genuinely independent, because one
+delegate cannot see another's edits. Interactive delegates do not
+parallelise: a person drives one window at a time.
+
+### What the delegate already knows
+
+Glider writes it a briefing: that it IS the delegate, which CLI sent the
+task, the workspace, the task restated, and the relevant earlier turns of
+this session including what any previous delegate changed.
+
+It does NOT get this conversation verbatim, my reasoning, or my tool output.
+So I never write "as discussed above" or "that file we were just looking
+at" — it saw none of that. It also cannot ask me a question, and answers
+once.
+
+### Writing the message
+
+1. The goal, in one sentence.
+2. The constraint — what must not change, what must still pass.
+3. The file or directory scope, as paths from the workspace root.
+4. What I already tried and how it failed, for a second opinion.
+5. What "done" looks like, so it stops in the right place.
+
+I say I am delegating, and why, before I send it.
+
+
+### If Glider asks which directory
+
+Glider cannot read my working directory out of my own CLI, so the first
+handoff in a session may come back asking for it instead of running. That
+is not an error. I reply once with the project path and the trailing
+`/workspace` flag:
+
+    . /workspace
+    C:/projects/myapp /workspace
+
+Then I resend the task. Every later handoff in this session runs there.
+
+Glider asks every session, even when a default is configured — it cannot see
+which project a new CLI is in, so it will not assume. If a default is set,
+the question arrives with that path already in it and the user only has to
+send it back.
+
+### When the reply comes back
+
+A reply through transparent/MITM mode is prefixed `Delegated to &lt;vendor&gt;:`;
+through the gateway route it is not, so I do not depend on the prefix to
+recognise one. Before I use any of it:
+
+| What came back | What I do |
+|---|---|
+| It meets the constraint I set | Use it, and say it came from a delegate |
+| It missed the constraint, or answered a different question | Fix my message and send it ONCE more, or do the work myself |
+| It failed, or returned nothing usable | Do NOT resend the same task to the same CLI — it fails the same way. Try a different CLI, or do it myself |
+| It contradicts something I already know | Verify before accepting. It saw a briefing, not the conversation |
+
+I never present a delegate's claim as my own verified result, and I never
+report work as done on a delegate's word alone.
+
+### If I am the delegate
+
+Glider says so directly in the context it hands me. If that context tells me
+I am already the delegate, I ignore every rule above, append no `/vendor`
+flag, and complete the task myself.</pre>
+      <p>
+        The template stays in usual English, and not in Simplified Technical English. Your CLI
+        reads it, and you do not. It is a tool, and it is not documentation.
+      </p>
+
+      <h2 id="adjust">Change it for the CLI that you use</h2>
+      <p>
+        Copy the block without changes. These are the parts to change, and they depend on which
+        CLI is at the <em>front</em>. The front CLI is the CLI that you type in.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Front CLI</th><th>Put it in</th><th>Send tasks to</th><th>What to add</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claude Code</td>
+            <td><code>CLAUDE.md</code></td>
+            <td><code>/cursor-agent</code>, <code>/agy</code></td>
+            <td>Nothing. Claude Code sends its full record of the conversation with each request. Therefore Glider has true context to give. Refer to <a href="#receives">section 5</a>.</td>
+          </tr>
+          <tr>
+            <td>cursor-agent</td>
+            <td><code>AGENTS.md</code></td>
+            <td><code>/claude</code>, <code>/agy</code></td>
+            <td>Add: <em>"Write again each detail from earlier in this conversation that the task needs."</em> Glider can read only the first envelope of a cursor-agent request. Thus it uses its own record of the session.</td>
+          </tr>
+          <tr>
+            <td>agy</td>
+            <td><code>AGENTS.md</code> and <code>GEMINI.md</code></td>
+            <td><code>/claude</code>, <code>/cursor-agent</code></td>
+            <td>Add: <em>"Use /claude when the task needs a small and controlled set of tool permissions."</em> Refer to the permission row in <a href="#writing">section 4</a>.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>Give the name of the subagent mechanism, if your front CLI has one.</strong> The
+        template says "If I have a subagent mechanism, I use it". That condition is on purpose. A
+        model cannot know with certainty that it has such a mechanism. Therefore the rule changes
+        to a sequence, and it does not invent a tool. The mechanism of Claude Code is the Agent
+        tool, and this is confirmed. No person verified an equivalent mechanism in cursor-agent or
+        in agy here. Thus their rows do not declare one. Examine your own CLI, and give the name
+        if it has one.
+      </p>
+      <p>
+        Do not send a task to the CLI that you are already in. It gives you no different model
+        family and no different quota, and it pays the delay of the start. Remove your own CLI
+        from the list that you copy.
+      </p>
+
+      <h2 id="templates">3. Each template, and the templates that you can name</h2>
+      <p>
+        A flag with no suffix runs the <code>default</code> template of that vendor. A suffix
+        <code>:&lt;name&gt;</code> runs a template with that name. This is the full set in
+        <code>configs/vendor_candidates.yaml</code>. A person can change each one for one
+        installation from the Vendors page of the dashboard. Therefore this is the start
+        condition, and it is not a contract.
+      </p>
+      <table>
+        <thead>
+          <tr><th>The flag that you type</th><th>Template</th><th>Mode</th><th>What occurs</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>/claude</code></td><td><code>default</code></td><td>headless</td><td>Runs <code>-p --output-format stream-json</code>. The answer comes back to your session.</td></tr>
+          <tr><td><code>/claude:interactive</code></td><td><code>interactive</code></td><td>interactive</td><td>Opens a new console window with a usual Claude Code session, and your task is the first message. Nothing comes back.</td></tr>
+          <tr><td><code>/cursor-agent</code></td><td><code>default</code></td><td>headless</td><td>Runs <code>-p --output-format stream-json --trust</code>. The answer comes back to your session.</td></tr>
+          <tr><td><code>/cursor-agent:interactive</code></td><td><code>interactive</code></td><td>interactive</td><td>A new window with a usual cursor-agent session, and your task is the first message. It has <strong>no <code>--trust</code></strong>, because you answer the question about trust in the workspace.</td></tr>
+          <tr><td><code>/agy</code></td><td><code>default</code></td><td><strong>interactive</strong></td><td>Opens a new window with the permission controls of agy, and your task is the first message. This is the default of agy, and it is different from the other CLIs.</td></tr>
+          <tr><td><code>/agy:interactive</code></td><td><code>interactive</code></td><td>interactive</td><td>The same as <code>/agy</code>. Both names exist, thus you can give the name.</td></tr>
+          <tr><td><code>/agy:headless</code></td><td><code>headless</code></td><td>headless</td><td>The text comes back to your session. Read the limits in <a href="#writing">section 4</a> before you select this template.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>The <code>resume</code> templates are not for you to type.</strong> Each vendor
+        also has a <code>resume</code> template, but Glider operates those itself. They are the
+        second part of the permission relay: you approve a tool that a delegate could not use, and
+        Glider runs the task again with <code>resume</code>. If you type them, the result is not
+        what you expect:
+      </p>
+      <table>
+        <thead>
+          <tr><th>The flag</th><th>What truly occurs</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/claude:resume</code>, <code>/cursor-agent:resume</code></td>
+            <td><strong>It gives an error.</strong> Both templates contain <code>{{session_id}}</code>. <code>RunWithOptions</code> refuses a template that needs a session id when no code gives one.</td>
+          </tr>
+          <tr>
+            <td><code>/agy:resume</code></td>
+            <td>It operates, but its arguments are the same as the arguments of <code>/agy:headless</code>. On a resume that Glider operates, the one true difference is a permission rule with a small scope. <code>agyAdapter.GrantResumePermission</code> writes that rule in the <code>settings.json</code> file of agy immediately before the call, and it removes the rule immediately after. If you type the flag, you get none of that. Thus use <code>/agy:headless</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>How to send many tasks at the same time</h3>
+      <p>
+        Glider operates delegates at the same time. Each run gets its own private context
+        directory. Thus the runs share nothing, and no run waits for a different run. Two
+        delegates to the <em>same</em> CLI in the <em>same</em> directory are correct.
+      </p>
+      <p>
+        Therefore the rules must tell your CLI to not send independent tasks one at a time. Each
+        task pays its own start delay of approximately 20 seconds. In a sequence, those delays
+        add together with no gain.
+      </p>
+      <p>
+        <strong>A CLI that has subagents must use them.</strong> It starts one subagent for each
+        delegated task, and the subagents operate at the same time. Each subagent sends its own
+        message with the delegate flag at the end, and the front CLI collects the replies. A CLI
+        with no such mechanism must delegate the one task of most value and do the other work
+        itself. It must not wait in a sequence.
+      </p>
+      <p>
+        Divide the work only when the parts are fully independent. Two tasks that change the same
+        files will disagree, and one delegate cannot see the edits of a different delegate. When
+        the parts are not independent, put them in a sequence and run one at a time.
+      </p>
+      <p>
+        Interactive delegates give no gain here. Each one opens a window for a person, and a
+        person controls one window at a time.
+      </p>
+
+      <h3>How to select headless or interactive</h3>
+      <p>
+        Put this decision in your rules, because the two modes give fully different results.
+      </p>
+      <table>
+        <thead>
+          <tr><th>&nbsp;</th><th>headless</th><th>interactive</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Where the answer goes</td><td>Back to your session, as text.</td><td>To a different window, and to <strong>no other location</strong>.</td></tr>
+          <tr><td>Can your CLI use the result</td><td>Yes.</td><td>No. It never sees the result.</td></tr>
+          <tr><td>Who answers a permission question</td><td>Glider sends it to you.</td><td>The controls of that vendor, directly.</td></tr>
+          <tr><td>Correct for</td><td>Each task with output that you must read, compare or send to a different step.</td><td>Each task where a person must have control.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Write it as one rule: <strong>if the answer must come back, the mode must be
+        headless.</strong> An interactive delegate gives the work to a person, and it is not a
+        subroutine. A model that sends a task to <code>/agy</code> and then waits for the result
+        waits with no end, because there is no channel for the result.
+      </p>
+      <p>
+        This has one result that your rules must say. <code>/agy</code> is interactive
+        <em>by default</em>. Therefore a rule that says "send a difficult problem to agy" becomes
+        "open a window and stop the work", and it gives no message. To get the answer of agy in
+        your session, give the name of the template: <code>/agy:headless</code>.
+      </p>
+
+      <h2 id="writing">4. How to write your own rules</h2>
+      <p>
+        Give an exact <strong>condition</strong>. "Send a refactor task to cursor-agent" operates.
+        "Send the task when a different CLI is better" does not operate. The model cannot measure
+        that condition.
+      </p>
+      <p>
+        Which CLI is better at which task is your decision. It also changes as these tools change.
+        Therefore this page does not tell you that one CLI is better than a different CLI. These
+        are the causes to route on, and each cause is correct now:
+      </p>
+      <table>
+        <thead>
+          <tr><th>Cause</th><th>What it gives you</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>A different model family</strong></td>
+            <td>A different attempt that is fully independent. This is the strongest cause. Two attempts from one model give related results. Two attempts from two suppliers do not.</td>
+          </tr>
+          <tr>
+            <td><strong>Different quota</strong></td>
+            <td>The delegated request uses the subscription of that CLI. This is of use when you are near the limit of your usual CLI.</td>
+          </tr>
+          <tr>
+            <td><strong>Control of permissions</strong></td>
+            <td>You can approve <code>claude</code> for one tool with <code>--allowedTools</code>. cursor-agent has no flag for one tool. Its only control gives permission for all tools, and Glider does not use it. Use <code>claude</code> when you want small and recorded permission.</td>
+          </tr>
+          <tr>
+            <td><strong>A person in the loop</strong></td>
+            <td><code>/agy</code> opens a true window, and the user controls it. This is correct when the task needs a decision by a person.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <strong><code>/agy</code> opens a window by default.</strong> <code>/claude</code> and
+        <code>/cursor-agent</code> do not, and they run with no console. This difference is on
+        purpose. In the mode with no console, agy refuses each tool that needs a permission. Thus
+        even to read a file needs one more approval and one more start. After that permission ends,
+        its model frequently <em>describes</em> the workspace and does not do the work. The mode
+        with a window does not have these two problems. It opens a window with the permission
+        controls of agy, and the window contains your task. Use <code>/agy:headless</code> only if
+        you want the behaviour with no console and you accept these problems. A window is not a
+        text reply: no result comes back into your session from it.
+      </p>
+
+      <h2 id="receives">5. What the delegate receives</h2>
+      <p>This is of importance, because it controls how much detail you must give.</p>
+      <ul>
+        <li><strong>The text of the task.</strong> This is all the text before the flag.</li>
+        <li>
+          <strong>A work directory.</strong> This is the workspace of the session that sent the
+          task. Glider cannot read that directory from your CLI, because no wire protocol that it
+          intercepts carries a path. Therefore it asks you one time, and the first handoff of a
+          session can return that question in place of a result. Answer with the path and the
+          <code>/workspace</code> flag at the end, for example <code>. /workspace</code> in your
+          project. Then each later handoff in that session operates there.
+          <strong>Glider asks each session, also when a default is configured.</strong> It cannot
+          see which project a new CLI is in, therefore it does not estimate. A default on the
+          Vendors page of the dashboard puts that path in the question, and you send it back.
+        </li>
+        <li>
+          <strong>A context file</strong> in a private directory for that one run
+          (<code>~/.glider/delegates/&lt;id&gt;/</code>). Glider gives the file to the CLI with a
+          flag that the CLI already accepts: <code>--append-system-prompt-file</code> for claude,
+          and <code>--add-dir</code> for cursor-agent and agy. The file contains the task, the name
+          of the CLI that sent the task, the workspace, and the relevant recent instructions from
+          the person in your session. Glider deletes the directory when the run ends.
+        </li>
+      </ul>
+      <p>
+        <strong>Glider does not change your own files.</strong> An earlier design wrote in the
+        <code>CLAUDE.md</code> or <code>AGENTS.md</code> file of your project, and then put the file
+        back. A directory for each run removes that risk fully.
+      </p>
+      <p>
+        Glider gives the same content in both modes: transparent interception and gateway mode.
+      </p>
+      <p>
+        <strong>Where the record comes from.</strong> Glider prefers the request of the front CLI.
+        Claude Code sends the full record of the conversation with each request, and Glider reads it
+        directly. The protocol of cursor-agent cannot give the record. Glider can read only the
+        first envelope of its request, and to read more would stop the request. Therefore Glider
+        also keeps its own record of the turns that it sees. It keeps one record for each workspace,
+        and it records which CLI and which process caused each turn. When the front CLI cannot give
+        the record, this record supplies it. Thus the quality of the context does not change with
+        the CLI that you use.
+      </p>
+      <p>
+        That record is at <code>~/.glider/continuity/&lt;workspace&gt;.md</code>, and it is outside
+        your repository. It is usual markdown. It holds a maximum of the last 60 entries. You can
+        <strong>delete it at any time</strong>. Two CLIs in the same repository stay separate: a
+        delegate sees only the record of the session that sent the task, and it does not see the
+        record of the other session. But a CLI that you start again keeps its own earlier record. A
+        new process number is not a new conversation.
+      </p>
+      <p>
+        <strong>The record also holds what each delegate did</strong>, and not only the text that
+        you type. An entry with the mark <code>{delegate}</code> gives the name of the CLI that
+        operated and the result. Thus a later delegate does not do that work again, and it does not
+        remove that work.
+      </p>
+      <p>
+        <strong>Glider selects the entries by relevance, and not only by time.</strong> It compares
+        each entry with the task of that delegate. Therefore a session that changed its subject
+        gives the entries about <em>this</em> task. Glider always includes the two newest entries,
+        whatever their score, and a limit on the quantity of tokens controls the full block. A
+        limit on the count of entries does not.
+      </p>
+      <p>
+        <strong>Glider makes a summary of a long record. It does not only cut the record.</strong>
+        When the record becomes larger than one delegate can receive, Glider replaces the older
+        half with one summary and keeps the newest entries as they are. Claude Code, Codex CLI and
+        OpenCode all use this method.
+      </p>
+      <p>
+        <code>context.summary.chain</code> in your config selects who writes that summary. The
+        first value is <code>origin</code>: an agent CLI that you have installed, which operates
+        with no console. You already pay for that CLI, thus Glider does not use your own API
+        credits. Glider starts that CLI as a usual delegate. <strong>It never uses credentials that
+        it saw in intercepted traffic.</strong>
+      </p>
+      <p>
+        If no summary function is available, Glider still makes the record smaller. It uses a
+        method with no model, and it keeps the first turns and each delegate result. All of this
+        work occurs in the background. Therefore it never makes a request slow.
+      </p>
+      <p>
+        The delegate does <strong>not</strong> receive your full conversation word for word, the
+        internal analysis of your CLI, or content from an earlier delegate request. Each delegate
+        starts cold and gets a summary. Therefore the text of the task must still be complete.
+      </p>
+
+      <h2 id="loops">6. Loops, and why they do not occur</h2>
+      <p>
+        Put your delegation rules in <code>AGENTS.md</code>, and a delegated CLI reads
+        <code>AGENTS.md</code>. Thus it reads the same rules and can send the task to a third CLI.
+        Each step pays the delay of a new start.
+      </p>
+      <p>
+        Glider prevents this. The context file tells the delegate three facts: it <em>is</em> the
+        delegate, it must ignore each automatic delegation rule that it finds in the project, and it
+        must do the task itself. You do not have to control this in your rules. But if you write
+        your own instructions for the delegate, keep that line.
+      </p>
+
+      <h2 id="verify">7. How to make sure that it operates</h2>
+      <ol>
+        <li>Start Glider. Make sure that the dashboard operates at <code>http://127.0.0.1:8081</code>.</li>
+        <li>Give your CLI a task that agrees with one of your conditions.</li>
+        <li>The CLI tells you that it sends the task. In transparent mode the reply starts with <code>Delegated to &lt;vendor&gt;:</code>. The gateway route adds no prefix.</li>
+        <li>The request log on the Overview page shows a row with the action <code>delegate</code>.</li>
+      </ol>
+      <p>If your CLI sends no task, examine these causes in this sequence:</p>
+      <table>
+        <thead>
+          <tr><th>What you see</th><th>Probable cause</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>The CLI never writes the flag</td>
+            <td>The rules are in a file that this CLI does not read. Refer to <a href="#where">section 1</a>.</td>
+          </tr>
+          <tr>
+            <td><code>Unknown command: /agy</code></td>
+            <td>The flag is at the <em>start</em> of the message. It must be at the end. Claude Code takes a <code>/word</code> at the start as its own command, and it does not send it.</td>
+          </tr>
+          <tr>
+            <td>The CLI sends the flag, but nothing occurs</td>
+            <td>That CLI is not registered, or a person disabled it. Examine the Vendors page.</td>
+          </tr>
+          <tr>
+            <td>"I do not know which directory&hellip;"</td>
+            <td>This occurs one time for each session, and it is correct. Send <code>. /workspace</code> from your project, then send your request again. A default on the Vendors page puts the path in the question. It does not remove the question. Therefore a second CLI that you open in a different project never gets the directory of the first project with no message.</td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
+    <footer class="foot"><a href="delegation.html">← Delegation</a> · <a href="mitm.html">MITM →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

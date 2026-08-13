@@ -1,0 +1,101 @@
+name: Check the docs site
+
+# Glider no longer publishes its own GitHub Pages site. The pages are served
+# two ways instead:
+#   - by glider.exe, at 127.0.0.1:8081/docs/ (cmd/glider/main.go)
+#   - at https://utsv.work/Glider/, from a snapshot in the personal-website
+#     repo (public/Glider/, refreshed with `npm run sync:glider`)
+#
+# This repo stays the source of truth for the pages, so the checks that used to
+# guard the deploy run here instead. They must still pass, because a broken link
+# committed here reaches the published site at the next sync.
+
+on:
+  push:
+    branches: [master, v1-cli-interop]
+    paths:
+      - index.html
+      - docs/**
+      - scripts/check_docs_coverage.py
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - index.html
+      - docs/**
+      - scripts/check_docs_coverage.py
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage the site as it is published
+        # Only the landing page and docs/ go out. The Go source, configs and
+        # planning notes are not published. Staging them in the published shape
+        # makes the link check see the same relative paths a reader gets.
+        run: |
+          mkdir -p _published
+          cp index.html _published/
+          cp -r docs _published/docs
+
+      - name: Check every internal link resolves
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          bad = []
+          for root, _, files in os.walk('_published'):
+              for f in files:
+                  if not f.endswith('.html'):
+                      continue
+                  p = os.path.join(root, f)
+                  html = open(p, encoding='utf-8').read()
+                  ids = set(re.findall(r'id="([^"]+)"', html))
+                  for href in re.findall(r'href="([^"]+)"', html):
+                      if href.startswith(('http', 'mailto:', '#')) and not href.startswith('#'):
+                          continue
+                      page, _, anchor = href.partition('#')
+                      if page:
+                          target = os.path.normpath(os.path.join(root, page))
+                          if not os.path.exists(target):
+                              bad.append(f'{p}: missing {page}')
+                              continue
+                          # Follow the anchor into the target page too. A link to
+                          # other.html#gone resolves as a file and still lands the
+                          # reader nowhere.
+                          if anchor and target.endswith('.html'):
+                              t_ids = set(re.findall(r'id="([^"]+)"',
+                                                     open(target, encoding='utf-8').read()))
+                              if anchor not in t_ids:
+                                  bad.append(f'{p}: {page} has no #{anchor}')
+                      elif anchor and anchor not in ids:
+                          bad.append(f'{p}: missing anchor #{anchor}')
+          if bad:
+              print('\n'.join(bad))
+              sys.exit(1)
+          print('all internal links resolve')
+          PY
+
+      - name: Check the delegation template is identical in both copies
+        run: |
+          python3 - <<'PY'
+          import re, html, sys
+          md = open('_published/docs/instructions.md', encoding='utf-8').read()
+          pg = open('_published/docs/site/instructions.html', encoding='utf-8').read()
+          a = re.search(r'## 2\. The template.*?```markdown\n(.*?)\n```', md, re.S).group(1)
+          b = html.unescape(re.search(r'<pre>(## Delegating to other CLIs.*?)</pre>', pg, re.S).group(1))
+          if a != b:
+              print('The template in docs/instructions.md and the one on the site page')
+              print('have drifted. They are meant to be the same text, because a reader')
+              print('copies whichever one they happen to be looking at.')
+              sys.exit(1)
+          print('delegation template matches in both copies')
+          PY
+
+      - name: Check every config key, tool and route is documented
+        run: python3 scripts/check_docs_coverage.py

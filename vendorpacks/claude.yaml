@@ -1,0 +1,61 @@
+# Claude Code tool catalog — every entry here was confirmed live
+# (planning/agent_cli_interop.md §1 "Claude Code (`claude`)"), not inferred
+# from documentation. A tool absent from this file simply hasn't been
+# traced yet — see agent_cli_interop.md's lazy ToolSearch note for why
+# "absent" isn't the same claim as "doesn't exist".
+vendor: claude
+observed_cli_version: "2.1.220 (Claude Code)"
+tools:
+  Read:
+    confirmed: true
+    tags: [read]
+    args:
+      path: [file_path]
+  Edit:
+    confirmed: true
+    tags: [edit, write]
+    args:
+      path: [file_path]
+      old_content: [oldString]
+      new_content: [newString]
+    diff_view: hunks # structuredPatch — see internal/ngl adapter_claude.go
+  Write:
+    confirmed: true
+    tags: [edit, write, create]
+    args:
+      path: [file_path]
+      content: [content]
+    diff_view: whole_file # reuses Edit's result shape with structuredPatch:[] / originalFile:null
+  Grep:
+    confirmed: true
+    tags: [search]
+  Bash:
+    confirmed: true
+    tags: [shell, execute]
+    args:
+      command: [command]
+  Glob:
+    confirmed: true
+    tags: [list, search]
+    args:
+      pattern: [pattern]
+  WebFetch:
+    confirmed: true
+    tags: [web, fetch]
+    args:
+      url: [url]
+  WebSearch:
+    confirmed: true
+    tags: [web, search, hosted] # hosted: runs server-side on Anthropic's infra, not locally delegable — see agent_cli_interop.md
+  NotebookEdit:
+    confirmed: true
+    tags: [edit, write, notebook]
+    diff_view: whole_file # full before/after text, same family as Write
+  Agent: # wire name — CLI-facing name is "Task"
+    confirmed: true
+    tags: [delegate, subagent]
+    args:
+      prompt: [prompt]
+      subagent_type: [subagent_type]
+unknown_tool_policy: passthrough
+confirmed_policy: prefer

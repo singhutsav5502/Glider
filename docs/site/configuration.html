@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Configuration · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html" class="active">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Reference</div>
+      <h1>Configuration reference</h1>
+      <p>
+        Every setting that Glider reads, with its type, its default and its function. Each key here
+        is a field in <code>internal/config/config.go</code>. A key that this page does not list does
+        not exist.
+      </p>
+      <p class="note">
+        <strong>Which file.</strong> Glider reads <code>configs/glider.yaml</code> from the current
+        directory. To use a different file, give <code>--config</code>:
+        <code>.\glider.exe --config configs\glider.local.yaml</code>. Refer to
+        <a href="#profiles">the profiles</a> below.
+      </p>
+
+      <h2 id="profiles">The profiles that Glider supplies</h2>
+      <table>
+        <tr><th>File</th><th>Function</th></tr>
+        <tr><td><code>configs/glider.yaml</code></td><td>The default. A hybrid: local models and cloud, with transparent interception on.</td></tr>
+        <tr><td><code>configs/glider.local.yaml</code></td><td>Pure local. No cloud key. Refer to <a href="pure-local.html">Pure local</a>.</td></tr>
+        <tr><td><code>configs/glider.cloud.yaml</code></td><td>Cloud only.</td></tr>
+        <tr><td><code>configs/glider.transparent-test.yaml</code></td><td>A profile for a test of transparent interception.</td></tr>
+      </table>
+
+      <h2 id="reload">What applies immediately, and what needs a restart</h2>
+      <p>
+        Glider applies most changes while it operates. Edit the file, or save from the
+        <strong>Config</strong> page of the dashboard.
+      </p>
+      <table>
+        <tr><th>Applies immediately</th><th>Needs a restart</th></tr>
+        <tr>
+          <td>The routing rules, the model aliases, the context thresholds, the log level, and the
+            clients for the backends and the models</td>
+          <td>The listen ports, the CA of the MITM, the host list, and each setting for transparent
+            interception</td>
+        </tr>
+      </table>
+      <p>
+        To see the condition: the <strong>Config</strong> page of the dashboard shows the list of
+        hot-swap modules. A response also carries the header
+        <code>X-Glider-Backend-Reload</code> after you save from that page.
+      </p>
+
+      <h2 id="server">server</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>proxy_port</code></td><td>int</td><td><code>8080</code></td><td>The gateway. It gives the <code>/v1/*</code> endpoints.</td></tr>
+        <tr><td><code>dashboard_port</code></td><td>int</td><td><code>8081</code></td><td>The dashboard, the <code>/api/*</code> endpoints and this documentation.</td></tr>
+        <tr><td><code>log_level</code></td><td>string</td><td><code>info</code></td><td><code>debug</code>, <code>info</code>, <code>warn</code> or <code>error</code>.</td></tr>
+      </table>
+
+      <h2 id="thresholds">thresholds</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>max_local_context_tokens</code></td><td>int</td><td><code>8000</code></td><td>The ceiling on the context that Glider gives to a local model.</td></tr>
+        <tr><td><code>idle_unload_timeout</code></td><td>duration</td><td><code>5m</code></td><td>Glider removes a model from memory after this time with no use.</td></tr>
+        <tr><td><code>request_timeout</code></td><td>duration</td><td><code>10m</code></td><td>The HTTP timeout for a local backend. Increase it for a large model with a long tool loop.</td></tr>
+        <tr><td><code>default_max_tokens</code></td><td>int</td><td><code>8192</code></td><td>The <code>max_tokens</code> of a completion. Ollama receives this value as <code>num_predict</code>. Increase it if a report stops in the middle of a sentence.</td></tr>
+      </table>
+
+      <h2 id="vram">vram</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>strategy</code></td><td>string</td><td><code>dynamic</code></td><td><code>static</code>, <code>dynamic</code> or <code>hybrid</code>. How Glider gives the GPU memory to the models. The supplied <code>glider.yaml</code> sets <code>hybrid</code>.</td></tr>
+        <tr><td><code>headroom_mb</code></td><td>int</td><td><code>512</code></td><td>The memory that Glider keeps free, in MB.</td></tr>
+        <tr><td><code>max_loaded_models</code></td><td>int</td><td><code>3</code></td><td>The count of models that stay in memory together.</td></tr>
+        <tr><td><code>gpu_assignments</code></td><td>map</td><td>—</td><td>A model name to a GPU index. <code>PUT /api/gpu-assignments</code> writes this map.</td></tr>
+      </table>
+
+      <h2 id="models">models</h2>
+      <p>A list. Each entry describes one model.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>name</code></td><td>string</td><td>—</td><td>The name of the model, as its backend knows it.</td></tr>
+        <tr><td><code>backend</code></td><td>string</td><td><code>ollama</code></td><td>The name of an entry in <a href="#backends"><code>backends</code></a>.</td></tr>
+        <tr><td><code>vram_estimate_mb</code></td><td>int</td><td><code>5000</code></td><td>The memory that this model needs. The strategy for the VRAM uses this value.</td></tr>
+        <tr><td><code>max_context</code></td><td>int</td><td><code>8192</code></td><td>The context window of the model.</td></tr>
+        <tr><td><code>capabilities</code></td><td>list</td><td>—</td><td>Labels such as <code>code</code>. A rule can select a model by a label.</td></tr>
+        <tr><td><code>adapter</code></td><td>string</td><td>—</td><td>The name of a LoRA adapter to apply. vLLM only.</td></tr>
+        <tr><td><code>adapters[].name</code></td><td>string</td><td>—</td><td>The name of one LoRA adapter that Glider can load.</td></tr>
+        <tr><td><code>adapters[].path</code></td><td>string</td><td>—</td><td>The path to that adapter.</td></tr>
+        <tr><td><code>keep_warm</code></td><td>bool</td><td><code>false</code></td><td>Keeps the model in memory. The idle timeout does not apply to it.</td></tr>
+      </table>
+
+      <h2 id="aliases">model_aliases</h2>
+      <p>
+        A map from a name that a CLI sends to a model that you have. This is how a request for
+        <code>gpt-4o</code> reaches a local model with no change in the CLI.
+      </p>
+      <pre>model_aliases:
+  claude-3.5-sonnet: qwen2.5-coder:14b
+  gpt-4o: qwen2.5-coder:14b</pre>
+
+      <h2 id="routing">routing</h2>
+      <p>Refer to <a href="routing.html">Routing</a> for the full priority sequence and each trigger type.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>rules</code></td><td>list</td><td>—</td><td>The rules. <a href="routing.html#rules">Each field is here</a>.</td></tr>
+        <tr><td><code>default</code></td><td>string</td><td>—</td><td><code>local</code> or <code>cloud</code>. It changes the target of the priority-0 rule. Therefore a profile becomes pure local with no edit to each rule.</td></tr>
+        <tr><td><code>default_local_model</code></td><td>string</td><td>—</td><td>The model for that rule when <code>default</code> is <code>local</code>.</td></tr>
+        <tr><td><code>allow_cloud_fallback</code></td><td>bool</td><td><code>true</code></td><td>With <code>false</code>, Glider never goes to the cloud after a local model fails. Pure local uses <code>false</code>.</td></tr>
+        <tr><td><code>complexity_from</code></td><td>string</td><td><code>heuristic</code></td><td><code>heuristic</code>, <code>cursor</code> or <code>both</code>. It selects the source of the complexity score.</td></tr>
+        <tr><td><code>turn_family_ttl</code></td><td>duration</td><td><code>90s</code></td><td>How long a turn family stays open for a summary or a title that comes after it. Refer to <a href="mitm.html">MITM</a>.</td></tr>
+      </table>
+
+      <h3>routing.task_classifier</h3>
+      <p>It adds rules that use a heuristic. The rules go between the explicit commands and the context size.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Turns the classifier on.</td></tr>
+        <tr><td><code>tools_force_cloud</code></td><td>bool</td><td><code>true</code></td><td>A request that has <code>tools[]</code> goes to the cloud. Set <code>false</code> to permit a local model with tools. That model must support tools.</td></tr>
+        <tr><td><code>must_cloud_patterns</code></td><td>list</td><td>built-in</td><td>Regular expressions that force the cloud. A value here replaces the built-in list.</td></tr>
+        <tr><td><code>small_local_patterns</code></td><td>list</td><td>built-in</td><td>Regular expressions that select the local model. A value here replaces the built-in list.</td></tr>
+        <tr><td><code>local_model</code></td><td>string</td><td>—</td><td>The model for a match with a small task.</td></tr>
+        <tr><td><code>cloud_backend</code></td><td>string</td><td>—</td><td>The backend for a match that must use the cloud.</td></tr>
+        <tr><td><code>cloud_model</code></td><td>string</td><td>—</td><td>The model for that match.</td></tr>
+        <tr><td><code>tools_priority</code></td><td>int</td><td><code>85</code></td><td>The priority of the rule for the tools.</td></tr>
+        <tr><td><code>must_cloud_priority</code></td><td>int</td><td><code>80</code></td><td>The priority of the rule that must use the cloud.</td></tr>
+        <tr><td><code>small_local_priority</code></td><td>int</td><td><code>70</code></td><td>The priority of the rule for a small task.</td></tr>
+      </table>
+
+      <h3>routing.complexity</h3>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>false</code></td><td>Adds a rule that uses the complexity score.</td></tr>
+        <tr><td><code>cloud_above</code></td><td>int</td><td><code>70</code></td><td>A score of this value or more goes to the cloud. The range is 0 to 100.</td></tr>
+        <tr><td><code>priority</code></td><td>int</td><td><code>75</code></td><td>The priority of that rule. It is below must-cloud (80) and above small-local (70).</td></tr>
+        <tr><td><code>cloud_backend</code></td><td>string</td><td>—</td><td>The backend for the rule.</td></tr>
+        <tr><td><code>cloud_model</code></td><td>string</td><td>—</td><td>The model for the rule.</td></tr>
+      </table>
+
+      <h3>routing.tool_followup</h3>
+      <p>It controls where the calls of a tool go, after a parent turn has a route.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Turns this control on.</td></tr>
+        <tr><td><code>inherit_parent_default</code></td><td>bool</td><td><code>true</code></td><td>A call starts with the decision of its parent turn.</td></tr>
+        <tr><td><code>reevaluate</code></td><td>bool</td><td><code>true</code></td><td>Permits a safe tool to go to the local model, also when the parent went to the cloud.</td></tr>
+        <tr><td><code>local_tool_allowlist</code></td><td>list</td><td>—</td><td>The names of the tools that can go to the local model. An example is <code>read_file</code> or <code>grep</code>.</td></tr>
+        <tr><td><code>cloud_tool_denylist</code></td><td>list</td><td>—</td><td>A match here forces the cloud. An example is <code>Shell</code> or <code>Write</code>.</td></tr>
+      </table>
+
+      <h2 id="orchestration">orchestration</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>fan_out.enabled</code></td><td>bool</td><td><code>false</code></td><td>Permits one message to go to more than one worker. The supplied <code>glider.yaml</code> keeps this section as a comment.</td></tr>
+        <tr><td><code>fan_out.max_workers</code></td><td>int</td><td><code>2</code></td><td>The count of workers for one fan-out.</td></tr>
+        <tr><td><code>concurrency.worker_queue_size</code></td><td>int</td><td><code>16</code></td><td>The size of the queue of the workers.</td></tr>
+        <tr><td><code>concurrency.result_chan_size</code></td><td>int</td><td><code>32</code></td><td>The size of the channel for the results.</td></tr>
+        <tr><td><code>concurrency.max_inflight</code></td><td>int</td><td><code>4</code></td><td>The count of requests that operate together.</td></tr>
+      </table>
+
+      <h3>orchestration.tools</h3>
+      <p>Refer to <a href="mcp.html">Tools &amp; MCP</a> for each tool.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>workspace</code></td><td>string</td><td><code>~/.glider/workspace</code></td><td>The root of the sandbox for <code>fs_*</code>, <code>git_*</code> and <code>shell_exec</code>. Do not set it to <code>.</code>, or the tools operate in the repository of Glider.</td></tr>
+        <tr><td><code>allow_shell</code></td><td>bool</td><td><code>false</code></td><td>Permits <code>shell_exec</code>. It is off, because the tool is dangerous.</td></tr>
+        <tr><td><code>shell_allowlist</code></td><td>list</td><td>—</td><td>The commands that <code>shell_exec</code> can run.</td></tr>
+        <tr><td><code>allow_hosts</code></td><td>list</td><td>any</td><td>Limits <code>http_fetch</code> and <code>web_fetch</code> to these hosts. An empty list permits each host.</td></tr>
+        <tr><td><code>web_search.provider</code></td><td>string</td><td><code>auto</code></td><td><code>auto</code>, <code>duckduckgo</code>, <code>brave</code>, <code>tavily</code>, <code>serpapi</code> or <code>searxng</code>.</td></tr>
+        <tr><td><code>web_search.max_results</code></td><td>int</td><td><code>5</code></td><td>The count of results. A value of more than <code>10</code> becomes <code>10</code>.</td></tr>
+        <tr><td><code>web_search.brave_api_key_env</code></td><td>string</td><td><code>BRAVE_SEARCH_API_KEY</code></td><td>The environment variable that holds the key for Brave. <code>BRAVE_API_KEY</code> also operates.</td></tr>
+        <tr><td><code>web_search.tavily_api_key_env</code></td><td>string</td><td><code>TAVILY_API_KEY</code></td><td>The environment variable that holds the key for Tavily.</td></tr>
+        <tr><td><code>web_search.serpapi_key_env</code></td><td>string</td><td><code>SERPAPI_KEY</code></td><td>The environment variable that holds the key for SerpAPI.</td></tr>
+        <tr><td><code>web_search.searxng_url</code></td><td>string</td><td>—</td><td>The URL of your own SearXNG. The variable <code>SEARXNG_URL</code> also operates.</td></tr>
+        <tr><td><code>web_search.fetch_max_bytes</code></td><td>int</td><td><code>65536</code></td><td>The ceiling on the body that <code>web_fetch</code> reads. A value of more than <code>262144</code> becomes <code>262144</code>.</td></tr>
+      </table>
+
+      <h2 id="cloud">cloud</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>providers[].name</code></td><td>string</td><td>—</td><td>The name that a rule uses, such as <code>openai</code> or <code>anthropic</code>.</td></tr>
+        <tr><td><code>providers[].api_key_env</code></td><td>string</td><td>—</td><td>The environment variable that holds the key. Glider never writes the key in the config.</td></tr>
+        <tr><td><code>providers[].base_url</code></td><td>string</td><td>—</td><td>The endpoint of the provider.</td></tr>
+        <tr><td><code>rate_limit.requests_per_minute</code></td><td>int</td><td><code>30</code></td><td>The ceiling on the requests to the cloud.</td></tr>
+        <tr><td><code>rate_limit.tokens_per_minute</code></td><td>int</td><td><code>100000</code></td><td>The ceiling on the tokens to the cloud.</td></tr>
+        <tr><td><code>budget_cap_usd</code></td><td>float</td><td><code>50</code></td><td>The ceiling on the cost.</td></tr>
+      </table>
+
+      <h2 id="backends">backends</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>name</code></td><td>string</td><td>—</td><td>The name that <code>models[].backend</code> uses.</td></tr>
+        <tr><td><code>type</code></td><td>string</td><td>—</td><td><code>ollama</code>, <code>vllm</code>, <code>openai</code> or <code>anthropic</code>.</td></tr>
+        <tr><td><code>url</code></td><td>string</td><td>—</td><td>The address of the backend. Ollama uses <code>http://127.0.0.1:11434</code>.</td></tr>
+        <tr><td><code>health_check_interval</code></td><td>duration</td><td><code>30s</code></td><td>How often Glider tests that the backend operates.</td></tr>
+      </table>
+
+      <h2 id="dashboard">dashboard</h2>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Turns the dashboard and the <code>/api/*</code> endpoints on.</td></tr>
+      </table>
+
+      <h2 id="transform">transform</h2>
+      <p>It controls the messages that Glider gives to a local model.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>false</code></td><td>Turns the transformation on.</td></tr>
+        <tr><td><code>trim_context</code></td><td>bool</td><td><code>false</code></td><td>Removes the older messages before Glider sends the request.</td></tr>
+        <tr><td><code>augment_prepend</code></td><td>string</td><td>—</td><td>Text that goes before the prompt.</td></tr>
+        <tr><td><code>augment_append</code></td><td>string</td><td>—</td><td>Text that goes after the prompt.</td></tr>
+        <tr><td><code>local_context</code></td><td>string</td><td><code>latest_turn</code></td><td><code>latest_turn</code> sends the most recent turn only. <code>full</code> sends the messages with no limit.</td></tr>
+        <tr><td><code>local_system_max_chars</code></td><td>int</td><td><code>4000</code></td><td>The ceiling on the system content under <code>latest_turn</code>.</td></tr>
+        <tr><td><code>local_episode_count</code></td><td>int</td><td><code>3</code></td><td>The count of earlier episodes that go in the pack. A value of 0 stops this.</td></tr>
+        <tr><td><code>local_episode_max_chars</code></td><td>int</td><td><code>1500</code></td><td>The ceiling on the full block of the episodes.</td></tr>
+      </table>
+
+      <h2 id="mitm">mitm</h2>
+      <p>Read <a href="mitm.html">MITM &amp; interception</a> before you change these settings.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Turns the proxy of the MITM on.</td></tr>
+        <tr><td><code>port</code></td><td>int</td><td><code>8082</code></td><td>The listener for CONNECT.</td></tr>
+        <tr><td><code>ca_cert</code></td><td>string</td><td><code>~/.glider/mitm/ca.crt</code></td><td>The certificate of the CA of Glider.</td></tr>
+        <tr><td><code>ca_key</code></td><td>string</td><td><code>~/.glider/mitm/ca.key</code></td><td>The private key of that CA.</td></tr>
+        <tr><td><code>hosts</code></td><td>list</td><td>see the file</td><td>The hosts that Glider decrypts. Glider sends each other host with no decryption.</td></tr>
+        <tr><td><code>passthrough_default</code></td><td>bool</td><td><code>true</code></td><td>A host that is not in the list goes to its origin with no change.</td></tr>
+        <tr><td><code>transparent</code></td><td>bool</td><td><code>true</code></td><td>Turns interception at the level of the operating system on. It needs Administrator on Windows, or root on Linux.</td></tr>
+        <tr><td><code>transparent_port</code></td><td>int</td><td><code>8083</code></td><td>The ingress for the redirected connections. It is not the same as <code>port</code>.</td></tr>
+        <tr><td><code>transparent_ports</code></td><td>list</td><td><code>[443]</code></td><td>The destination ports that Glider intercepts.</td></tr>
+        <tr><td><code>windivert_dll_path</code></td><td>string</td><td><code>~/.glider/mitm/windivert/WinDivert.dll</code></td><td>Windows only. <code>WinDivertNN.sys</code> must be in the same directory. With no value, <code>transparent</code> does nothing.</td></tr>
+        <tr><td><code>origin_on_local_error</code></td><td>bool</td><td><code>true</code></td><td>If the local model fails, the request goes to its origin. Set <code>false</code> for pure local, so an error is visible.</td></tr>
+        <tr><td><code>require_local_healthy</code></td><td>bool</td><td><code>false</code></td><td>Glider selects the local model only when a health check succeeds. This stops a silent change to the origin.</td></tr>
+        <tr><td><code>debug_agent_rpc</code></td><td>bool</td><td><code>false</code></td><td>Adds logs, the dumps of the bodies, and <code>GET /api/mitm/debug/recent</code>. The variable <code>GLIDER_MITM_DEBUG_RPC</code> also turns it on.</td></tr>
+        <tr><td><code>debug_dump_dir</code></td><td>string</td><td><code>~/.glider/mitm-debug/</code></td><td>Where those dumps go.</td></tr>
+        <tr><td><code>agent_rpc_fulfill</code></td><td>bool</td><td><code>true</code></td><td>Permits a local reply on the Agent RPC plane of Cursor.</td></tr>
+        <tr><td><code>agent_rpc_canned_on_error</code></td><td>bool</td><td><code>false</code></td><td>Writes fixed text when the local model fails, in place of the origin.</td></tr>
+        <tr><td><code>agent_rpc_canned_text</code></td><td>string</td><td><code>pong from glider (canned Path B)</code></td><td>That text.</td></tr>
+        <tr><td><code>agent_rpc_tool_codec</code></td><td>bool</td><td><code>false</code></td><td>Permits a local reply for the loop of a tool. The variable <code>GLIDER_MITM_AGENT_RPC_TOOL_CODEC</code> also turns it on.</td></tr>
+      </table>
+
+      <h2 id="context">context</h2>
+      <p>Refer to <a href="context.html">Context</a> for the two layers and the selection.</p>
+      <table>
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Function</th></tr>
+        <tr><td><code>max_events</code></td><td>int</td><td><code>4096</code></td><td>The size of the event ring in memory.</td></tr>
+        <tr><td><code>retain_days</code></td><td>int</td><td><code>14</code></td><td>How long the files <code>events-*.jsonl</code> stay on disk.</td></tr>
+        <tr><td><code>warm_load_days</code></td><td>int</td><td><code>2</code></td><td>How many days Glider reads again when it starts.</td></tr>
+        <tr><td><code>background.token_budget</code></td><td>int</td><td><code>20000</code></td><td>The ceiling on the block that goes with each delegate call.</td></tr>
+        <tr><td><code>background.max_entries</code></td><td>int</td><td><code>20</code></td><td>The count of entries in that block.</td></tr>
+        <tr><td><code>background.max_entry_chars</code></td><td>int</td><td><code>4000</code></td><td>One entry, before Glider removes its middle.</td></tr>
+        <tr><td><code>summary.enabled</code></td><td>bool</td><td><code>true</code></td><td>Permits a model to write the summary. With <code>false</code>, Glider still compacts, with the deterministic digest.</td></tr>
+        <tr><td><code>summary.chain</code></td><td>list</td><td><code>[origin, cloud, local]</code></td><td>The order that Glider tries. The values are <code>origin</code>, <code>cloud</code>, <code>local</code> and <code>none</code>.</td></tr>
+        <tr><td><code>summary.origin_vendor</code></td><td>string</td><td>—</td><td>Which CLI answers for <code>origin</code>. With no value, Glider uses the front CLI of that workspace. Only a headless template can do this work.</td></tr>
+        <tr><td><code>summary.cloud_backend</code></td><td>string</td><td>—</td><td>The backend for <code>cloud</code>.</td></tr>
+        <tr><td><code>summary.cloud_model</code></td><td>string</td><td>—</td><td>The model for <code>cloud</code>.</td></tr>
+        <tr><td><code>summary.local_model</code></td><td>string</td><td><code>routing.default_local_model</code></td><td>The model for <code>local</code>.</td></tr>
+      </table>
+
+      <h2 id="env">The environment variables</h2>
+      <p>
+        Glider reads <code>.env</code> and <code>.env.local</code> from the repository root when it
+        starts. It does not change a variable that your shell already gives. Both files are in
+        <code>.gitignore</code>. Copy <code>.env.example</code> to begin.
+      </p>
+      <h3>The switches for MITM</h3>
+      <p>
+        Each one accepts <code>1</code>, <code>true</code>, <code>yes</code> or <code>on</code>, and
+        the case does not matter. <strong>A switch only turns a setting ON.</strong> It never turns
+        one off, therefore you cannot use it to remove a value from the config file.
+      </p>
+      <table>
+        <tr><th>Variable</th><th>The setting that it turns on</th></tr>
+        <tr><td><code>GLIDER_MITM_DEBUG_RPC</code></td><td><code>mitm.debug_agent_rpc</code></td></tr>
+        <tr><td><code>GLIDER_MITM_AGENT_RPC_FULFILL</code></td><td><code>mitm.agent_rpc_fulfill</code></td></tr>
+        <tr><td><code>GLIDER_MITM_AGENT_RPC_CANNED</code></td><td><code>mitm.agent_rpc_canned_on_error</code></td></tr>
+        <tr><td><code>GLIDER_MITM_AGENT_RPC_TOOL_CODEC</code></td><td><code>mitm.agent_rpc_tool_codec</code></td></tr>
+      </table>
+      <h3>GitHub, for MCP</h3>
+      <table>
+        <tr><th>Variable</th><th>Function</th></tr>
+        <tr><td><code>GITHUB_PERSONAL_ACCESS_TOKEN</code></td><td>A personal access token. <code>GITHUB_TOKEN</code> and <code>GH_TOKEN</code> also operate.</td></tr>
+        <tr><td><code>GLIDER_GITHUB_OAUTH_CLIENT_ID</code></td><td>The id of your OAuth app. It turns the <strong>Sign in with GitHub</strong> button on.</td></tr>
+        <tr><td><code>GLIDER_GITHUB_OAUTH_CLIENT_SECRET</code></td><td>The secret of that app. With no secret, Glider uses the device procedure.</td></tr>
+        <tr><td><code>GLIDER_GITHUB_OAUTH_SCOPES</code></td><td>The scopes to ask for, such as <code>repo read:org read:user</code>.</td></tr>
+        <tr><td><code>GLIDER_GITHUB_OAUTH_REDIRECT_URI</code></td><td>Changes the callback. The default is <code>http://127.0.0.1:8081/oauth/callback</code>, and the OAuth app must give exactly this value.</td></tr>
+      </table>
+      <h3>Web search</h3>
+      <table>
+        <tr><th>Variable</th><th>Function</th></tr>
+        <tr><td><code>BRAVE_SEARCH_API_KEY</code></td><td>The key for Brave. <code>BRAVE_API_KEY</code> also operates.</td></tr>
+        <tr><td><code>TAVILY_API_KEY</code> · <code>SERPAPI_KEY</code></td><td>The keys for those services.</td></tr>
+        <tr><td><code>SEARXNG_URL</code></td><td>The address of your own SearXNG.</td></tr>
+      </table>
+      <p>
+        A key of <code>orchestration.tools.web_search</code> names the variable to read. Therefore
+        you can use a different name. Refer to
+        <a href="#orchestration">orchestration.tools</a>.
+      </p>
+      <h3>Other</h3>
+      <table>
+        <tr><th>Variable</th><th>Function</th></tr>
+        <tr><td>The variable in <code>cloud.providers[].api_key_env</code></td><td>The key of that provider. An example is <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code>.</td></tr>
+        <tr><td><code>GLIDER_HOME</code></td><td>Moves the directory of the credentials from <code>~/.glider/credentials</code> to <code>&lt;GLIDER_HOME&gt;/credentials</code>. It changes only the credentials.</td></tr>
+      </table>
+
+      <h2 id="validation">What Glider tests in a config</h2>
+      <p>
+        Glider tests the config when it reads it. <code>POST /api/validate</code> does the same
+        tests, and it applies nothing. A test gives an <strong>error</strong> or a
+        <strong>warning</strong>. An error stops the config. A warning does not, because the
+        condition can be correct: a model can exist in a backend that Glider did not scan.
+      </p>
+      <h3>A value must be in the set</h3>
+      <table>
+        <tr><th>Key</th><th>The values that it accepts</th></tr>
+        <tr><td><code>server.log_level</code></td><td><code>debug</code> · <code>info</code> · <code>warn</code> · <code>error</code></td></tr>
+        <tr><td><code>vram.strategy</code></td><td><code>dynamic</code> · <code>hybrid</code> · <code>static</code></td></tr>
+        <tr><td><code>routing.default</code></td><td><code>local</code> · <code>cloud</code></td></tr>
+        <tr><td><code>routing.complexity_from</code></td><td><code>heuristic</code> · <code>cursor</code> · <code>both</code></td></tr>
+        <tr><td><code>transform.local_context</code></td><td><code>latest_turn</code> · <code>full</code></td></tr>
+        <tr><td><code>routing.rules[].trigger.type</code></td><td><code>explicit</code> · <code>regex</code> · <code>context_size</code> · <code>always</code> · <code>script</code> · <code>composer_wrapup</code></td></tr>
+      </table>
+      <p>
+        <code>routing.rules[].action.target</code> is necessary. A value that is not
+        <code>local</code> or <code>cloud</code> gives a warning, and not an error.
+      </p>
+      <h3>A value must be in a range</h3>
+      <table>
+        <tr><th>Key</th><th>Range</th></tr>
+        <tr><td><code>server.proxy_port</code></td><td>1 to 65535</td></tr>
+        <tr><td><code>server.dashboard_port</code> · <code>mitm.port</code></td><td>0 to 65535</td></tr>
+        <tr><td><code>routing.complexity.cloud_above</code></td><td>0 to 100</td></tr>
+        <tr><td><code>thresholds.max_local_context_tokens</code> · <code>vram.headroom_mb</code> · <code>vram.max_loaded_models</code> · <code>models[].vram_estimate_mb</code> · <code>models[].max_context</code></td><td>0 or more</td></tr>
+        <tr><td><code>thresholds.idle_unload_timeout</code> · <code>thresholds.request_timeout</code> · <code>routing.turn_family_ttl</code> · <code>backends[].health_check_interval</code></td><td>A duration that Go can read, such as <code>90s</code>, <code>5m</code> or <code>10m</code>.</td></tr>
+      </table>
+      <h3>A name must exist, and it must be one name</h3>
+      <table>
+        <tr><th>Rule</th></tr>
+        <tr><td><code>backends[].name</code> and <code>backends[].url</code> are necessary.</td></tr>
+        <tr><td><code>models[].name</code> is necessary, and two models cannot share a name.</td></tr>
+        <tr><td>An empty key of <code>model_aliases</code>, or an empty target, is an error.</td></tr>
+        <tr><td>The GPU index in <code>vram.gpu_assignments</code> must be 0 or more, and it must be less than the count of the GPUs that Glider found.</td></tr>
+      </table>
+      <h3>These give a warning only</h3>
+      <table>
+        <tr><th>Condition</th></tr>
+        <tr><td><code>models[].backend</code> does not name an entry in <code>backends</code>.</td></tr>
+        <tr><td>A target of <code>model_aliases</code> is not in <code>models</code>.</td></tr>
+        <tr><td>A model in <code>vram.gpu_assignments</code> is not in <code>models</code>.</td></tr>
+        <tr><td>A rule sends work to a local model that is not in <code>models</code>.</td></tr>
+        <tr><td>A model is not in the list that Glider found in the backend. This is an error when the test is not soft.</td></tr>
+      </table>
+      <h3>A trigger must carry its own field</h3>
+      <table>
+        <tr><th>Type</th><th>The field that it must have</th></tr>
+        <tr><td><code>explicit</code></td><td><code>commands</code></td></tr>
+        <tr><td><code>regex</code></td><td><code>pattern</code>, and the expression must compile</td></tr>
+        <tr><td><code>script</code></td><td><code>file</code></td></tr>
+        <tr><td><code>context_size</code></td><td><code>operator</code></td></tr>
+      </table>
+      <p>
+        <code>routing.rules[].name</code> is necessary for each rule, and
+        <code>trigger.type</code> is necessary. The patterns of
+        <code>routing.task_classifier</code> must compile as regular expressions.
+      </p>
+
+      <h2 id="check">How to test a config</h2>
+      <pre>GET  /api/config              # the config that operates now
+GET  /api/config?format=yaml  # the same, as YAML
+POST /api/validate            # tests a config, and applies nothing
+GET  /api/router/lint         # finds an error in the routing rules</pre>
+      <p>
+        The <strong>Playground</strong> page of the dashboard reads a message with the same parser
+        that Glider uses, and it changes nothing.
+      </p>
+
+      <p>
+        Next: <a href="routing.html">Routing</a> gives each trigger type,
+        <a href="context.html">Context</a> gives the two memory layers, and
+        <a href="api.html">the API</a> gives each endpoint.
+      </p>
+    </main>
+    <footer class="foot"><a href="architecture.html">← Architecture</a> · <a href="routing.html">Routing →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

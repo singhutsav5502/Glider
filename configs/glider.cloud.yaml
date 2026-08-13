@@ -1,0 +1,147 @@
+# Gateway-only profile: default route is cloud (OpenAI/Anthropic with your keys).
+# Use when you are NOT using MITM and want non-local traffic to go to BYOK providers.
+#
+#   glider.exe --config configs/glider.cloud.yaml
+#
+# Routing: explicit → task_classifier → scripts → token ceiling → default cloud.
+# See planning/routing_and_context.md
+
+server:
+  proxy_port: 8080
+  dashboard_port: 8081
+  log_level: "info"
+
+thresholds:
+  max_local_context_tokens: 8000
+  idle_unload_timeout: "5m"
+  # Local Complete timeout; also used when cloud profile still talks to Ollama.
+  request_timeout: "10m"
+  default_max_tokens: 8192
+
+vram:
+  strategy: "hybrid"
+  headroom_mb: 512
+  max_loaded_models: 3
+
+models:
+  - name: "qwen2.5-coder:14b"
+    backend: "ollama"
+    vram_estimate_mb: 9000
+    max_context: 32768
+    capabilities: ["code"]
+    keep_warm: true
+
+model_aliases:
+  "gpt-4o": "qwen2.5-coder:14b"
+  "gpt-4o-mini": "qwen2.5-coder:14b"
+
+routing:
+  turn_family_ttl: 90s
+  tool_followup:
+    enabled: true
+    inherit_parent_default: true
+    reevaluate: true
+    local_tool_allowlist: ["read_file", "Read", "grep", "Grep", "Glob", "list_dir"]
+    cloud_tool_denylist: ["Shell", "Write", "Delete", "ApplyPatch"]
+  task_classifier:
+    enabled: true
+    tools_force_cloud: true
+    local_model: "qwen2.5-coder:14b"
+    cloud_backend: "openai"
+    cloud_model: "gpt-4o"
+  rules:
+    - name: "Explicit Local"
+      priority: 100
+      trigger:
+        type: "explicit"
+        commands: ["/local", "/fast"]
+      action:
+        target: "local"
+        model: "qwen2.5-coder:14b"
+
+    - name: "Explicit Cloud"
+      priority: 99
+      trigger:
+        type: "explicit"
+        commands: ["/cloud", "/heavy"]
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+    - name: "Script Refactor Local"
+      priority: 50
+      trigger:
+        type: "script"
+        file: "scripts/examples/detect_refactor.star"
+      action:
+        target: "local"
+        model: "qwen2.5-coder:14b"
+
+    - name: "Context Overflow"
+      priority: 10
+      trigger:
+        type: "context_size"
+        operator: ">"
+        value: 8000
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+    - name: "Default Cloud"
+      priority: 0
+      trigger:
+        type: "always"
+      action:
+        target: "cloud"
+        backend: "openai"
+        model: "gpt-4o"
+
+cloud:
+  providers:
+    - name: "openai"
+      api_key_env: "OPENAI_API_KEY"
+      base_url: "https://api.openai.com/v1"
+    - name: "anthropic"
+      api_key_env: "ANTHROPIC_API_KEY"
+      base_url: "https://api.anthropic.com/v1"
+  rate_limit:
+    requests_per_minute: 30
+    tokens_per_minute: 100000
+  budget_cap_usd: 50.00
+
+# Ollama-only is fine; add vLLM only if you run it (see configs/glider.yaml comments).
+backends:
+  - name: "ollama"
+    type: "local"
+    url: "http://127.0.0.1:11434"
+    health_check_interval: "30s"
+
+dashboard:
+  enabled: true
+
+transform:
+  enabled: false
+
+mitm:
+  enabled: false
+  port: 8082
+  ca_cert: "~/.glider/mitm/ca.crt"
+  ca_key: "~/.glider/mitm/ca.key"
+  hosts:
+    - "api2.cursor.sh"
+    - "api3.cursor.sh"
+    - "api4.cursor.sh"
+    - "*.api5.cursor.sh"
+  passthrough_default: true
+  # Path B tool codec off in cloud profile (prefer Path A / cus- for Agent+tools).
+  agent_rpc_tool_codec: false
+
+orchestration:
+  loops:
+    enabled: true
+    default_route: cloud
+    # skills_dir: ~/.glider/skills
+    # Isolate parallel>1 workers under runs/<id>/work/wN (git worktree when applicable).
+    worktrees: false

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pure local · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a class="active" href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Ollama</div>
+      <h1>Pure local mode</h1>
+      <p>
+        In this mode Glider uses no cloud API key. It sends each request that it fulfils to a model
+        on your machine. The profile is <code>configs/glider.local.yaml</code>.
+      </p>
+      <p class="note">
+        <strong>Read this first.</strong> "Pure local" describes what <em>Glider</em> fulfils. It does
+        not put your machine offline. Two paths still reach the network, and each one is under your
+        control. <a href="#leaks">The section below</a> names them.
+      </p>
+
+      <h2 id="start">Start</h2>
+      <pre>ollama serve
+ollama pull qwen2.5-coder:14b
+ollama pull llama3:8b-instruct
+.\glider.exe --config configs\glider.local.yaml</pre>
+      <p>Then point your CLI at the gateway:</p>
+      <pre># Claude Code
+set ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+
+# any CLI with a base-URL setting
+http://127.0.0.1:8080/v1</pre>
+      <p class="note">
+        <strong>This profile does not turn transparent interception on.</strong> The default profile
+        does, and this one does not. Therefore a CLI does not reach Glider by itself here. You must
+        point it at the gateway, or add <code>mitm.transparent: true</code> yourself. Refer to
+        <a href="#intercept">what this profile intercepts</a>.
+      </p>
+
+      <h2 id="models">The models that the profile gives</h2>
+      <table>
+        <tr><th>Model</th><th>VRAM</th><th>Context</th><th>Labels</th><th>In memory</th></tr>
+        <tr><td><code>qwen2.5-coder:14b</code></td><td>9000 MB</td><td>32768</td><td>code, refactor, debug</td><td>Always. <code>keep_warm: true</code>.</td></tr>
+        <tr><td><code>llama3:8b-instruct</code></td><td>5000 MB</td><td>8192</td><td>general, docs, explain</td><td>On demand.</td></tr>
+      </table>
+      <p>
+        The strategy for the VRAM keeps <code>headroom_mb: 512</code> free, and it holds a maximum of
+        3 models. The coder model stays in memory. Therefore the first request after a pause is not
+        slow.
+      </p>
+      <p>Three aliases let a CLI ask for a cloud model and receive a local one:</p>
+      <table>
+        <tr><th>The CLI asks for</th><th>The model that answers</th></tr>
+        <tr><td><code>gpt-4o</code></td><td><code>qwen2.5-coder:14b</code></td></tr>
+        <tr><td><code>claude-3.5-sonnet</code></td><td><code>qwen2.5-coder:14b</code></td></tr>
+        <tr><td><code>gpt-4o-mini</code></td><td><code>llama3:8b-instruct</code></td></tr>
+      </table>
+      <p>
+        To use a different model, pull it with Ollama, add it to <code>models</code>, and change
+        <code>routing.default_local_model</code>. The
+        <a href="configuration.html#models">configuration reference</a> gives each field.
+      </p>
+
+      <h2 id="settings">What the profile changes</h2>
+      <table>
+        <tr><th>Setting</th><th>Value</th><th>Why</th></tr>
+        <tr><td><code>routing.default</code></td><td><code>local</code></td><td>The rule at priority 0 sends the work to the local model, and not to the cloud.</td></tr>
+        <tr><td><code>routing.allow_cloud_fallback</code></td><td><code>false</code></td><td>After a local model fails, Glider does not try a cloud model.</td></tr>
+        <tr><td><code>routing.task_classifier.tools_force_cloud</code></td><td><code>false</code></td><td>A request with tools can stay local. In the default profile that request goes to the cloud. Your model must support tools.</td></tr>
+        <tr><td><code>cloud.providers</code></td><td><code>[]</code></td><td>No cloud backend exists. Therefore no rule can reach one.</td></tr>
+        <tr><td><code>cloud.budget_cap_usd</code></td><td><code>0</code></td><td>A second stop on the same path.</td></tr>
+        <tr><td><code>mitm.origin_on_local_error</code></td><td><code>false</code></td><td>You see the error of Ollama. Glider does not send the request to the origin of the CLI, which would spend a subscription with no message.</td></tr>
+        <tr><td><code>mitm.require_local_healthy</code></td><td><code>true</code></td><td>Glider selects the local model only after a health check succeeds.</td></tr>
+        <tr><td><code>mitm.agent_rpc_canned_on_error</code></td><td><code>false</code></td><td>No fixed test reply. A failure stays visible.</td></tr>
+      </table>
+
+      <h2 id="intercept">What this profile intercepts</h2>
+      <p>
+        <code>mitm.hosts</code> in this profile lists the hosts of Cursor only. It does not list
+        <code>api.anthropic.com</code>. With <code>passthrough_default: true</code>, each host that is
+        not in the list goes to its origin with no decryption.
+      </p>
+      <table>
+        <tr><th>How your CLI reaches Glider</th><th>Does it operate here?</th></tr>
+        <tr><td>The gateway, with a base URL that you set</td><td>Yes. This is the method for this profile.</td></tr>
+        <tr><td>MITM with CONNECT, for Cursor</td><td>Yes.</td></tr>
+        <tr><td>Transparent, with no help from the CLI</td><td>No. Add <code>mitm.transparent: true</code> to turn it on, and start Glider as Administrator or root.</td></tr>
+      </table>
+
+      <h2 id="leaks">The two paths that still reach the network</h2>
+      <p>
+        Glider fulfils no request from the cloud in this mode. These two mechanisms are different, and
+        each one is a choice that you can change.
+      </p>
+      <h3>1. A delegate CLI uses its own backend</h3>
+      <p>
+        <code>&lt;task&gt; /claude</code> starts the real Claude Code as a subprocess. That process
+        talks to the backend of its vendor, with its own credentials. Glider fulfils nothing there,
+        and this profile does not change it. To keep a delegate local also, you must intercept the
+        traffic of that subprocess: turn transparent mode on, and add the hosts of that vendor to
+        <code>mitm.hosts</code>.
+      </p>
+      <h3>2. The summary of a compaction</h3>
+      <p>
+        This profile gives no <code>context.summary</code> block. Therefore the default order
+        applies: <code>[origin, cloud, local]</code>. Glider skips <code>cloud</code>, because no
+        provider exists. But <strong><code>origin</code> comes first, and it runs an installed
+        CLI</strong>, which spends that subscription. To keep compaction on your machine, name the
+        source:
+      </p>
+      <pre>context:
+  summary:
+    chain: [local]</pre>
+      <p>
+        Refer to <a href="context.html#continuity">Context &middot; compaction</a> for what the summary
+        does, and for when it runs.
+      </p>
+
+      <h2 id="verify">How to confirm that a request stayed local</h2>
+      <table>
+        <tr><th>Where</th><th>What you see</th></tr>
+        <tr><td>The <strong>Overview</strong> page of the dashboard</td><td>A row for each request, with the rule that claimed it and the cause.</td></tr>
+        <tr><td><code>GET /api/metrics</code></td><td>The counts, and the percentage that went local against cloud.</td></tr>
+        <tr><td>The <strong>Rules Engine</strong> page</td><td>A test that shows which rule a message obeys, before you send it.</td></tr>
+        <tr><td><code>POST /api/router/explain</code></td><td>The same test, as an endpoint.</td></tr>
+      </table>
+      <p>
+        You can also force one turn, at any position in the message: <code>/local</code> or
+        <code>/fast</code>. Refer to <a href="routing.html">Routing</a>.
+      </p>
+
+      <h2 id="cost">What you accept</h2>
+      <table>
+        <tr><th>Item</th><th>The effect</th></tr>
+        <tr><td>Quality on a difficult task</td><td>A 14b model is not a frontier model. Keep the cloud for the difficult work, or use the default profile and <code>/cloud</code> for one turn.</td></tr>
+        <tr><td>The context window</td><td>32768 tokens for the coder model, against the much larger window of a cloud model.</td></tr>
+        <tr><td>Tools</td><td>The classifier permits them, and your model must truly support them. A model with no support for tools gives text where a tool call must be.</td></tr>
+        <tr><td>Speed</td><td>It is the speed of your GPU. <code>keep_warm</code> removes the load time, and it does not remove the time to generate.</td></tr>
+      </table>
+
+      <h2 id="wrong">When something is wrong</h2>
+      <table>
+        <tr><th>What you see</th><th>The cause</th></tr>
+        <tr><td>Each request goes to the origin</td><td>Your CLI does not reach Glider. This profile does not turn transparent mode on, therefore set the base URL.</td></tr>
+        <tr><td>An error from Ollama, and no answer</td><td>This is correct here. <code>origin_on_local_error: false</code> shows the failure. Start <code>ollama serve</code>, and pull the model.</td></tr>
+        <tr><td>Glider does not select the local model</td><td><code>require_local_healthy: true</code>, and the health check fails. Test <code>http://127.0.0.1:11434</code>.</td></tr>
+        <tr><td>The answer stops in the middle of a sentence</td><td>Increase <code>thresholds.default_max_tokens</code>. Ollama receives it as <code>num_predict</code>.</td></tr>
+        <tr><td>A tool call arrives as plain text</td><td>The model does not support tools. Use a model that does, or set <code>tools_force_cloud: true</code> and give a cloud provider.</td></tr>
+      </table>
+
+      <p>
+        Next: <a href="configuration.html">the configuration reference</a> gives each setting,
+        <a href="routing.html">Routing</a> gives the rules, and <a href="mitm.html">MITM</a> gives the
+        interception.
+      </p>
+    </main>
+    <footer class="foot"><a href="context.html">← Context</a> · <a href="api.html">API →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

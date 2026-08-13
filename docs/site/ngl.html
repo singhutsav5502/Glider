@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NGL &amp; interfaces · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a class="active" href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Interop layer</div>
+      <h1>NGL &amp; interfaces</h1>
+      <p>
+        <strong>NGL (Native Glider Language)</strong> is the <code>internal/ngl</code> package. It contains
+        a small extension point for each vendor. These extension points let claude, cursor-agent and agy
+        operate with the shared code of Glider. The shared code never makes a decision from the name of a
+        vendor. There are three of them: two Go interfaces, and one family of functions with a shared name
+        pattern. Each one answers a different question, and the data moves in a different direction. This
+        page shows the difference between them. To add a fourth CLI, you must know that difference.
+      </p>
+
+      <h2 id="why">Why there are three extension points</h2>
+      <p>
+        Each one answers a different question. The data moves in a different direction, and at a
+        different point in the pipeline:
+      </p>
+      <table>
+        <tr><th>Extension point</th><th>The question</th><th>The data source</th><th>The direction</th></tr>
+        <tr>
+          <td><code>OriginAdapter</code></td>
+          <td>Is this HTTP request the live traffic of a vendor CLI to its own backend? If Glider must reply
+            as that backend, what is the format?</td>
+          <td>A live HTTP request that Glider intercepted with MITM or with the gateway</td>
+          <td>Into Glider, from the network</td>
+        </tr>
+        <tr>
+          <td><code>DelegateRenderer</code></td>
+          <td>What text did a delegate run write? Remove all data except the final answer.</td>
+          <td>The recorded stdout of a completed subprocess</td>
+          <td>Out of Glider, from the subprocess to the chat reply</td>
+        </tr>
+        <tr>
+          <td>The <code>ParseXTurn</code> functions<br><span class="hint">(<code>ParseClaudeTurn</code>,
+            <code>ParseCursorAgentTurn</code>, <code>ParseAgyTurn</code>)</span></td>
+          <td>What is the structure of one line of the stream-json output of a vendor? Is it text, a tool
+            call, a tool result or reasoning?</td>
+          <td>One event line of the stream output of a vendor</td>
+          <td>Out of the subprocess, into a <code>Turn</code> and its <code>Part</code> items</td>
+        </tr>
+      </table>
+      <p class="note">
+        There is a fourth interface one layer below, in <code>internal/vendors</code>.
+        <code>VendorAdapter</code> controls what occurs when Glider runs a CLI. It finds the refusals, gets
+        the session ID, gives a limited permission for the next run with <code>ExtraResumeArgs</code> or
+        <code>GrantResumePermission</code>, reads the edits, and writes the resume prompt. It does not read
+        a message format. Refer to <a href="#vendor-adapter">the section below</a> for the full list of
+        methods, and to <a href="delegation.html">Delegation</a> for the relay procedure. Do not confuse it
+        with the three extension points above. It is a different boundary, because it controls the execution of a
+        process and not a message format.
+      </p>
+
+      <h2 id="turn">Turn and Part — the shared vocabulary</h2>
+      <p>
+        Each <code>ParseXTurn</code> function makes the same structure. <code>turn.go</code> defines it one
+        time:
+      </p>
+      <pre>type Turn struct {
+    Vendor string          // "claude" | "cursor-agent" | "agy" | a future vendor
+    Raw    json.RawMessage // the native event of the adapter, with no changes
+    Parts  []Part
+}</pre>
+      <p>
+        Glider always keeps <code>Raw</code>. The <code>Parts</code> data is additional, and it does not
+        replace <code>Raw</code>. Therefore Glider can always send a <code>Turn</code> back to the same
+        vendor with no changes. <code>Parts</code> gives the type of each item:
+        <code>PartUserText</code>, <code>PartToolCall</code>, <code>PartToolResult</code>,
+        <code>PartReasoning</code> and <code>PartOther</code>. This layer does not change a name. The
+        <code>Name</code> and <code>Args</code> of a <code>ToolCall</code> keep the words of the vendor. The
+        alias table of a vendor pack changes the names for a caller that needs the same names for each
+        vendor.
+      </p>
+
+      <h2 id="origin-adapter">OriginAdapter — how Glider identifies the traffic of a CLI</h2>
+      <p>
+        Glider got this interface on 2026-07-27, after a live defect. The delegate handler in
+        <code>internal/mitm</code> used <code>r.URL.Path != "/v1/messages"</code> as its entry test. That
+        test is correct only when Claude Code is the front CLI. If you typed a delegate flag in the session
+        of cursor-agent or agy, nothing occurred. The traffic of those CLIs does not use the Anthropic
+        Messages format. Therefore the test refused the request before the flag parser operated.
+      </p>
+      <pre>type OriginAdapter interface {
+    Vendor() string
+    Matches(r *http.Request) bool
+    ExtractUserInstruction(body []byte) (text, model string, stream, ok bool, err error)
+    // header is written immediately, before replyText resolves — keeps a
+    // slow delegate call (headless run of another vendor's CLI) from
+    // idling the client out, and names what was delegated to whom.
+    WriteReply(w http.ResponseWriter, model string, stream bool, header string, replyText &lt;-chan string) error
+}</pre>
+      <p>
+        <code>internal/mitm/delegate_handler.go</code> calls <code>ngl.ResolveOriginAdapter(r)</code>. It
+        never compares a host or a path with the name of a vendor. The <code>Matches</code> function of each
+        adapter does that. In <code>ExtractUserInstruction</code>, <code>ok=false</code> is not an error. It
+        means that the structure of the body is correct, but this adapter has no <em>confirmed</em> method
+        to separate the human text from the data that the vendor adds. The caller must then send the request
+        to the origin. The caller must not search the body for a substring. Glider used that method one time
+        for Claude, before NGL existed, and it caused the injection defect that the package doc comment
+        describes.
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>The message format</th><th>How Glider knows</th></tr>
+        <tr><td>claude</td><td>The Anthropic Messages API, <code>POST /v1/messages</code></td><td>The specification is public</td></tr>
+        <tr><td>agy</td><td>REST in the Gemini format, <code>POST .../v1internal:streamGenerateContent</code>. The human text is inside <code>&lt;USER_REQUEST&gt;</code> tags.</td><td>Glider recorded the live traffic and compared the bytes on 2026-07-27</td></tr>
+        <tr><td>cursor-agent</td><td>Connect-RPC on HTTP/2, <code>POST /agent.v1.AgentService/Run</code></td><td>Glider recorded the live traffic. Each request field agrees with the public <code>agent_v1.proto</code> schema.</td></tr>
+      </table>
+      <p class="note">
+        The completion host of cursor-agent <em>always</em> uses HTTP/2. A tool that expects HTTP/1.1 cannot
+        see this traffic. The MITM proxy of Glider had this problem until 2026-07-28. Refer to
+        <a href="mitm.html">MITM</a> for the correction.
+      </p>
+
+      <h2 id="delegate-renderer">DelegateRenderer — a clean reply, not the full transcript</h2>
+      <p>
+        Glider got this interface on 2026-07-28. <code>vendors.RunResult.Text</code> holds the full recorded
+        stdout of a delegate run. For claude and for cursor-agent, this is the complete
+        <code>stream-json</code> NDJSON transcript. It contains each internal event line, and not only the
+        answer. Glider asks for this format, because other code in the pipeline reads the refusals and the
+        session ID from it. This full transcript is correct for a diagnostic task, but it is not correct for
+        daily work.
+      </p>
+      <pre>type DelegateRenderer interface {
+    Vendor() string
+    Render(raw []byte) (clean string, ok bool)
+}</pre>
+      <p>
+        The renderers for claude and cursor-agent read the NDJSON and look for the last
+        <code>{"type":"result","result":"..."}</code> line. That line holds the final answer of the vendor,
+        and Glider does not make the answer again. If there is more than one such line, Glider uses the
+        <em>last</em> one. <code>LastUserInstruction</code> makes the same choice for the incoming data. The
+        renderer for agy makes almost no change, because agy has no <code>--output-format</code> flag and its
+        stdout is already normal text. <code>ok=false</code> means that there is no result event, or that the
+        event is empty. The caller then uses the raw text. Glider does not try to find an answer that can be
+        absent.
+      </p>
+      <p>
+        <code>vendors.ResolveDelegate</code> uses this interface, and <code>clean</code> is the default. One
+        control on the Vendors page sets the format: Settings → <em>Delegated task replies</em>. There is no
+        flag for one message, because this is an operator setting. The raw mode always shows the full
+        transcript. The clean mode uses the raw text when a renderer gives <code>ok=false</code>, but it also
+        adds a note. Therefore you can always see that the format is different.
+      </p>
+
+      <h2 id="vendor-adapter">VendorAdapter — what occurs when Glider runs a CLI</h2>
+      <p>
+        This interface is in <code>internal/vendors/adapter.go</code>, and not in <code>internal/ngl</code>.
+        Each difference between the CLIs in the execution layer must go through this one interface.
+        <code>RunWithOptions</code> and <code>ResolveDelegate</code> find a <code>VendorAdapter</code> by the
+        vendor name. They do not know which CLI they use. To add a fourth vendor, or to change how a vendor
+        finds a refusal or gives a permission, you write or change one adapter here. You must not make a
+        decision from <code>vendor.Name</code> in the shared code.
+      </p>
+      <pre>type VendorAdapter interface {
+    // nil means "no denials found" — every adapter implements this, even a trivial no-op.
+    DetectDenials(stdout, stderr []byte) []Denial
+    // "" means none available (no such id in this vendor's format, or extraction failed).
+    ExtractSessionID(stdout []byte) string
+    // Scoped side effect OUTSIDE the resume argv itself; revert is always called after the
+    // resume attempt, success or failure. cwd is the resolved workspace directory the resume
+    // will run in (may be ""). Most vendors return a no-op revert — per-denial scoping happens
+    // through ExtraResumeArgs instead (see below).
+    GrantResumePermission(v Vendor, cwd string, denials []Denial) (revert func() error, err error)
+    // Extra CLI args to append to the vendor's "resume" CommandTemplate for this specific set
+    // of denials, or nil if the vendor has no such mechanism.
+    ExtraResumeArgs(denials []Denial) []string
+    // ok=false for a run that made no edit, or whose headless output carries no structured diff.
+    ExtractEditViews(stdout []byte) (views ngl.EditViews, ok bool)
+    // Lets a vendor reframe the resume prompt for its model's known behavior on a resumed call;
+    // identity (returns prompt unchanged) for vendors whose resume already reliably completes.
+    WrapResumePrompt(prompt string) string
+}</pre>
+      <p>
+        A permission must change a condition before Glider runs the CLI again. If it does not, the new run
+        stops at the same permission. Each CLI has a different mechanism. Therefore the interface has
+        <strong>two methods for one function</strong>. <code>ExtraResumeArgs</code> gives the
+        <em>command-line arguments</em> for the refused tools. For example, claude makes
+        <code>--allowedTools &lt;comma-joined tool names&gt;</code> from the refusals. Glider knows the tool
+        name only after the refusal, and thus the name cannot be in a fixed template.
+        <code>GrantResumePermission</code> makes a change <em>outside</em> the command line. For example,
+        agy writes a limited rule in its <code>settings.json</code>, and Glider then puts the original bytes
+        back. Each vendor uses the method that its CLI supports. The shared code calls the two methods and
+        does not know which one operates. cursor-agent has no argument for one tool. It has only
+        <code>-f</code> or <code>--yolo</code>, which permit each tool, and Glider does not use them
+        automatically. Therefore its adapter gives <code>nil</code> from <code>ExtraResumeArgs</code> and
+        makes no change in <code>GrantResumePermission</code>. <code>--resume [chatId] --trust</code> is
+        sufficient.
+      </p>
+      <p>
+        <code>ExtractEditViews</code> shows the file differences through NGL. It reads the raw stdout of a
+        completed run and makes a standard <code>ngl.EditViews</code> structure. This is possible only when
+        the output of the vendor has sufficient structure. agy writes normal text only, because it has no
+        <code>--output-format</code> flag. Therefore its adapter always gives <code>ok=false</code>. This is
+        a true limit of the format, and Glider does not hide it. <code>WrapResumePrompt</code> changes the
+        resume prompt for a vendor whose model gets the permission but then gives a description of the
+        directory in place of the work. agy has this behavior today. This method decreases the problem, but
+        it does not prevent it. It is different from the two permission methods.
+      </p>
+      <p>
+        For a vendor name that has no adapter, Glider uses <code>noopAdapter</code>. Each method of that
+        adapter is safe and makes no change. Therefore a caller does not have to test for an adapter before
+        it calls one. Only the <code>vendorAdapters</code> map in <code>adapter.go</code> contains the full
+        list of the vendor names for execution.
+      </p>
+
+      <h2 id="checklist">How to add a fourth vendor</h2>
+      <p>
+        This is the function of the three extension points. To add a vendor, you write new files. You do not change
+        the shared code. A complete addition has these parts:
+      </p>
+      <ul>
+        <li><code>configs/vendor_candidates.yaml</code> — the probe arguments, the print flag, and the <code>default</code>, <code>resume</code> and <code>interactive</code> templates. This is data, and not Go code.</li>
+        <li><code>internal/vendors/adapter.go</code> — a <code>VendorAdapter</code> with all six methods: <code>DetectDenials</code>, <code>ExtractSessionID</code>, <code>GrantResumePermission</code>, <code>ExtraResumeArgs</code>, <code>ExtractEditViews</code> and <code>WrapResumePrompt</code>. These control the execution, and not the message format. Refer to <a href="#vendor-adapter">VendorAdapter</a> above.</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;.go</code> — a <code>ParseXTurn</code> function. You need this only if the stdout of the vendor is more than normal text.</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;_origin.go</code> — an <code>OriginAdapter</code>. Write this <strong>only after you confirm the live message format</strong>. Refer to the table above. Do not register an adapter from an assumption.</li>
+        <li><code>internal/ngl/adapter_&lt;vendor&gt;_render.go</code> — a <code>DelegateRenderer</code>. Write this after you confirm the output format.</li>
+      </ul>
+      <p>These five parts do not need a change to <code>internal/mitm/delegate_handler.go</code>, to <code>vendors.ResolveDelegate</code>, or to any other shared code.</p>
+
+      <p>The full history and the live-capture method are in <code>planning/agent_cli_interop.md</code>. For the delegate flag, refer to <a href="delegation.html">Delegation</a>.</p>
+    </main>
+    <footer class="foot"><a href="mitm.html">← MITM</a> · <a href="context.html">Context →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

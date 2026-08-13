@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Architecture · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a class="active" href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+
+    <main class="prose deep">
+      <div class="badge">Core</div>
+      <h1>Architecture</h1>
+      <p>
+        Glider operates with your AI coding CLI. It works with Claude Code, with Cursor Agent and
+        with Antigravity (<code>agy</code>). Glider is one Go program (<code>cmd/glider</code>).
+        It has three network interfaces and one shared completion pipeline. No code in that
+        pipeline makes a decision from the name of the CLI.
+      </p>
+
+      <h2 id="surfaces">The network interfaces</h2>
+      <table>
+        <tr><th>Interface</th><th>Port</th><th>Config</th><th>Function</th></tr>
+        <tr><td>Gateway</td><td><code>:8080</code></td><td><code>server.proxy_port</code></td><td>Gives the OpenAI <code>/v1/*</code> endpoints, and the Anthropic <code>/v1/messages</code>. Set Override Base URL in the CLI to this address.</td></tr>
+        <tr><td>MITM proxy</td><td><code>:8082</code> (and <code>:8083</code> for transparent mode)</td><td><code>mitm.port</code></td><td>Decrypts CONNECT traffic and transparent traffic. Does the delegation and the origin passthrough. Refer to <a href="mitm.html">MITM</a>.</td></tr>
+        <tr><td>Dashboard</td><td><code>:8081</code></td><td><code>server.dashboard_port</code></td><td>Gives the operator interface, the REST <code>/api/*</code> endpoints and the <code>/ws</code> WebSocket. It also serves this documentation.</td></tr>
+      </table>
+      <pre class="seq">┌────────────────────────────────── glider.exe (one process) ──────────────────────────────────┐
+│                                                                                              │
+│  ┌─────────────────┐   Complete()    ┌────────────────────────────┐                          │
+│  │ Gateway :8080   │────────────────▶│   Shared harness           │──▶ Ollama / vLLM / BYOK  │
+│  │ internal/api    │                 │   PipelineCompleter        │                          │
+│  └─────────────────┘                 │   router · transform ·     │                          │
+│                                      │   executor · metrics ·     │                          │
+│  ┌─────────────────┐ DecideLocal /   │   contextgraph             │                          │
+│  │ MITM :8082      │ CompleteLocal ▶│                            │──▶ CLI's own origin       │
+│  │ internal/mitm   │                 └─────────────▲──────────────┘   (passthrough)          │
+│  └─────────────────┘                               │                                         │
+│                                                    │ REST / WS                               │
+│  ┌─────────────────┐                               │                                         │
+│  │ Dashboard :8081 │───────────────────────────────┘                                         │
+│  └─────────────────┘                                                                         │
+│  Disk: ~/.glider/{mitm,history,context} · configs/*.yaml (watched)                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘</pre>
+
+      <h2 id="pipeline">The shared pipeline</h2>
+      <p>
+        Each completion goes through one <code>orchestrator.PipelineCompleter</code>. This is true
+        for the gateway and for MITM. Only <code>CompleteOptions.OriginPassthrough</code> is
+        different. For a request that is not local, the gateway uses your own cloud key. But MITM
+        sends the request to the origin of the CLI.
+      </p>
+      <pre>CompletionRequest
+  → ApplyModelAlias           (model_aliases: for example, gpt-4o → qwen2.5-coder:14b)
+  → Tokenizer.EstimateRequestTokens
+  → router.Engine.Route       (refer to routing.html for the full priority sequence)
+  → [origin gate — MITM only. A request that is not local → ErrOriginPassthrough]
+  → episodes + BoundLocalContext   (local only. Never the full history.)
+  → Transformer.Apply         (you must turn this on. It is off when you start.)
+  → Executor.Execute          (Ollama | vLLM | OpenAI | Anthropic. Backup sequence, circuit breaker.)
+  → metrics + contextgraph events</pre>
+      <p>
+        A message with a <code>/vendor</code> flag (<code>/claude</code>, <code>/cursor-agent</code>
+        or <code>/agy</code>) does not go into this pipeline. <code>DelegateHandler</code> takes the
+        message first. On the gateway, the <code>/v1/messages</code> route takes it.
+        Refer to <a href="delegation.html">Delegation</a>.
+      </p>
+
+      <h2 id="packages">The packages</h2>
+      <table>
+        <tr><th>Package</th><th>Function</th></tr>
+        <tr><td><code>api</code></td><td>Gives the gateway HTTP endpoints <code>/v1/chat/completions</code>, <code>/v1/responses</code> and <code>/v1/models</code></td></tr>
+        <tr><td><code>orchestrator</code></td><td>Holds <code>PipelineCompleter</code>, the backup sequence, the circuit breaker, the VRAM control and the fan-out</td></tr>
+        <tr><td><code>router</code></td><td>Applies the rules in priority sequence: explicit, sticky, classifier, Starlark, then the token limit</td></tr>
+        <tr><td><code>mitm</code></td><td>Decrypts CONNECT traffic and transparent traffic. Holds the Cursor Agent RPC hub and the delegate handler.</td></tr>
+        <tr><td><code>vendors</code></td><td>Does the delegation to another CLI: it finds the CLIs, runs them, relays the permissions and continues a run</td></tr>
+        <tr><td><code>ngl</code></td><td>Native Glider Language. It gives one message format for all vendors (<code>Turn</code>, <code>Part</code> and <code>EditViews</code>).</td></tr>
+        <tr><td><code>cursorrpc</code></td><td>Cursor only. Reads the Connect protobuf data and encodes and decodes RunSSE.</td></tr>
+        <tr><td><code>contextgraph</code></td><td>Keeps the event log that Glider only adds to, and the graph of entities. Refer to <a href="context.html">Context</a>.</td></tr>
+        <tr><td><code>backend</code></td><td>Gives the completion clients <code>ollama</code>, <code>vllm</code> and <code>cloud</code> (OpenAI and Anthropic)</td></tr>
+        <tr><td><code>transform</code></td><td>Counts the tokens, applies <code>BoundLocalContext</code> and can change a prompt</td></tr>
+        <tr><td><code>vram</code></td><td>Monitors nvidia-smi, applies the allocation strategy, reserves and releases memory, and makes the eviction plan</td></tr>
+        <tr><td><code>metrics</code></td><td>Sends data from the collector to the bus (the dashboard WebSocket) and to the history file</td></tr>
+        <tr><td><code>dashboard</code></td><td>Gives the operator interface and the REST and WebSocket API. It also serves this documentation.</td></tr>
+        <tr><td><code>config</code></td><td>Reads the YAML, checks it, and monitors the file for changes</td></tr>
+        <tr><td><code>hotswap</code></td><td>Holds the registry of the modules that can accept a new config (<code>fan_out</code>, <code>backends</code> and <code>classifier</code>)</td></tr>
+        <tr><td><code>procinfo</code></td><td>Finds the PID and the process name from a TCP connection</td></tr>
+        <tr><td><code>tray</code></td><td>Gives the system tray icon and the Exit command. This applies to Windows only.</td></tr>
+        <tr><td><code>tools</code></td><td>Holds the internal tools, the MCP servers and the sandbox of the workspace. Refer to <a href="mcp.html">Tools &amp; MCP</a>.</td></tr>
+        <tr><td><code>mcp</code></td><td>Speaks the MCP protocol: the transport with stdio, the Streamable HTTP client, and the authorization for GitHub.</td></tr>
+        <tr><td><code>summarizer</code></td><td>Adapts a backend for inference to the shape that the compaction of the continuity record needs. Refer to <a href="context.html#continuity">Context</a>.</td></tr>
+        <tr><td><code>contextkit</code></td><td>Keeps the state of a session, an episode and a turn budget for the swarm and the loop.</td></tr>
+        <tr><td><code>plugin</code></td><td>Gives the life cycle and the capabilities of a plugin of Glider.</td></tr>
+        <tr><td><code>runstate</code></td><td>Says if the previous run of Glider stopped correctly. A stop that is not clean can leave the rules of the redirector on the machine.</td></tr>
+        <tr><td><code>atomicfile</code></td><td>Writes a file completely, or not at all. A file with a part of its content is worse than no new file.</td></tr>
+        <tr><td><code>fileacl</code></td><td>Limits who can read a file with sensitive content, such as a token.</td></tr>
+        <tr><td><code>safego</code></td><td>Starts a goroutine with a long life, and it does not let a panic stop the program.</td></tr>
+        <tr><td><code>procutil</code></td><td>Small helpers for one OS, to start a process.</td></tr>
+        <tr><td><code>webviewshell</code></td><td>Puts the dashboard in a window of the operating system, in place of a browser tab.</td></tr>
+      </table>
+
+      <h2 id="hotreload">When you must restart Glider</h2>
+      <div class="note">
+        <strong>Glider accepts these changes while it runs</strong> (<code>config.Provider.Watch</code>):
+        the routing rules, the model aliases, the transform config, the log level, the backend and
+        model clients, and the hot-swap modules.
+        <strong>You must restart Glider after you change these:</strong> the ports, the MITM CA, the
+        MITM host list, and the transparent interception settings.
+      </div>
+
+      <h2 id="failures">What Glider does after a failure</h2>
+      <table>
+        <tr><th>Condition</th><th>Result</th></tr>
+        <tr><td>Circuit breaker</td><td>Glider counts the failures of each backend. After 5 failures it stops that backend for 30 seconds. Then it sends one test request.</td></tr>
+        <tr><td>Backup sequence</td><td>Glider examines the health, the circuit breaker and the warm condition. If the local model fails, Glider uses your cloud key. You can turn this off. If all backends fail, Glider gives error 502.</td></tr>
+        <tr><td><code>ErrOriginPassthrough</code></td><td>MITM only. For a request that is not local, Glider sends the request to the origin of the CLI. The credentials do not change.</td></tr>
+        <tr><td>A local failure in hybrid mode</td><td>Glider sends the request to the origin. The setting is <code>mitm.origin_on_local_error</code>.</td></tr>
+        <tr><td>Pure local mode</td><td>Set <code>origin_on_local_error: false</code>. Glider then shows the error and does not use the origin.</td></tr>
+      </table>
+
+      <h2 id="concurrency">Notes on concurrency</h2>
+      <ul>
+        <li>Glider replaces the <code>Config</code> and the <code>router.Engine</code> with an <code>atomic.Pointer</code>. A reader does not stop while Glider reads a new config.</li>
+        <li>The gateway and MITM call <code>PipelineCompleter.Handle</code> at the same time. The structure does not change, and its dependencies are safe for concurrent use. Do not keep the data of one request on it.</li>
+        <li>Glider stops the subprocess of a headless delegate call when the HTTP request ends. No background task continues after the request. An <code>interactive</code> template is different: it is the default for <code>/agy</code>, and it opens a separate console session. Glider does not wait for that session and does not stop it.</li>
+        <li>The Cursor hub (<code>AgentFulfillHub</code>) protects its <code>waiting</code>, <code>pending</code> and <code>family</code> maps with one mutex. Refer to <a href="mitm.html#hub">MITM</a> for the details.</li>
+      </ul>
+
+      <h2 id="config">The config profiles</h2>
+      <ul>
+        <li><code>configs/glider.yaml</code> — the default profile. It uses the gateway and MITM.</li>
+        <li><code>configs/glider.local.yaml</code> — Ollama only, with no cloud backup. Refer to <a href="pure-local.html">Pure local</a>.</li>
+        <li><code>configs/glider.cloud.yaml</code> — primarily cloud, with MITM off.</li>
+      </ul>
+    </main>
+    <footer class="foot"><a href="index.html">← Home</a> · <a href="routing.html">Routing →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

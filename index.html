@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Glider — multiple CLIs, one prompt</title>
+<meta name="description" content="Put another CLI's name at the end of a message and Glider runs the task there. Three CLIs supported today — Claude Code, Cursor Agent and Antigravity — with permission prompts relayed back to you." />
+<meta property="og:title" content="Glider — multiple CLIs, one prompt" />
+<meta property="og:description" content="Claude Code, Cursor Agent and Antigravity, as one tool — and built to take a fourth. Delegation with a permission relay." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#12100e" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;900&family=Newsreader:opsz,wght@6..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<script>document.documentElement.classList.add('js');</script>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   Two methodologies, switched once and never switched back.
+
+   Signal runs the top: full-bleed flat fields, one idea each,
+   poster type, the syntax itself as the hero graphic.
+   Editorial spec runs from THE HANDOFF down: paper, a numbered
+   margin, hairlines instead of cards, type doing the work.
+
+   Citron and teal never share a field. Citron appears three times
+   (hero flag, positioning field, install rule); teal lives only
+   below the fold.
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --ink:#12100e;
+  --bone:#f5f1e8;
+  --paper:#fbfaf7;
+  --citron:#c9f24d;
+  --citron-ink:#2c3111;
+  --teal:#0a7c8c;
+  --teal-lit:#5fc7d6;
+  --muted:#a8a29a;
+  --muted-lo:#55524a;
+  --rule:#e6e4dc;
+  --rule-strong:#cfccc2;
+  --rule-dark:rgba(255,255,255,0.08);
+
+  --display:"Archivo",system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+
+  --ease:cubic-bezier(0.22,1,0.36,1);
+
+  --gutter:clamp(1.25rem,5vw,4.5rem);
+  --wide:78rem;
+  --margin-col:34px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:clamp(0.97rem,2.4vw,1.06rem);
+  line-height:1.62;
+  /* `hidden` here would make body a scroll container and break the
+     sticky nav. `clip` guards against sideways overflow without
+     creating one; browsers without it keep the older behaviour. */
+  overflow-x:hidden;
+  overflow-x:clip;
+  -webkit-font-smoothing:antialiased;
+}
+
+h1,h2,h3{margin:0;overflow-wrap:break-word}
+p{margin:0}
+ul{margin:0;padding:0;list-style:none}
+
+:focus-visible{outline:2px solid var(--teal);outline-offset:3px}
+.field-ink :focus-visible{outline-color:var(--citron)}
+
+.wrap{
+  width:min(100% - 2*var(--gutter),var(--wide));
+  margin-inline:auto;
+}
+
+.eyebrow{
+  font-family:var(--mono);
+  font-size:clamp(0.66rem,1.7vw,0.72rem);
+  font-weight:600;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+}
+
+/* ═══════════ fields ═══════════ */
+.field-ink{background:var(--ink);color:var(--muted)}
+.field-citron{background:var(--citron);color:var(--citron-ink)}
+.field-bone{background:var(--bone);color:var(--muted-lo)}
+.field-paper{background:var(--paper);color:var(--muted-lo)}
+
+.field-ink a{color:var(--citron);text-decoration-color:rgba(201,242,77,.4)}
+.field-ink a:hover{color:#fff;text-decoration-color:#fff}
+
+.field-citron a{color:var(--ink);text-decoration-color:rgba(18,16,14,.45)}
+.field-citron a:hover{color:#000;text-decoration-color:#000}
+
+.field-bone a,.field-paper a{color:var(--teal);text-decoration-color:rgba(10,124,140,.35)}
+.field-bone a:hover,.field-paper a:hover{color:var(--ink);text-decoration-color:var(--ink)}
+
+/* ═══════════ nav ═══════════
+   Three zones: wordmark, section links, actions. The actions cluster is
+   divided off with a rule so the repo and funding links do not read as
+   more table of contents. */
+.nav{
+  position:sticky;
+  top:0;
+  z-index:10;
+  background:var(--ink);
+  border-bottom:1px solid var(--rule-dark);
+}
+
+.nav-in{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:0.6rem 1.6rem;
+  padding-block:0.85rem;
+}
+
+.wordmark{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:1.05rem;
+  letter-spacing:0.22em;
+  text-transform:uppercase;
+  color:var(--bone);
+  text-decoration:none;
+  margin-right:auto;
+}
+
+.wordmark:hover{color:var(--citron);text-decoration:none}
+
+.nav-links{display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center}
+
+.nav-links a{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--muted);
+  text-decoration:none;
+  padding-block:0.4rem;
+  transition:color 160ms ease;
+}
+
+.nav-links a:hover{color:var(--citron);text-decoration:none}
+
+/* the section you are reading. Purely additive — with JS off, the links
+   simply render in their resting state. */
+.nav-links a.is-here{color:var(--bone);box-shadow:0 1px 0 var(--citron)}
+
+.nav-actions{
+  display:flex;
+  align-items:center;
+  gap:0.15rem;
+  border-left:1px solid var(--rule-dark);
+  padding-left:1.5rem;
+}
+
+/* padding on the anchor, not size on the glyph, so the hit target is
+   real at 44px while the icon stays 16px */
+.nav-actions a{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:0.55rem;
+  min-width:44px;
+  min-height:44px;
+  padding-inline:0.55rem;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--muted);
+  text-decoration:none;
+  transition:color 160ms ease;
+}
+
+.nav-actions a:hover{color:var(--citron);text-decoration:none}
+.nav-actions svg{display:block;width:16px;height:16px;flex:0 0 auto}
+
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+/* the page is short enough to scroll, so no hamburger — the sections
+   just drop away and the actions stay reachable */
+@media(max-width:720px){ .nav-links{display:none} }
+@media(max-width:480px){ .nav-site{display:none} }
+
+/* ═══════════ hero: the syntax is the graphic ═══════════ */
+.hero{
+  min-height:80vh;
+  display:flex;
+  align-items:center;
+  /* background-image, never the shorthand — `background:` here would
+     reset the ink colour .field-ink sets and drop the field to paper */
+  background-image:radial-gradient(ellipse 90% 70% at 12% 0%,rgba(201,242,77,.055),transparent 62%);
+}
+
+.hero-in{display:flex;flex-direction:column;gap:clamp(1.6rem,4vw,2.4rem);padding-block:clamp(3.5rem,10vw,6rem)}
+
+.hero .eyebrow{color:var(--citron)}
+
+.syntax{
+  font-family:var(--mono);
+  font-size:clamp(2.75rem,7vw,5.5rem);
+  line-height:1;
+  font-weight:400;
+  letter-spacing:-0.02em;
+  color:var(--bone);
+  display:flex;
+  flex-wrap:wrap;
+  /* baseline, not center: the caret hangs below the baseline and so makes
+     .cmd-tail the taller item. Centring would split the two baselines by
+     half the difference and drop "fix this" ~4px below the flag. */
+  align-items:baseline;
+  gap:0 0.32em;
+}
+
+.syntax .flag{color:var(--citron);font-weight:600}
+
+.caret{
+  display:inline-block;
+  width:0.4em;
+  /* Spans the whole character cell, not just the part above the baseline:
+     from the "/" apex at +0.760em down to the "g" tail at -0.212em (both
+     measured, Plex Mono 600). Sitting on the baseline left it floating
+     clear of the descenders in /agy and /cursor-agent.
+
+     Held constant across all three flags so the caret does not resize as
+     they cycle — "/" sets the top in every one, "g" the bottom in two, and
+     /claude's own deepest ink is the "/" tail at -0.138em. */
+  height:0.972em;
+  vertical-align:-0.212em;
+  /* .syntax tracks at -0.02em, which is applied after the last letter and
+     drags the caret into it. Give the space back. */
+  margin-left:0.02em;
+  background:var(--citron);
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .caret{animation:blink 1.1s linear infinite}
+}
+
+/* A square wave held explicitly, so the result does not depend on how a
+   step function rounds. The old `to{opacity:0}` under steps(2,start)
+   alternated between 0.5 and 0: the caret never once reached full citron
+   and read as a dull olive block. */
+@keyframes blink{0%,49.99%{opacity:1}50%,100%{opacity:0}}
+
+.hero-line{max-width:44ch;color:var(--muted);font-size:clamp(1rem,2.5vw,1.15rem)}
+
+/* ═══════════ positioning field ═══════════ */
+.pos-in{display:flex;flex-direction:column;gap:clamp(1.5rem,4vw,2.2rem);padding-block:clamp(3.5rem,9vw,6rem)}
+
+.pos h1{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:clamp(2.6rem,6.5vw,4.5rem);
+  line-height:0.94;
+  letter-spacing:-0.045em;
+  text-transform:uppercase;
+  color:var(--ink);
+}
+
+.pos p{max-width:46ch;color:var(--citron-ink)}
+
+/* selector must outrank `.field-citron a`, or the label renders ink on
+   ink and the button reads as an empty black block */
+.field-citron a.cta{
+  align-self:flex-start;
+  display:inline-flex;
+  align-items:center;
+  gap:0.7rem;
+  min-height:52px;
+  padding:0.95rem 1.7rem;
+  background:var(--ink);
+  color:var(--citron);
+  font-family:var(--display);
+  font-weight:700;
+  font-size:1rem;
+  text-decoration:none;
+  transition:background 160ms ease,color 160ms ease;
+}
+
+.field-citron a.cta:hover{background:#000;color:var(--citron);text-decoration:none}
+.cta .arw{transition:transform 260ms var(--ease)}
+
+@media(prefers-reduced-motion:no-preference){
+  .cta:hover .arw{transform:translateX(4px)}
+}
+
+/* ═══════════ demo film ═══════════
+   The film is cut on the same ground as this band (ink, citron rule),
+   so the frame is a single hairline and nothing boxes it in twice.
+   16:9 is held by aspect-ratio, never by padding, so no reflow. */
+.film-in{
+  display:flex;
+  flex-direction:column;
+  gap:clamp(1.3rem,3.5vw,1.9rem);
+  padding-block:clamp(3rem,7vw,4.5rem);
+}
+
+.film .eyebrow{color:var(--citron)}
+
+.film-line{
+  max-width:52ch;
+  color:var(--muted);
+  font-size:clamp(0.95rem,2.4vw,1.05rem);
+}
+
+.film-frame{
+  position:relative;
+  border:1px solid var(--rule-dark);
+  background:#000;
+  aspect-ratio:16/9;
+}
+
+.film-frame video{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+/* a closing line under a plate — smaller than body, wider than a caption */
+.spec-note{
+  max-width:62ch;
+  color:var(--muted-lo);
+  font-size:clamp(0.9rem,2.2vw,0.98rem);
+}
+
+/* ═══════════ two proof cells ═══════════ */
+.proof-in{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:clamp(2.2rem,5vw,3.5rem);
+  padding-block:clamp(3rem,7vw,4.5rem);
+}
+
+@media(min-width:720px){ .proof-in{grid-template-columns:1fr 1fr} }
+
+.cell{display:flex;flex-direction:column;gap:0.65rem;max-width:34ch}
+
+.cell .num{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:40px;
+  line-height:1;
+  letter-spacing:-0.04em;
+  color:var(--ink);
+}
+
+.cell h2{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:17px;
+  letter-spacing:-0.012em;
+  color:var(--ink);
+}
+
+.cell p{color:var(--muted-lo)}
+
+/* ═══════════ spec sections ═══════════
+   From here down: paper, a numbered margin, hairlines, no cards. */
+.spec{padding-block:clamp(3.5rem,9vw,6rem)}
+.spec-in{display:flex;flex-direction:column;gap:clamp(1.9rem,4.5vw,2.6rem)}
+
+.spec .eyebrow{color:var(--teal)}
+
+.spec-head{
+  font-family:var(--serif);
+  font-weight:400;
+  font-size:clamp(2rem,4.5vw,2.9rem);
+  line-height:1.08;
+  letter-spacing:-0.015em;
+  color:var(--ink);
+  max-width:22ch;
+}
+
+/* numbered rows */
+.rows{display:flex;flex-direction:column}
+
+.row{
+  display:grid;
+  grid-template-columns:var(--margin-col) 1fr;
+  gap:0 clamp(0.9rem,2.5vw,1.6rem);
+  align-items:start;
+  border-top:1px solid var(--rule);
+  padding-block:clamp(1.15rem,2.6vw,1.5rem);
+}
+
+.row .idx{
+  font-family:var(--mono);
+  font-size:0.78rem;
+  font-weight:600;
+  letter-spacing:0.06em;
+  color:var(--teal);
+  padding-top:0.3rem;
+}
+
+.row-body{display:flex;flex-direction:column;gap:0.45rem}
+
+.row h3{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:clamp(1.02rem,2.4vw,1.12rem);
+  letter-spacing:-0.012em;
+  color:var(--ink);
+}
+
+.row p{color:var(--muted-lo);max-width:52ch}
+
+code{
+  font-family:var(--mono);
+  font-size:0.88em;
+  color:var(--teal);
+}
+
+/* teal is a light-field accent: on ink it measures 3.86:1 and fails AA,
+   so inline code there takes the ink field's own accent instead */
+.field-ink code{color:var(--citron)}
+
+/* the flag block, bounded by hairlines */
+.flagblock{
+  display:flex;
+  min-width:0;
+  flex-direction:column;
+  gap:0.55rem;
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+  padding-block:clamp(1.2rem,3vw,1.6rem);
+  font-family:var(--mono);
+  font-size:clamp(0.82rem,2.1vw,0.92rem);
+  color:var(--muted-lo);
+}
+
+.flagblock span{overflow-wrap:break-word}
+.flagblock b{color:var(--teal);font-weight:600}
+
+/* ═══════════ heading and statement side by side ═══════════
+   The section used to stack heading, paragraph and paragraph down the
+   left edge, leaving the right half of a 78rem container empty. */
+.spec-top{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:clamp(1.2rem,3vw,2rem);
+  align-items:start;
+}
+
+@media(min-width:900px){
+  .spec-top{grid-template-columns:1fr 1fr;gap:clamp(2.5rem,5vw,4rem)}
+}
+
+.spec-top p{color:var(--muted-lo);max-width:52ch}
+
+/* ═══════════ route plate ═══════════
+   A chart plate, not a drawing. viewBox is 1120x520 so one unit is one
+   pixel at full width: labels set at 13-14 units render at 13-14px and
+   are never upscaled. Below 1120 the plate scrolls inside its own frame
+   rather than shrinking the type. */
+.plate{
+  display:flex;
+  flex-direction:column;
+  border:1px solid var(--rule);
+}
+
+.plate-head,.plate-legend{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:0.4rem 1.1rem;
+  padding:0.7rem clamp(0.8rem,2vw,1.1rem);
+  font-family:var(--mono);
+  letter-spacing:0.13em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+.plate-head{
+  border-bottom:1px solid var(--rule);
+  font-size:clamp(0.66rem,1.7vw,0.72rem);
+  font-weight:600;
+}
+
+.plate-head .active{color:var(--teal);margin-left:auto;letter-spacing:0.08em}
+
+.plate-legend{
+  border-top:1px solid var(--rule);
+  font-size:10.5px;
+}
+
+.plate-body{padding:clamp(0.5rem,1.4vw,0.9rem);min-width:0}
+
+
+
+.plate svg{
+  display:block;
+  width:100%;
+  max-width:1120px;
+  height:auto;
+  max-height:min(520px,60vh);
+  margin-inline:auto;
+}
+
+/* Nothing in this section scrolls sideways. Between 760 and 1180 the wide
+   plate scales down, so its type is set larger to land back near 13px. */
+@media(max-width:1180px){
+  .plate-wide text{font-size:16px}
+  .plate-wide .t-sub{font-size:13.5px}
+  .plate-wide .t-hub{font-size:18px}
+}
+
+.plate .reg{stroke:var(--rule);stroke-width:1;fill:none}
+.plate .sym{fill:none;stroke:var(--rule-strong);stroke-width:1.6}
+.plate .sym-on{stroke:var(--teal)}
+.plate .hub{fill:var(--teal);stroke:#3ba0ae;stroke-width:1.6}
+
+/* the record bar: the only large filled area on either plate, because it
+   is the one thing that persists across turns rather than carrying one */
+.plate .store{
+  fill:rgba(10,124,140,0.07);
+  stroke:var(--teal);
+  stroke-width:1.4;
+}
+
+.plate .route{fill:none;stroke:var(--rule-strong);stroke-width:1.4}
+.plate .route-on{fill:none;stroke:var(--teal);stroke-width:2.4;stroke-linecap:round}
+.plate .thru{fill:none;stroke:var(--rule-strong);stroke-width:1.4;stroke-dasharray:6 6}
+
+/* the return is orthogonal like the rest: an arc from the destination
+   back to the origin has to cut across four branch lines, and routing it
+   round the outside removes every one of those crossings */
+.plate .ret{
+  fill:none;
+  stroke:var(--teal);
+  stroke-width:1.8;
+  stroke-dasharray:6 7;
+  stroke-linejoin:round;
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .plate .ret{animation:flow 3.4s linear infinite}
+}
+
+@keyframes flow{to{stroke-dashoffset:-26}}
+
+.plate text{font-family:var(--mono);font-size:13px;fill:var(--muted-lo)}
+.plate .t-on{fill:var(--teal)}
+.plate .t-dim{fill:var(--rule-strong)}
+.plate .t-sub{font-size:11px;letter-spacing:0.16em}
+
+.plate .t-hub{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:15px;
+  letter-spacing:0.06em;
+  fill:var(--teal);
+}
+
+/* ═══════════ the same plate, told vertically ═══════════
+   Below 760 the wide plate cannot show its subject without a sideways
+   drag. This is the same content as a DOM list reading top to bottom.
+
+   Colour carries hierarchy, not decoration: teal marks only the leg the
+   turn travels — GLIDER, the live destination and the reply. Everything
+   idle is --muted-lo, so "active" means something. */
+.plate-tall{display:none}
+
+@media(max-width:760px){
+  .plate-wide{display:none}
+  .plate-tall{display:block;padding:1.5rem 1rem}
+}
+
+/* the spine is one continuous line, drawn behind the rows. Glyphs sit in
+   a fixed 28px column so it stays straight past the larger hub. */
+.pt-flow{position:relative}
+
+.pt-flow::before,.pt-flow::after{
+  content:"";
+  position:absolute;
+  left:13px;
+  width:2px;
+}
+
+.pt-flow::before{                       /* idle: the whole run */
+  top:22px;
+  bottom:22px;
+  background:var(--rule-strong);
+}
+
+.pt-flow::after{                        /* teal: only you -> hub */
+  top:22px;
+  height:44px;
+  background:var(--teal);
+}
+
+.pt-row{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  min-height:44px;
+  font-family:var(--mono);
+  font-size:13px;
+}
+
+.pt-glyph{
+  position:relative;
+  z-index:1;
+  flex:0 0 28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  background:var(--paper);
+}
+
+.pt-glyph svg{display:block}
+.pt-glyph .sh{fill:none;stroke:var(--rule-strong);stroke-width:1.75}
+.pt-glyph .sh-hub{fill:var(--teal);stroke:var(--teal);stroke-width:1.75}
+
+.pt-label{color:var(--muted-lo)}
+.pt-note{color:var(--muted-lo);font-size:11px;letter-spacing:0.1em;text-transform:uppercase}
+
+.pt-hub .pt-label{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:15px;
+  letter-spacing:0.04em;
+  color:var(--teal);
+}
+
+/* destinations sit to the right of the spine, each met by a 16px hairline */
+.pt-dests{padding-left:30px}
+.pt-dests > li{position:relative}
+
+.pt-dests > li.pt-row::before{
+  content:"";
+  position:absolute;
+  left:-16px;
+  top:50%;
+  width:16px;
+  height:1px;
+  background:var(--rule-strong);
+}
+
+.pt-dests > li.is-on::before{background:var(--teal);height:2px}
+.pt-dests > li.is-on .sh{stroke:var(--teal)}
+.pt-dests > li.is-on .pt-label{color:var(--teal);font-weight:600}
+
+/* a real divider: rule, label, rule, across the destination column */
+.pt-divider{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  margin-block:1.25rem;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+.pt-divider::before,.pt-divider::after{
+  content:"";
+  flex:1 1 auto;
+  height:1px;
+  background:var(--rule);
+}
+
+/* an alternative, not a step — so it hangs off the bottom as a footnote
+   rather than sitting between you and the hub as if it happened first */
+.pt-branch{
+  margin:1rem 0 0 30px;
+  padding-left:0.9rem;
+  border-left:1px dashed var(--rule-strong);
+  font-family:var(--mono);
+  font-size:12px;
+  line-height:1.6;
+  color:var(--muted-lo);
+}
+
+/* the reply half of the loop */
+.pt-return{
+  display:flex;
+  align-items:center;
+  gap:0.75rem;
+  margin-top:1.5rem;
+  padding-top:1.5rem;
+  border-top:1px solid var(--rule);
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--teal);
+  white-space:nowrap;
+}
+
+.pt-return-line{
+  flex:0 0 2px;
+  align-self:stretch;
+  min-height:24px;
+  margin-left:13px;
+  background-image:repeating-linear-gradient(180deg,var(--teal) 0 6px,transparent 6px 12px);
+  background-size:2px 12px;
+}
+
+@media(prefers-reduced-motion:no-preference){
+  .pt-return-line{animation:ptflow 900ms linear infinite}
+}
+
+@keyframes ptflow{to{background-position:0 -12px}}
+
+.pt-return .pt-mark{font-weight:600}
+
+/* two columns, and nothing breaks mid-phrase */
+@media(max-width:760px){
+  .plate-legend{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:0.5rem 1rem;
+  }
+  .plate-legend span{white-space:nowrap}
+}
+
+
+/* ═══════════ redirect: two unequal columns, one hairline ═══════════ */
+.split{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:clamp(2rem,5vw,3rem);
+}
+
+@media(min-width:860px){
+  .split{grid-template-columns:1.25fr 1fr;gap:clamp(2.5rem,5vw,3.5rem)}
+  /* stretch, or the divider runs past the shorter column into empty space */
+  .split > *{align-self:stretch}
+  .split > * + *{border-left:1px solid var(--rule);padding-left:clamp(2.5rem,5vw,3.5rem)}
+}
+
+.col{display:flex;flex-direction:column;gap:0.8rem;align-items:flex-start}
+
+/* pushes the closing line to the foot of the column so both sides
+   finish near the same baseline */
+.col .fill{margin-top:auto}
+
+.col-end{
+  font-family:var(--mono);
+  font-size:clamp(0.72rem,1.8vw,0.8rem);
+  letter-spacing:0.04em;
+  color:var(--muted-lo);
+  padding-top:clamp(0.8rem,2vw,1.1rem);
+}
+
+.tag{
+  font-family:var(--mono);
+  font-size:clamp(0.64rem,1.6vw,0.7rem);
+  font-weight:600;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+}
+
+.tag.on{color:var(--teal)}
+.tag.off{color:var(--muted-lo)}
+
+.col h3{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:clamp(1.25rem,3vw,1.55rem);
+  letter-spacing:-0.02em;
+  color:var(--ink);
+}
+
+.col p{color:var(--muted-lo);max-width:44ch}
+
+/* a hairline, not a fill — and with the fill gone, plain --teal is
+   4.71:1 on paper, so the deeper workaround tone is no longer needed */
+.chip{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:clamp(0.8rem,2vw,0.88rem);
+  color:var(--teal);
+  border:1px solid var(--rule);
+  padding:0.5rem 0.75rem;
+  overflow-wrap:break-word;
+  max-width:100%;
+}
+
+.note{
+  border-left:2px solid var(--teal);
+  padding-left:1rem;
+  color:var(--muted-lo);
+  font-size:0.97rem;
+  max-width:44ch;
+}
+
+/* ═══════════ local routing: a footnote ═══════════ */
+.footnote{
+  border-left:3px solid var(--teal);
+  padding:clamp(1.6rem,4vw,2.2rem) clamp(1.3rem,3.5vw,2rem);
+  display:flex;
+  flex-direction:column;
+  gap:1.1rem;
+  max-width:52rem;
+}
+
+.footnote .eyebrow{color:var(--teal)}
+
+.footnote h2{
+  font-family:var(--serif);
+  font-weight:400;
+  font-size:clamp(1.5rem,3.6vw,2rem);
+  line-height:1.14;
+  letter-spacing:-0.014em;
+  color:var(--ink);
+  max-width:24ch;
+}
+
+.footnote p{color:var(--muted-lo);max-width:48ch}
+
+.mini{display:flex;flex-direction:column;max-width:36rem}
+
+/* the flag is mono and small; the description beside it is body copy,
+   so it keeps the 15px floor */
+.mini li{
+  display:flex;
+  flex-wrap:wrap;
+  gap:0.4rem 1rem;
+  align-items:baseline;
+  border-top:1px solid var(--rule);
+  padding-block:0.7rem;
+  color:var(--muted-lo);
+}
+
+.mini .mk{
+  flex:0 0 auto;
+  min-width:4.6rem;
+  font-family:var(--mono);
+  font-size:clamp(0.8rem,2vw,0.88rem);
+  font-weight:600;
+  color:var(--teal);
+}
+
+/* ═══════════ install ═══════════
+   Two columns: prose left, terminal right. The section padding is larger
+   than any gap inside it, so the whole thing reads as one field. */
+.install-in{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:clamp(2.5rem,5vw,3.5rem);
+  padding-block:clamp(5rem,10vw,8rem);
+}
+
+@media(min-width:900px){
+  .install-in{
+    grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
+    column-gap:clamp(3rem,6vw,6rem);
+    align-items:start;
+  }
+  .install-lead{grid-column:1;grid-row:1}
+  .install-in .termbox{grid-column:2;grid-row:1 / span 2;align-self:start;position:sticky;top:6rem}
+  .install-notes{grid-column:1;grid-row:2}
+}
+
+/* three tiers of rhythm, each from a gap rather than a margin */
+.install-lead{display:flex;flex-direction:column;gap:1.75rem}
+.install-head{display:flex;flex-direction:column;gap:0.75rem}
+.install-notes{display:flex;flex-direction:column;gap:2.75rem}
+
+.install .eyebrow{color:var(--citron)}
+
+.install h2{
+  font-family:var(--display);
+  font-weight:900;
+  font-size:clamp(1.9rem,4.6vw,2.8rem);
+  line-height:1.02;
+  letter-spacing:-0.035em;
+  color:var(--bone);
+  max-width:20ch;
+}
+
+.install p{color:var(--muted);max-width:46ch}
+
+/* the terminal gets a field of its own: a full border, not a bare rule */
+.termbox{
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  border:1px solid rgba(255,255,255,0.1);
+  border-left:3px solid var(--citron);
+}
+
+.term-strip{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  padding:0.7rem clamp(1.75rem,3vw,2.5rem);
+  border-bottom:1px solid rgba(255,255,255,0.1);
+  font-family:var(--mono);
+  font-size:0.7rem;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:#72899a;
+}
+
+.term-copy{
+  font:inherit;
+  letter-spacing:inherit;
+  text-transform:inherit;
+  color:#72899a;
+  background:none;
+  border:0;
+  padding:0.35rem 0;
+  cursor:pointer;
+  transition:color 160ms ease;
+}
+
+.term-copy:hover{color:var(--citron)}
+
+.term-lines{
+  display:flex;
+  min-width:0;
+  flex-direction:column;
+  padding:clamp(1.75rem,3vw,2.5rem);
+  font-family:var(--mono);
+  font-size:clamp(0.8rem,2vw,0.9rem);
+  line-height:1.85;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+.term-lines .ln{white-space:pre;color:var(--bone)}
+
+/* a step break is a margin on the comment that opens it, so there are no
+   empty elements standing in for space */
+.term-lines .step{margin-top:1.1rem}
+
+.term-lines .cmt{color:#72899a}
+.term-lines .bin{color:var(--citron);font-weight:600}
+.term-lines .sub{color:var(--teal-lit)}
+
+/* the section's one outbound link, lifted out of the grey */
+.install-out{
+  border-top:1px solid rgba(255,255,255,0.1);
+  padding-top:1.5rem;
+  display:flex;
+  flex-direction:column;
+  gap:0.7rem;
+}
+
+.install-out .go{
+  align-self:flex-start;
+  font-family:var(--mono);
+  font-size:0.72rem;
+  font-weight:600;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--citron);
+  text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+  gap:0.6rem;
+  padding-block:0.3rem;
+}
+
+.install-out .go:hover{text-decoration:underline;text-decoration-color:var(--citron)}
+.install-out .go .arw{transition:transform 260ms var(--ease)}
+
+@media(prefers-reduced-motion:no-preference){
+  .install-out .go:hover .arw{transform:translateX(4px)}
+}
+
+/* ═══════════ support + footer ═══════════ */
+.support-in{display:flex;flex-direction:column;gap:clamp(1.6rem,4vw,2.2rem);padding-block:clamp(3.5rem,9vw,5.5rem)}
+
+.support .eyebrow{color:var(--teal)}
+
+.support h2{
+  font-family:var(--serif);
+  font-weight:400;
+  font-size:clamp(1.8rem,4.2vw,2.5rem);
+  line-height:1.1;
+  letter-spacing:-0.015em;
+  color:var(--ink);
+  max-width:22ch;
+}
+
+.support > * p{color:var(--muted-lo);max-width:46ch}
+
+.sponsor{
+  display:flex;
+  flex-direction:column;
+  gap:0.4rem;
+  max-width:34rem;
+  border:1px solid var(--rule);
+  border-left:3px solid var(--teal);
+  padding:clamp(1.4rem,3.5vw,1.8rem) clamp(1.2rem,3vw,1.5rem);
+  text-decoration:none;
+}
+
+.sponsor:hover{text-decoration:none}
+
+.sponsor .name{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1.2rem;
+  font-family:var(--display);
+  font-weight:700;
+  font-size:clamp(1.1rem,2.8vw,1.3rem);
+  letter-spacing:-0.018em;
+  color:var(--ink);
+}
+
+.sponsor .go{color:var(--teal);transition:transform 260ms var(--ease)}
+.sponsor p{color:var(--muted-lo)}
+
+@media(prefers-reduced-motion:no-preference){
+  .sponsor:hover .go{transform:translateX(4px)}
+}
+
+.built{display:flex;flex-direction:column;gap:0.85rem;border-top:1px solid var(--rule);padding-top:clamp(1.4rem,3.5vw,1.8rem)}
+
+.built-links{display:flex;flex-wrap:wrap;gap:0.5rem 1.6rem}
+
+.built-links a{
+  font-family:var(--mono);
+  font-size:clamp(0.78rem,2vw,0.85rem);
+  padding-block:0.35rem;
+  overflow-wrap:break-word;
+}
+
+.foot{border-top:1px solid var(--rule)}
+
+.foot-in{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:0.7rem 1.8rem;
+  padding-block:1.5rem 0.8rem;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.13em;
+  text-transform:uppercase;
+  color:var(--muted-lo);
+}
+
+.foot-in a{text-decoration:none}
+.foot-in a:hover{text-decoration:underline}
+.foot-in .push{margin-left:auto}
+
+@media(max-width:620px){ .foot-in .push{margin-left:0;flex-basis:100%} }
+
+/* This line carries .wrap, so it must not set margin-inline: a plain
+   margin:0 here beats .wrap's margin-inline:auto on the cascade and drops
+   the line flush against the viewport edge, out of line with .foot-in. */
+.foot-lic{
+  margin-block:0;
+  padding-block:0.9rem 1.6rem;
+  border-top:1px solid var(--rule);
+  font-size:12px;
+  line-height:1.7;
+  color:var(--muted-lo);
+}
+
+.foot-lic a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.foot-lic a:hover{color:var(--citron)}
+
+/* ═══════════ motion ═══════════ */
+@media(prefers-reduced-motion:no-preference){
+  .js .rise{opacity:0;transform:translateY(16px)}
+  .js .rise.is-in{
+    opacity:1;
+    transform:none;
+    transition:opacity 620ms var(--ease),transform 620ms var(--ease);
+  }
+  .js .rise.is-in.d1{transition-delay:80ms}
+  .js .rise.is-in.d2{transition-delay:160ms}
+  .js .rise.is-in.d3{transition-delay:240ms}
+}
+
+@media(prefers-reduced-motion:reduce){ html{scroll-behavior:auto} }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE PASS — everything below is additive and scoped to a
+   breakpoint, so the desktop composition above is untouched.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* notched devices */
+.nav{padding-top:env(safe-area-inset-top)}
+body{padding-bottom:env(safe-area-inset-bottom)}
+
+/* scroll progress: the mobile replacement for the section links, since
+   those are hidden below 720. Off with JS off, off with reduced motion. */
+.nav-progress{display:none}
+
+@media(max-width:720px) and (prefers-reduced-motion:no-preference){
+  .js .nav-progress{
+    display:block;
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:-1px;
+    height:2px;
+  }
+  .js .nav-progress span{
+    display:block;
+    height:100%;
+    width:calc(var(--sp,0) * 100%);
+    background:var(--citron);
+  }
+}
+
+@media(max-width:900px){
+  /* ── global hygiene ── */
+  :root{--gutter:1.25rem}
+
+  body{font-size:1rem}                 /* 16px floor: readability + no iOS zoom */
+
+  .hero-line,.pos p,.install p,.spec-top p,.row p,.col p,
+  .cell p,.footnote p,.support p{max-width:38ch}
+
+  .spec,.install-in,.support-in,.pos-in,.proof-in{
+    padding-block:clamp(3rem,12vw,5rem);
+  }
+
+  /* ── hero: two deliberate lines, never small ── */
+  .hero{min-height:72svh}
+  .hero-in{padding-block:clamp(1.75rem,6vw,3rem)}
+
+  .syntax{font-size:clamp(2.25rem,9vw,3.4rem)}
+  .cmd-verb{flex:0 0 100%}             /* forces the flag onto line two */
+  .cmd-tail{white-space:nowrap;display:inline-block}
+
+  /* ── positioning field ── */
+  .pos h1{font-size:clamp(2rem,9vw,2.75rem);line-height:0.98}
+
+  .field-citron a.cta{
+    width:100%;
+    justify-content:space-between;
+    min-height:56px;
+  }
+
+  /* ── spec rows: the margin column collapses to an inline number ── */
+  .row{grid-template-columns:auto 1fr;column-gap:0.75rem}
+  .row .idx{padding-top:0.15rem}
+
+  /* a wrapped CLI command reads as broken, so it scrolls instead */
+  .flagblock{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .flagblock span{white-space:nowrap;text-indent:0;padding-left:0}
+
+  /* ── install ── */
+  .term-lines{font-size:0.8rem;padding:1.25rem}
+  .term-strip{padding:0.6rem 1.25rem}
+}
+
+@media(max-width:860px){
+  /* the divider between the two modes turns horizontal when they stack */
+  .split > * + *{
+    border-left:0;
+    padding-left:0;
+    border-top:1px solid var(--rule);
+    padding-top:clamp(2rem,5vw,3rem);
+  }
+}
+
+@media(max-width:720px){
+  .nav-in{padding-block:0.75rem}
+  .nav-actions{gap:0.5rem;border-left:0;padding-left:0}
+
+  /* ── proof cells: numeral inline, hairline between ── */
+  .proof-in{gap:0}
+
+  .cell{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    column-gap:0.75rem;
+    row-gap:0.5rem;
+    max-width:none;
+  }
+
+  .cell .num{font-size:28px;grid-column:1;grid-row:1}
+  .cell h2{grid-column:2;grid-row:1;align-self:center}
+  .cell p{grid-column:2;grid-row:2}
+
+  .cell + .cell{
+    border-top:1px solid var(--rule);
+    padding-top:clamp(1.75rem,6vw,2.5rem);
+    margin-top:clamp(1.75rem,6vw,2.5rem);
+  }
+}
+
+/* ── touch: no hover state is reachable, so nothing may depend on one ── */
+/* Touch has no hover, so a lift that only fires on tap feels broken, and
+   an affordance that only appears on hover is unreachable. Every hover
+   transform on this page is listed here — .cta, .sponsor and the
+   walkthrough link — and each hover-only cue gets a resting state. */
+@media(hover:none){
+  .field-citron a.cta:hover,.sponsor:hover{transform:none;box-shadow:none}
+  .cta:hover .arw,.sponsor:hover .go,.install-out .go:hover .arw{transform:none}
+
+  .install-out .go{text-decoration:underline;text-decoration-color:var(--citron)}
+  .sponsor .go{transform:translateX(2px)}
+  .nav-links a.is-here{box-shadow:0 1px 0 var(--citron)}
+}
+
+</style>
+</head>
+<body>
+
+<!-- ══════════ nav ══════════ -->
+<div class="field-ink nav">
+  <div class="wrap nav-in">
+    <a class="wordmark" href="#top">Glider</a>
+
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#demo">Demo</a>
+      <a href="#handoff">Handoff</a>
+      <a href="#redirect">Redirect</a>
+      <a href="#install">Install</a>
+      <a href="docs/site/tutorial.html">Walkthrough</a>
+    </nav>
+
+    <div class="nav-actions">
+      <a href="https://github.com/singhutsav5502/Glider">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.5 11.5 0 0 1 3-.405c1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+        <span>Source</span>
+      </a>
+      <a href="https://github.com/sponsors/singhutsav5502" title="Sponsor">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        <span class="vh">Sponsor this project</span>
+      </a>
+      <a class="nav-site" href="https://utsv.work">utsv.work</a>
+    </div>
+  </div>
+  <div class="nav-progress" aria-hidden="true"><span></span></div>
+</div>
+
+<!-- ══════════ hero: the syntax ══════════ -->
+<header class="field-ink hero" id="top">
+  <div class="wrap hero-in">
+    <p class="eyebrow">The whole syntax</p>
+    <p class="syntax">
+      <span class="cmd-verb">fix this</span><span class="cmd-tail"><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span></span>
+    </p>
+    <p class="hero-line">
+      That is it. The task runs in the other CLI and the answer comes back here.
+    </p>
+  </div>
+</header>
+
+<!-- ══════════ positioning ══════════ -->
+<section class="field-citron pos">
+  <div class="wrap pos-in">
+    <h1>Multiple CLIs.<br />One prompt.</h1>
+    <p>
+      Claude Code, Cursor Agent and Antigravity — the three supported today —
+      are different tools, and you already pay for more than one. Glider lets
+      you send a task to whichever one should do it, without leaving the
+      terminal you are in.
+    </p>
+    <a class="cta" href="#install">Get started <span class="arw" aria-hidden="true">&rarr;</span></a>
+  </div>
+</section>
+
+<!-- ══════════ demo film ══════════ -->
+<section class="field-ink film" id="demo">
+  <div class="wrap film-in">
+    <p class="eyebrow rise">Thirty seconds</p>
+    <p class="film-line rise d1">
+      One flag typed in Claude Code, the task run in another CLI, and the
+      answer back in the same window.
+    </p>
+    <div class="film-frame rise d2">
+      <video
+        id="demo-film"
+        aria-label="A thirty second film. A task typed in Claude Code ends with a flag, another CLI runs it, and the answer returns to the same window."
+        src="docs/site/assets/glider-demo.mp4"
+        poster="docs/site/assets/glider-demo-poster.jpg"
+        muted
+        loop
+        playsinline
+        preload="metadata"
+        controls
+      ></video>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ two proof cells ══════════ -->
+<section class="field-bone">
+  <div class="wrap proof-in">
+    <div class="cell rise">
+      <span class="num">01</span>
+      <h2>Permissions stay on</h2>
+      <p>
+        Handing a task to a headless CLI normally means switching its permission
+        prompts off. Glider relays each one back to you instead, and you grant
+        them one at a time.
+      </p>
+    </div>
+    <div class="cell rise d1">
+      <span class="num">02</span>
+      <h2>Nothing to reconfigure</h2>
+      <p>
+        Glider stands in the CLI's own HTTPS path. Neither end changes its
+        settings, and neither one knows it is there.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ spec: the handoff ══════════ -->
+<section class="field-paper spec" id="handoff">
+  <div class="wrap spec-in">
+    <p class="eyebrow rise">The handoff</p>
+    <h2 class="spec-head rise d1">
+      One flag at the end of a message, and the work moves.
+    </h2>
+
+    <div class="flagblock rise d2">
+      <span>fix the failing test in internal/foo <b>/claude</b></span>
+      <span>summarize the last ten commits <b>/cursor-agent</b></span>
+      <span>refactor this module <b>/agy</b></span>
+      <span>or open it in its own window <b>/claude:interactive</b></span>
+      <span>and tell Glider where your project is <b>C:\dev\myapp /workspace</b></span>
+    </div>
+
+    <div class="rows rise d3">
+      <div class="row">
+        <span class="idx">01</span>
+        <div class="row-body">
+          <h3>You never leave your terminal</h3>
+          <p>
+            No second window, and no repeating the task. Glider runs the other
+            CLI and puts its final answer into the session you are already in.
+          </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="idx">02</span>
+        <div class="row-body">
+          <h3>Permissions stay switched on</h3>
+          <p>
+            When the other CLI stops for a permission, Glider returns the
+            question with a token. Reply <code>4472bef1 /cursor-agent:allow</code>
+            and the run continues with exactly that one grant.
+          </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="idx">03</span>
+        <div class="row-body">
+          <h3>The task arrives informed</h3>
+          <p>
+            The other CLI receives your task, your working directory, and the
+            relevant part of this session. It does not start cold and guess.
+          </p>
+          <p>
+            Glider cannot read that directory out of your CLI, so it asks each
+            session once. Answer with the path, then the flag — and
+            <code>.</code> is a valid path, so <code>. /workspace</code> typed
+            inside the project is the short form. Every later handoff in that
+            session runs there. Set a default on the
+            dashboard and the question arrives with that path ready to accept —
+            it still asks, because a second CLI opened in a different project
+            must never inherit the first project's directory without being
+            told.
+          </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="idx">04</span>
+        <div class="row-body">
+          <h3>Three CLIs today, and the list is data</h3>
+          <p>
+            Claude Code (<code>/claude</code>), Cursor Agent
+            (<code>/cursor-agent</code>) and Antigravity (<code>/agy</code>)
+            are supported now, and each one works in both directions — any of
+            them can send a task, and any of them can receive one.
+          </p>
+          <p>
+            Which CLIs exist is a YAML file plus a small adapter, never a
+            branch on a name inside the core. A fourth is a new entry, not a
+            rewrite.
+            <a href="docs/site/ngl.html#checklist">What adding one takes</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ spec: redirect ══════════ -->
+<section class="field-paper spec" id="redirect">
+  <div class="wrap spec-in">
+    <p class="eyebrow rise">Redirect</p>
+    <div class="spec-top rise d1">
+      <h2 class="spec-head">
+        The handoff works because Glider is already in the traffic.
+      </h2>
+      <p>
+        A message with no flag is none of Glider's business, and goes on to that
+        CLI's own backend untouched, with that CLI's own credentials. Only a
+        flagged message is claimed. Glider then runs the named CLI itself and
+        hands back what it produced.
+      </p>
+    </div>
+
+    <div class="plate rise d2">
+      <div class="plate-head">
+        <span>Route plate · one turn</span>
+        <span class="active" id="fx-flag">/claude</span>
+      </div>
+
+      <div class="plate-body plate-wide">
+        <svg viewBox="0 0 1120 520" preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="A routing plate. The CLI you are typing in sends one turn to Glider, which routes it to whichever CLI the trailing flag names — Claude Code, Cursor Agent or Antigravity — and returns the answer and any permission question. Glider can equally route a turn to a local Ollama model or to a provider on your own key. A message with no flag passes straight through to the CLI's own backend.">
+
+          <!-- register: destination rows and two column marks, held clear
+               of the plate edges so they read as a grid, not a border -->
+          <g class="reg">
+            <line x1="40" y1="110" x2="1080" y2="110" />
+            <line x1="40" y1="174" x2="1080" y2="174" />
+            <line x1="40" y1="238" x2="1080" y2="238" />
+            <line x1="40" y1="334" x2="1080" y2="334" />
+            <line x1="40" y1="398" x2="1080" y2="398" />
+            <line x1="280" y1="40" x2="280" y2="480" />
+            <line x1="680" y1="40" x2="680" y2="480" />
+          </g>
+
+          <!-- pass-through: drawn first so the hexagon covers it -->
+          <path class="thru" d="M 87 266 L 1080 266" />
+          <text x="1080" y="252" text-anchor="end">no flag · passes through</text>
+
+          <!-- orthogonal bus: out of the hub, down the spine, into each row -->
+          <path class="route" d="M 600 110 L 600 398" />
+          <path class="route" d="M 600 174 L 763 174" />
+          <path class="route" d="M 600 238 L 765 238" />
+          <path class="route" d="M 600 334 L 764 334" />
+          <path class="route" d="M 600 398 L 765 398" />
+
+          <!-- the turn being illustrated: origin, hub, spine, claude -->
+          <path class="route-on" d="M 87 254 L 407 254" />
+          <path class="route-on" id="fx-route" d="M 453 254 L 600 254 L 600 110 L 763 110" />
+
+          <!-- and the answer coming back, round the outside -->
+          <path class="ret" id="fx-ret" d="M 797 110 L 806 110 L 806 470 L 70 470 L 70 271" />
+          <text x="440" y="456" text-anchor="middle">answer · permission question</text>
+
+          <!-- origin -->
+          <rect class="sym" x="53" y="237" width="34" height="34" />
+          <text x="70" y="296" text-anchor="middle">you</text>
+
+          <!-- Glider: the only filled shape -->
+          <path class="hub" d="M 453 254 L 442 274 L 419 274 L 407 254 L 419 234 L 442 234 Z" />
+          <text class="t-hub" x="430" y="302" text-anchor="middle">GLIDER</text>
+
+          <!-- CLI destinations -->
+          <path class="sym sym-on" data-dest d="M 780 95 L 795 125 L 765 125 Z" />
+          <text class="t-on" data-dest-lbl x="812" y="115">claude</text>
+
+          <path class="sym" data-dest d="M 780 159 L 795 189 L 765 189 Z" />
+          <text data-dest-lbl x="812" y="179">cursor-agent</text>
+
+          <path class="sym" data-dest d="M 780 223 L 795 253 L 765 253 Z" />
+          <text data-dest-lbl x="812" y="243">agy</text>
+
+          <!-- not a CLI -->
+          <line class="reg" x1="763" y1="290" x2="1080" y2="290" />
+          <text class="t-sub" x="812" y="312">NOT A CLI</text>
+
+          <circle class="sym" cx="780" cy="334" r="16" />
+          <text x="812" y="339">ollama <tspan class="t-dim">qwen2.5-coder</tspan></text>
+
+          <path class="sym" d="M 780 383 L 795 398 L 780 413 L 765 398 Z" />
+          <text x="812" y="403">your own key</text>
+        </svg>
+      </div>
+
+
+      <div class="plate-tall">
+        <div class="pt-flow">
+          <div class="pt-row">
+            <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect class="sh" x="5" y="5" width="14" height="14"/></svg></span>
+            <span class="pt-label">you</span>
+          </div>
+
+          <div class="pt-row pt-hub">
+            <span class="pt-glyph"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path class="sh sh-hub" d="M26 14 L20 24.4 L8 24.4 L2 14 L8 3.6 L20 3.6 Z"/></svg></span>
+            <span class="pt-label">GLIDER</span>
+            <span class="pt-note">reads the flag</span>
+          </div>
+
+          <ul class="pt-dests">
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">claude</span>
+            </li>
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">cursor-agent</span>
+            </li>
+            <li class="pt-row" data-dest-tall>
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2.5 L22.5 21.5 L1.5 21.5 Z"/></svg></span><span class="pt-label">agy</span>
+            </li>
+            <li class="pt-divider"><span>Not a CLI</span></li>
+            <li class="pt-row">
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle class="sh" cx="12" cy="12" r="8"/></svg></span><span class="pt-label">ollama · qwen2.5-coder</span>
+            </li>
+            <li class="pt-row">
+              <span class="pt-glyph"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path class="sh" d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></span><span class="pt-label">your own key</span>
+            </li>
+          </ul>
+        </div>
+
+        <p class="pt-branch">&#8627; no flag · passes through, untouched</p>
+
+        <div class="pt-return">
+          <span class="pt-return-line" aria-hidden="true"></span>
+          <span class="pt-mark" aria-hidden="true">&uarr;</span>
+          <span>answer · permission question</span>
+        </div>
+      </div>
+
+      <div class="plate-legend">
+        <span>Square = you</span>
+        <span>Hexagon = Glider</span>
+        <span>Triangle = CLI</span>
+        <span>Circle = local model</span>
+        <span>Diamond = BYOK</span>
+        <span>Solid = this turn</span>
+        <span>Hairline = idle route</span>
+        <span>Dashed = pass-through</span>
+      </div>
+    </div>
+
+    <div class="split rise d3">
+      <div class="col">
+        <span class="tag on">Start here</span>
+        <h3>Gateway</h3>
+        <p>
+          Point the CLI at Glider with one environment variable or one base-URL
+          setting. Explicit, easy to reason about, and it works with every CLI.
+        </p>
+        <span class="chip">http://127.0.0.1:8080/v1</span>
+        <p class="col-end fill">
+          Works with every CLI · <a href="docs/site/api.html">Gateway reference</a>
+        </p>
+      </div>
+      <div class="col">
+        <span class="tag off">When a CLI won't cooperate</span>
+        <h3>Transparent</h3>
+        <p>
+          Some CLIs ignore proxy settings entirely. Glider redirects their
+          outbound HTTPS at the operating system level instead, and it catches a
+          session that is already running.
+        </p>
+        <p class="note">
+          Needs Administrator on Windows or root on Linux, and it matches by
+          process name across the whole machine.
+          <a href="docs/site/mitm.html">Read this first</a>.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ spec: the memory ══════════ -->
+<section class="field-bone spec" id="memory">
+  <div class="wrap spec-in">
+    <p class="eyebrow rise">The memory</p>
+    <h2 class="spec-head rise d1">
+      The second CLI knows what the first one already did.
+    </h2>
+
+    <div class="spec-top rise d1">
+      <p>
+        A delegate is a cold process. It never saw your session, and it cannot
+        see the delegate you sent before it. Left alone, the second one asks a
+        question you already answered, or undoes the change the first one made.
+      </p>
+      <p>
+        So Glider keeps one record for each project. Every turn goes in —
+        including the ordinary ones with no flag, because those are what the
+        instruction refers to. Each delegate is handed the part that matches
+        its own task, and what it did goes back in.
+      </p>
+    </div>
+
+    <div class="plate rise d2">
+      <div class="plate-head">
+        <span>Memory plate · one session</span>
+        <span class="active">3 turns · 2 CLIs</span>
+      </div>
+
+      <div class="plate-body plate-wide">
+        <svg viewBox="0 0 1120 520" preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="One session with three turns. Every turn, including the first which carries no flag, is written into a single session record held per project. Turn two is delegated to Cursor Agent and turn three to Antigravity. Each delegate is given the part of the record that matches its own task, and the outcome of each run is written back into the record, so the second delegate knows what the first one did.">
+
+          <!-- register -->
+          <!-- Column marks sit in the GUTTERS, never on a column centre:
+               every label on this plate is centred on its column, so a rule
+               at 200/520/840 would strike through all of them. The centre
+               line is cut either side of the record bar for the same
+               reason — it would otherwise read through the translucent
+               fill and across the label inside it. -->
+          <g class="reg">
+            <line x1="40" y1="110" x2="1080" y2="110" />
+            <line x1="40" y1="254" x2="150" y2="254" />
+            <line x1="1050" y1="254" x2="1080" y2="254" />
+            <line x1="40" y1="400" x2="1080" y2="400" />
+            <line x1="360" y1="40" x2="360" y2="480" />
+            <line x1="680" y1="40" x2="680" y2="480" />
+          </g>
+
+          <!-- the three turns -->
+          <rect class="sym" x="183" y="93" width="34" height="34" />
+          <rect class="sym" x="503" y="93" width="34" height="34" />
+          <rect class="sym" x="823" y="93" width="34" height="34" />
+          <!-- Both labels go ABOVE the square. Below it is where the drop
+               line runs, and a centred label there is struck through by it. -->
+          <text x="200" y="54" text-anchor="middle">turn 1</text>
+          <text x="520" y="54" text-anchor="middle">turn 2</text>
+          <text x="840" y="54" text-anchor="middle">turn 3</text>
+          <text class="t-dim" x="200" y="80" text-anchor="middle">no flag</text>
+          <text class="t-on" x="520" y="80" text-anchor="middle">/cursor-agent</text>
+          <text class="t-on" x="840" y="80" text-anchor="middle">/agy</text>
+
+          <!-- every turn drops into the record, flagged or not -->
+          <path class="route-on" d="M 200 127 L 200 218" />
+          <path class="route-on" d="M 520 127 L 520 218" />
+          <path class="route-on" d="M 840 127 L 840 218" />
+
+          <!-- Glider owns the record -->
+          <path class="hub" d="M 118 254 L 107 274 L 84 274 L 72 254 L 84 234 L 107 234 Z" />
+          <text class="t-hub" x="95" y="302" text-anchor="middle">GLIDER</text>
+
+          <!-- the record itself -->
+          <rect class="store" x="150" y="218" width="900" height="72" />
+          <text class="t-sub" x="170" y="246">SESSION RECORD · ONE PER PROJECT</text>
+          <!-- not t-dim: this line states the selection rule, which is the
+               mechanism the plate exists to show, not a side annotation -->
+          <text x="170" y="272">60 entries · the part that matches the task, not the newest part</text>
+
+          <!-- out to each delegate -->
+          <path class="route-on" d="M 520 290 L 520 385" />
+          <path class="route-on" d="M 840 290 L 840 385" />
+
+          <!-- and the outcome back in -->
+          <path class="ret" d="M 545 400 L 610 400 L 610 290" />
+          <path class="ret" d="M 865 400 L 930 400 L 930 290" />
+
+          <!-- delegates -->
+          <path class="sym sym-on" d="M 520 385 L 537 415 L 503 415 Z" />
+          <path class="sym sym-on" d="M 840 385 L 857 415 L 823 415 Z" />
+          <text class="t-on" x="520" y="442" text-anchor="middle">cursor-agent</text>
+          <text class="t-on" x="840" y="442" text-anchor="middle">agy</text>
+          <text class="t-dim" x="520" y="464" text-anchor="middle">cold process</text>
+          <text class="t-dim" x="840" y="464" text-anchor="middle">cold process</text>
+
+          <!-- turn 1 is the point of the whole plate -->
+          <text class="t-dim" x="200" y="442" text-anchor="middle">no delegate</text>
+          <text class="t-dim" x="200" y="464" text-anchor="middle">still recorded</text>
+        </svg>
+      </div>
+
+      <div class="plate-legend">
+        <span>Square = a turn</span>
+        <span>Hexagon = Glider</span>
+        <span>Bar = the record</span>
+        <span>Triangle = delegate CLI</span>
+        <span>Solid = into the record</span>
+        <span>Dashed = outcome back</span>
+      </div>
+    </div>
+
+    <p class="spec-note rise d3">
+      The record lives in <span class="chip">~/.glider</span>, never in your
+      repository — it is Glider's bookkeeping, and it would show up in
+      <span class="chip">git status</span> forever if it sat in your project.
+      <a href="docs/site/context.html#across-clis">How the record is built</a>
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ footnote: local routing ══════════ -->
+<section class="field-paper spec">
+  <div class="wrap">
+    <div class="footnote rise">
+      <p class="eyebrow">One more thing</p>
+      <h2>Since it is already in the path</h2>
+      <p>
+        Glider can send the cheap turns to a model on your own machine instead
+        of out to the cloud. A rename, an explanation, a format pass — none of
+        them need a frontier model.
+      </p>
+      <ul class="mini">
+        <li><span class="mk">/local</span> <span>forces this turn onto your machine</span></li>
+        <li><span class="mk">/cloud</span> <span>forces it straight back out</span></li>
+        <li><span class="mk">auto</span> <span>a rule ladder decides, and you can rewrite it</span></li>
+      </ul>
+      <p>
+        Off until you turn it on.
+        <a href="docs/site/routing.html">The routing rules</a> ·
+        <a href="docs/site/pure-local.html">Pure local mode</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ install ══════════ -->
+<section class="field-ink install" id="install">
+  <div class="wrap install-in">
+    <div class="install-lead rise">
+      <div class="install-head">
+        <p class="eyebrow">Install</p>
+        <h2>Build it, run it, done</h2>
+      </div>
+      <p>
+        Transparent redirection is already on in the default config, so every
+        supported CLI is caught exactly as it is. You change nothing in any of
+        them, and a session that is already open gets caught too.
+      </p>
+    </div>
+
+    <div class="termbox rise d1">
+      <div class="term-strip">
+        <span>bash</span>
+        <button type="button" class="term-copy" data-copy>Copy</button>
+      </div>
+      <div class="term-lines">
+        <span class="ln cmt"># 1 — build</span>
+        <span class="ln"><b class="bin">go</b> <b class="sub">build</b> -o glider.exe ./cmd/glider</span>
+        <span class="ln cmt step"># 2 — run from the repo root, as Administrator</span>
+        <span class="ln"><b class="bin">.\glider.exe</b></span>
+        <span class="ln cmt step"># claude · cursor-agent · agy are now redirected</span>
+        <span class="ln cmt"># dashboard  http://127.0.0.1:8081</span>
+      </div>
+    </div>
+
+    <div class="install-notes rise d2">
+      <p>
+        Administrator is what OS-level redirection costs on Windows, and root is
+        the cost on Linux. Without it, point a CLI at the gateway instead and
+        everything else works the same.
+      </p>
+      <div class="install-out">
+        <a class="go" href="docs/site/tutorial.html">
+          The walkthrough <span class="arw" aria-hidden="true">&rarr;</span>
+        </a>
+        <p>
+          An empty machine to a working handoff: every command and every
+          template — <code>/claude:interactive</code>, <code>/agy:headless</code>,
+          the permission tokens, the workspace flag — with the result you should
+          see at each step.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ support ══════════ -->
+<section class="field-bone support" id="support">
+  <div class="wrap support-in">
+    <p class="eyebrow rise">Support</p>
+    <h2 class="rise d1">Fund the work</h2>
+    <p class="rise d1">
+      Glider is free for noncommercial use, source-available, and built in the
+      open. If it is saving you tokens, you can support it.
+    </p>
+
+    <a class="sponsor rise d2" href="https://github.com/sponsors/singhutsav5502">
+      <span class="name">GitHub Sponsors <span class="go" aria-hidden="true">&rarr;</span></span>
+      <p>Monthly, billed with the rest of your GitHub account. Cancel whenever.</p>
+    </a>
+
+    <div class="built rise d3">
+      <p>Built and maintained by Utsav Singh.</p>
+      <div class="built-links">
+        <a href="https://utsv.work">utsv.work</a>
+        <a href="https://github.com/singhutsav5502">github.com/singhutsav5502</a>
+        <a href="https://github.com/singhutsav5502/Glider/issues">Report a problem</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ footer ══════════ -->
+<div class="field-bone foot">
+  <div class="wrap foot-in">
+    <span>Glider</span>
+    <a href="docs/site/index.html">Docs</a>
+    <a href="https://github.com/singhutsav5502/Glider">Source</a>
+    <span class="push">Operates on your machine</span>
+  </div>
+  <p class="wrap foot-lic">
+    <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+    <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+    <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+  </p>
+</div>
+
+<script>
+(() => {
+  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
+
+  /* ── copy the install commands ──────────────────────────────────
+     Bound before any motion check: the button is a control, not an
+     effect, and it has to work with reduced motion on. The strip offers
+     it, so it has to do it. Comment lines are dropped — what you want on
+     the clipboard is the two commands. */
+  const copyBtn = document.querySelector('[data-copy]');
+  const termLines = document.querySelector('.term-lines');
+
+  if (copyBtn && termLines && navigator.clipboard) {
+    copyBtn.addEventListener('click', async () => {
+      const text = [...termLines.querySelectorAll('.ln')]
+        .map((el) => el.textContent.trim())
+        .filter((t) => t && !t.startsWith('#'))
+        .join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = 'Copied';
+      } catch (_) {
+        copyBtn.textContent = 'Press Ctrl+C';
+      }
+      window.setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
+    });
+  } else if (copyBtn) {
+    copyBtn.hidden = true;   // no clipboard access, so do not offer it
+  }
+
+  /* ── scroll progress ────────────────────────────────────────────
+     Stands in for the section links below 720, where they are hidden.
+     CSS decides whether it is visible; this only supplies the fraction,
+     and it is skipped entirely under reduced motion. */
+  const prog = document.querySelector('.nav-progress span');
+  if (prog && motionOk.matches) {
+    let raf = 0;
+    const paint = () => {
+      raf = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const f = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+      prog.style.setProperty('--sp', f.toFixed(4));
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    paint();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+  }
+
+  /* ── mark the section you are reading ────────────────────────────
+     Its own observer, because the entrance one unobserves each element
+     after it fires and so cannot track re-entry. Bound before the motion
+     check: this is navigation state, not an effect. */
+  const hereLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+  if (hereLinks.length && 'IntersectionObserver' in window) {
+    const linkFor = new Map();
+    hereLinks.forEach((a) => {
+      const sec = document.getElementById(a.getAttribute('href').slice(1));
+      if (sec) linkFor.set(sec, a);
+    });
+    const hereIO = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        const a = linkFor.get(e.target);
+        if (a) a.classList.toggle('is-here', e.isIntersecting);
+      });
+    }, { rootMargin: '-45% 0px -45% 0px' });
+    linkFor.forEach((_, sec) => hereIO.observe(sec));
+  }
+
+  /* ── demo film ─────────────────────────────────────────────────
+     The film plays only while it is on screen, and only when the
+     reader accepts motion. Under prefers-reduced-motion it keeps its
+     poster and its controls, so the reader starts it. The markup
+     already carries controls, so this adds behaviour and never the
+     only way to play. */
+  const film = document.getElementById('demo-film');
+  if (film && motionOk.matches && 'IntersectionObserver' in window) {
+    film.autoplay = true;
+    const filmIO = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          // A refused play is normal on a policy the browser holds.
+          // The controls stay, so nothing is lost.
+          const p = film.play();
+          if (p && p.catch) p.catch(() => {});
+        } else {
+          film.pause();
+        }
+      });
+    }, { threshold: 0.25 });
+    filmIO.observe(film);
+  }
+
+  /* ── entrance ── */
+  const rises = document.querySelectorAll('.rise');
+  if (!motionOk.matches || !('IntersectionObserver' in window)) {
+    rises.forEach((el) => el.classList.add('is-in'));
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      e.target.classList.add('is-in');
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 });
+  rises.forEach((el) => io.observe(el));
+
+  /* ── cycle the three CLIs ──────────────────────────────────────
+     One index drives both the hero and the plate, so the flag being
+     typed upstairs is always the destination lit downstairs. The
+     markup ships a valid state, so nothing here is load-bearing. */
+  const VENDORS = [
+    { flag: '/agy',          row: 238 },
+    { flag: '/claude',       row: 110 },
+    { flag: '/cursor-agent', row: 174 },
+  ];
+
+  const heroFlag = document.querySelector('.syntax .flag');
+  const plateFlag = document.getElementById('fx-flag');
+  const plateRoute = document.getElementById('fx-route');
+  const plateRet = document.getElementById('fx-ret');
+  const destSyms = document.querySelectorAll('[data-dest]');
+  const destLbls = document.querySelectorAll('[data-dest-lbl]');
+  const destTall = document.querySelectorAll('[data-dest-tall]');
+
+  // plate rows run claude, cursor-agent, agy top to bottom
+  const ROW_ORDER = [110, 174, 238];
+
+  function paintPlate(v) {
+    if (plateFlag) plateFlag.textContent = v.flag;
+    if (plateRoute) plateRoute.setAttribute('d',
+      'M 453 254 L 600 254 L 600 ' + v.row + ' L 763 ' + v.row);
+    if (plateRet) plateRet.setAttribute('d',
+      'M 797 ' + v.row + ' L 806 ' + v.row + ' L 806 470 L 70 470 L 70 271');
+    const i = ROW_ORDER.indexOf(v.row);
+    destSyms.forEach((el, k) => el.classList.toggle('sym-on', k === i));
+    destLbls.forEach((el, k) => el.classList.toggle('t-on', k === i));
+    // the tall rendering lights the same index, so the two never disagree
+    destTall.forEach((el, k) => el.classList.toggle('is-on', k === i));
+  }
+
+  if (!heroFlag || !motionOk.matches) return;
+
+  let vi = 0;
+  let timer = 0;
+  const at = (fn, ms) => { timer = window.setTimeout(fn, ms); };
+
+  function hold() {
+    at(erase, 2400);
+  }
+
+  function erase() {
+    const t = heroFlag.textContent;
+    if (t.length > 1) {          // keep the leading slash on screen
+      heroFlag.textContent = t.slice(0, -1);
+      at(erase, 38);
+      return;
+    }
+    vi = (vi + 1) % VENDORS.length;
+    paintPlate(VENDORS[vi]);
+    at(type, 220);
+  }
+
+  function type() {
+    const want = VENDORS[vi].flag;
+    const t = heroFlag.textContent;
+    if (t.length < want.length) {
+      heroFlag.textContent = want.slice(0, t.length + 1);
+      at(type, 72);
+      return;
+    }
+    hold();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { window.clearTimeout(timer); timer = 0; }
+    else if (!timer) hold();
+  });
+
+  paintPlate(VENDORS[0]);
+  hold();
+})();
+</script>
+</body>
+</html>

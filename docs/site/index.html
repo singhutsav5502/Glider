@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a class="active" href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+
+    <header class="hero">
+      <div class="badge">Start here</div>
+      <h1>Glider</h1>
+      <p>
+        Glider operates between your AI coding CLI and its backend. It can send a request to a
+        local model in place of the cloud. It can also send a task from your CLI to a different
+        CLI. If that CLI asks for a permission, Glider shows the question to you.
+      </p>
+      <p><a class="herolink" href="tutorial.html">The setup procedure, step by step →</a></p>
+    </header>
+
+    <main class="prose">
+      <h2>What Glider does</h2>
+      <p>Glider does these three tasks:</p>
+      <ol>
+        <li>
+          <strong>It sends a task to a different CLI.</strong> Type
+          <code>refactor this module /agy</code> in Claude Code, and Antigravity does the task.
+          You can do this from any supported CLI, to any other one. You stay in one
+          terminal. If the other CLI asks for a permission, Glider shows the question in your
+          own session.
+          → <a href="delegation.html">Delegation</a>
+        </li>
+        <li>
+          <strong>It sends work to a local model.</strong> Simple tasks such as a rename, an
+          explanation or a format operation can go to Ollama. This keeps your cloud tokens for
+          the difficult work, which stays on the cloud backend. To select the route yourself,
+          use <code>/local</code> or <code>/cloud</code>.
+          → <a href="routing.html">Routing</a>
+        </li>
+        <li>
+          <strong>It shows you what occurs.</strong> The local dashboard shows each intercepted
+          request. It also shows the route decision and the cause of that decision.
+          → <a href="api.html">HTTP API</a>
+        </li>
+      </ol>
+
+      <h2>How Glider gets between the CLI and the backend</h2>
+      <p>There are two methods. You can change the method later:</p>
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>What you must do</th><th>When to use it</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Gateway</strong></td>
+            <td>Point the CLI at Glider. Use an environment variable or a base URL setting.</td>
+            <td>Use this mode first. It is simple and easy to understand.</td>
+          </tr>
+          <tr>
+            <td><strong>Transparent</strong></td>
+            <td>Nothing. Glider intercepts the traffic in the operating system.</td>
+            <td>Use this mode for a CLI that ignores the proxy settings, or for a session that is open.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Transparent mode needs no help from the CLI. It operates on a CLI session that is
+        already open, because it redirects the packets. The CLI does not change its own
+        settings. This mode needs Administrator permission on Windows, or root permission on
+        Linux. It applies to the full machine and selects the traffic by process name. Read
+        <a href="mitm.html">MITM &amp; interception</a> before you turn it on.
+      </p>
+
+      <h2>How to start</h2>
+      <p>Use pure local mode. You do not need a cloud key:</p>
+      <pre>ollama serve
+.\glider.exe --config configs\glider.local.yaml
+
+# Dashboard:  http://127.0.0.1:8081
+# Gateway:    http://127.0.0.1:8080/v1</pre>
+      <p>
+        Then point your CLI at the gateway. Or turn on transparent mode, and you do not have to
+        do that step. <a href="pure-local.html">Pure local</a> gives the full procedure.
+      </p>
+
+      <h2>The CLIs that Glider supports</h2>
+      <p>
+        Glider supports three CLIs today. Each one operates in two directions. It can send a task
+        to a different CLI, and it can do a task that a different CLI sends to it.
+      </p>
+      <table>
+        <thead>
+          <tr><th>CLI</th><th>As the CLI you use</th><th>As a delegate</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Code (<code>claude</code>)</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Cursor Agent (<code>cursor-agent</code>)</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Antigravity (<code>agy</code>)</td><td>Yes</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The number is three today, but it is not a limit in the design. Glider keeps the list of
+        CLIs as data. It is <code>configs/vendor_candidates.yaml</code>, and it is not a condition
+        on a vendor name in the shared Go code. To add a fourth CLI, you write one YAML entry and
+        one adapter. You do not change the shared code.
+        <a href="ngl.html#checklist">How to add a fourth vendor</a> gives the full list of files.
+      </p>
+
+      <h2>Where to go next</h2>
+    </main>
+
+    <section class="grid">
+      <a class="card" href="tutorial.html">
+        <h3>Walkthrough</h3>
+        <p>Twelve steps, from an empty machine to a task that goes from one CLI to a different CLI.</p>
+      </a>
+      <a class="card" href="architecture.html">
+        <h3>Architecture</h3>
+        <p>The network interfaces, the shared pipeline, the packages and the failure conditions.</p>
+      </a>
+      <a class="card" href="configuration.html">
+        <h3>Configuration</h3>
+        <p>Every setting that Glider reads, with its type, its default and its function.</p>
+      </a>
+      <a class="card" href="delegation.html">
+        <h3>Delegation</h3>
+        <p>The flag format, the permission relay, and what each CLI can do.</p>
+      </a>
+      <a class="card" href="instructions.html">
+        <h3>Automatic rules</h3>
+        <p>A template that makes your CLI send tasks to a different CLI without your help.</p>
+      </a>
+      <a class="card" href="routing.html">
+        <h3>Routing</h3>
+        <p>The full priority sequence, from the explicit flags to the default rule.</p>
+      </a>
+      <a class="card" href="mitm.html">
+        <h3>MITM &amp; interception</h3>
+        <p>CONNECT decryption, transparent redirection, and the risks you must know first.</p>
+      </a>
+      <a class="card" href="ngl.html">
+        <h3>NGL &amp; interfaces</h3>
+        <p>How Glider supports many CLIs with no vendor code in the core.</p>
+      </a>
+      <a class="card" href="context.html">
+        <h3>Context</h3>
+        <p>The event log and the turn index that give sticky routing and data.</p>
+      </a>
+      <a class="card" href="pure-local.html">
+        <h3>Pure local</h3>
+        <p><code>glider.local.yaml</code> — Ollama only. You do not need a cloud key.</p>
+      </a>
+      <a class="card" href="api.html">
+        <h3>HTTP API</h3>
+        <p>The dashboard REST endpoints: config, context, vendors, MCP and workspace.</p>
+      </a>
+      <a class="card" href="mcp.html">
+        <h3>Tools &amp; MCP</h3>
+        <p>The internal tools, the workspace, and the GitHub MCP setup.</p>
+      </a>
+    </section>
+
+    <main class="prose">
+      <p>
+        The <code>planning/</code> directory gives the causes of the design decisions. It also
+        records the results of the live tests. <code>planning/README.md</code> is the index.
+      </p>
+
+      <h2>How to serve this site</h2>
+      <p>The files in <code>docs/site/</code> are HTML and CSS only. There is no build step and no external JavaScript.</p>
+      <pre>powershell -File scripts\serve-docs.ps1
+# → http://127.0.0.1:8090</pre>
+    </main>
+
+    <footer class="foot">Glider documentation
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

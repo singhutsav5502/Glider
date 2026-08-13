@@ -1,0 +1,23 @@
+/glider.exe
+/glider.exe~
+*.exe~
+/glider
+/coverage.out
+*.exe
+.env
+.env.local
+*.test
+.glider-debug/
+
+# Accidental test cwd run layouts (real runs live under ~/.glider/workspace/runs/)
+internal/loop/runs/
+
+# Nested research clone metadata (vendored as plain trees)
+**/.git.bak/
+
+
+STATUS.md
+
+# Scratch space for reading and experiments. Local only, never part of a
+# build, and nothing here is imported by the product.
+_research/

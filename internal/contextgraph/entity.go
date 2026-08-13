@@ -1,0 +1,203 @@
+package contextgraph
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Entity kinds for the structural layer (Graphify-inspired nodes/edges).
+const (
+	KindEntity   = "entity"
+	KindEdge     = "edge"
+	KindThread   = "thread"
+	KindWave     = "wave"
+	KindEpisode  = "episode"
+	KindWorker   = "worker"
+	KindNote     = "note"
+	KindFile     = "file"
+	KindDir      = "dir"
+	KindSubtask  = "subtask"
+	KindConflict = "conflict"
+	KindSymbol   = "symbol"
+)
+
+// Relation verbs on edges.
+const (
+	RelProduced      = "produced"
+	RelFollows       = "follows"
+	RelMergedInto    = "merged_into"
+	RelPartOf        = "part_of"
+	RelContains      = "contains"
+	RelConflictsWith = "conflicts_with"
+	RelSeeds         = "seeds"
+	RelDefines       = "defines"
+	RelCalls         = "calls"
+	RelFeeds         = "feeds" // hoop stage A feeds summary/artifacts into stage B
+)
+
+// Entity is a durable node or edge in the structural context layer.
+type Entity struct {
+	ID         string            `json:"id"`
+	Kind       string            `json:"kind"` // entity|edge|thread|wave|episode|worker|note
+	Label      string            `json:"label"`
+	TurnID     string            `json:"turn_id,omitempty"`
+	Provenance Provenance        `json:"provenance,omitempty"`
+	From       string            `json:"from,omitempty"` // edge source id
+	To         string            `json:"to,omitempty"`   // edge target id
+	Relation   string            `json:"relation,omitempty"`
+	Attrs      map[string]string `json:"attrs,omitempty"`
+	At         time.Time         `json:"at,omitempty"`
+}
+
+func (s *Store) ensureEntitiesLocked() {
+	s.EntityIndex.ensure()
+}
+
+// upsertEntityLocked indexes an entity and schedules disk persist.
+func (s *Store) upsertEntityLocked(e Entity) {
+	cp := s.EntityIndex.upsert(e)
+	persistEntityJSONL(s.Dir, cp)
+}
+
+// LoadEntities replays entities.jsonl from Dir into the in-memory index.
+// Later lines with the same ID win (upsert). Returns count of lines applied.
+func (s *Store) LoadEntities() (int, error) {
+	if s == nil || strings.TrimSpace(s.Dir) == "" {
+		return 0, nil
+	}
+	path := filepath.Join(s.Dir, "entities.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer f.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureEntitiesLocked()
+	n := 0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var e Entity
+		if err := json.Unmarshal([]byte(line), &e); err != nil || e.ID == "" {
+			continue
+		}
+		if e.Attrs != nil {
+			cp := make(map[string]string, len(e.Attrs))
+			for k, v := range e.Attrs {
+				cp[k] = v
+			}
+			e.Attrs = cp
+		}
+		cp := e
+		s.entities[e.ID] = &cp
+		n++
+	}
+	return n, sc.Err()
+}
+
+// Entities returns a snapshot of structural nodes/edges, optionally filtered by turnID.
+func (s *Store) Entities(turnID string, limit int) []Entity {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.EntityIndex.list(turnID, limit)
+}
+
+// GetEntity looks up one entity by id.
+func (s *Store) GetEntity(id string) (Entity, bool) {
+	if s == nil {
+		return Entity{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.EntityIndex.get(id)
+}
+
+// RecordEdge upserts a directed relation between two entity ids.
+func (s *Store) RecordEdge(turnID, id, from, to, relation string, prov Provenance, attrs map[string]string) {
+	if s == nil || from == "" || to == "" {
+		return
+	}
+	if id == "" {
+		id = from + "->" + to + ":" + relation
+	}
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	attrs["from"] = from
+	attrs["to"] = to
+	attrs["relation"] = relation
+	s.RecordFact(turnID, Fact{
+		ID:         id,
+		Kind:       KindEdge,
+		Label:      relation + " " + from + "→" + to,
+		Provenance: prov,
+		Attrs:      attrs,
+		From:       from,
+		To:         to,
+		Relation:   relation,
+	})
+}
+
+// WaveOutputs returns RUNTIME episode/worker summaries recorded for a turn
+// (used to seed wave N+1 prompts from the shared graph).
+func (s *Store) WaveOutputs(turnID string, waveIndex int, limit int) []string {
+	if s == nil {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 16
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureEntitiesLocked()
+	wantWave := ""
+	if waveIndex >= 0 {
+		wantWave = strconv.Itoa(waveIndex)
+	}
+	var out []string
+	for _, e := range s.entities {
+		if turnID != "" && e.TurnID != turnID {
+			continue
+		}
+		if e.Kind != KindEpisode && e.Kind != KindWorker && e.Kind != KindWave {
+			continue
+		}
+		if wantWave != "" && e.Attrs != nil {
+			if w := e.Attrs["wave"]; w != "" && w != wantWave {
+				continue
+			}
+		}
+		sum := e.Label
+		if e.Attrs != nil {
+			if s := e.Attrs["summary"]; s != "" {
+				sum = s
+			}
+		}
+		sum = strings.TrimSpace(sum)
+		if sum == "" {
+			continue
+		}
+		out = append(out, sum)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}

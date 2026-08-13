@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MITM &amp; interception · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a class="active" href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Interception</div>
+      <h1>MITM &amp; interception</h1>
+      <p>
+        There are two methods to send the HTTPS traffic of a CLI to Glider. Glider then adds one
+        mechanism for Cursor only: the Agent RPC plane.
+      </p>
+
+      <h2 id="two-ways">A comparison of the gateway and MITM</h2>
+      <table>
+        <tr><th></th><th>Gateway</th><th>MITM</th></tr>
+        <tr><td>The client setting</td><td>Set Override Base URL to <code>:8080/v1</code></td><td>Set the proxy, or set nothing for transparent mode</td></tr>
+        <tr><td>The traffic</td><td>Only the traffic that you sent to Glider</td><td>The cloud traffic of the CLI</td></tr>
+        <tr><td>A request that is not local</td><td>Glider uses your own OpenAI or Anthropic key</td><td>Glider sends the request to the origin of the CLI. The credentials do not change.</td></tr>
+        <tr><td>When to use it</td><td>Use the gateway for agent work with tools. It is tested and it operates with each CLI.</td><td>Use MITM for local text replies in Cursor, for transparent interception, and for delegation.</td></tr>
+      </table>
+
+      <h2 id="connect">CONNECT and the TLS certificate</h2>
+      <pre>CONNECT host:443
+  → 200 Connection Established
+  → HostMatcher.Match?
+       yes → make a leaf certificate from the Glider CA, decrypt, then try
+             a local reply, a delegation, or the origin
+       no  → tunnel the data with no decryption (bidirectional io.Copy)</pre>
+      <p>
+        Glider decrypts only the hosts in the list. It makes the CA at
+        <code>~/.glider/mitm/ca.{crt,key}</code> when MITM starts the first time. Install
+        <code>ca.crt</code> in the trust store of your operating system. For a CLI that uses Node
+        or Electron, also set <code>NODE_EXTRA_CA_CERTS</code>. The Node runtime of Claude Code is
+        different: a live test showed that it trusts the operating system store, and it does not
+        need this variable. This is important for transparent mode below.
+      </p>
+      <table>
+        <tr><th>Host pattern</th><th>Vendor</th></tr>
+        <tr><td><code>api2.cursor.sh</code>, <code>api3</code>, <code>api4</code>, <code>*.api5.cursor.sh</code></td><td>Cursor</td></tr>
+        <tr><td><code>api.anthropic.com</code></td><td>Claude Code</td></tr>
+        <tr><td><code>daily-cloudcode-pa.googleapis.com</code>, <code>cloudcode-pa.googleapis.com</code>, <code>antigravity-unleash.goog</code>, <code>oauth2.googleapis.com</code>, <code>www.googleapis.com</code>, <code>play.googleapis.com</code></td><td>agy (Antigravity)</td></tr>
+      </table>
+
+      <p>
+        A host that is not in this list goes to its origin with no decryption, because
+        <code>mitm.passthrough_default</code> is <code>true</code>. Set it to <code>false</code> to
+        refuse a host that you did not list, in place of sending it.
+      </p>
+
+      <h2 id="ca">The certificate authority, and how to trust it</h2>
+      <p>
+        Glider makes its own CA the first time that MITM starts
+        (<code>LoadOrCreateAuthority</code>). It signs one leaf certificate for each host that it
+        decrypts.
+      </p>
+      <table>
+        <tr><th>File</th><th>Content</th></tr>
+        <tr><td><code>~/.glider/mitm/ca.crt</code></td><td>The certificate. You install this one. The setting is <code>mitm.ca_cert</code>.</td></tr>
+        <tr><td><code>~/.glider/mitm/ca.key</code></td><td>The private key. Give it to no one. The setting is <code>mitm.ca_key</code>.</td></tr>
+      </table>
+      <p>Decryption fails until the CLI trusts that certificate. There are two steps, and one is not necessary for each CLI:</p>
+      <ol>
+        <li>
+          Install <code>ca.crt</code> in the trust store of the operating system. On Windows this is
+          <strong>Trusted Root Certification Authorities</strong>.
+        </li>
+        <li>
+          For a CLI on Node or Electron, such as Cursor, point that runtime at the same file:
+          <pre>$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.glider\mitm\ca.crt"</pre>
+          Use a variable of the user or of the system, so it continues after a restart. Stop Cursor
+          completely after you change this.
+        </li>
+      </ol>
+      <p class="note">
+        <strong>Claude Code needs step 1 only.</strong> Its Node runtime trusts the store of the
+        operating system directly. Therefore the trust is one action at the level of the system, and
+        it is not a variable for each process. This is why transparent mode is complete for Claude
+        Code, and why Cursor keeps the caveat about a session that is already open.
+      </p>
+      <p class="note">
+        Routing and trust fail separately. The redirector can move the packets correctly, and the
+        handshake can still fail because the CLI does not trust the CA. Test the two conditions one
+        at a time.
+      </p>
+
+      <h2 id="transparent">Transparent redirection (Windows: WinDivert — Linux: iptables)</h2>
+      <p>
+        For the usual MITM mode, you must set the proxy in the CLI. Transparent mode does not need
+        that setting. Glider redirects the outbound HTTPS packets in the operating system. It
+        selects the packets by port and by process name. The CLI does not help, and the mode
+        operates on a session that started before Glider. You must still trust the CA: refer to
+        <a href="#ca">the section above</a>.
+      </p>
+      <pre>mitm:
+  transparent: true
+  transparent_port: 8083
+  transparent_ports: [443]
+  windivert_dll_path: ~/.glider/mitm/windivert/WinDivert.dll   # Windows only; WinDivertNN.sys alongside it</pre>
+      <table>
+        <tr><th>Platform</th><th>The mechanism</th><th>The permission that it needs</th></tr>
+        <tr><td>Windows</td><td>WinDivert. It changes the destination of a matched packet.</td><td>Administrator</td></tr>
+        <tr><td>Linux</td><td>An <code>iptables</code> REDIRECT rule in the nat OUTPUT chain, and <code>SO_ORIGINAL_DST</code> to recover the true destination. Glider calls <code>sudo -n iptables</code>.</td><td>root, or <code>sudo</code> with no password</td></tr>
+        <tr><td>macOS</td><td>None. The design uses <code>pfctl</code>, and no code exists. Glider gives a clear error.</td><td>—</td></tr>
+      </table>
+      <p class="note">
+        The <code>iptables</code> rules stay on the machine until Glider removes them. A stop that
+        is not clean — a failure, <code>taskkill /F</code> or <code>SIGKILL</code> — runs no code,
+        therefore it removes nothing. Glider cannot see that event when it occurs. It sees it at the
+        NEXT start, and it gives a warning. The warning tells you to test for a rule that stayed and
+        for a delegate subprocess with no parent:
+        <code>iptables -t nat -L</code> on Linux, or <code>tasklist</code> and <code>netstat</code>
+        on Windows. Glider gives the warning, and it does not repair the condition for you.
+      </p>
+      <p>
+        WinDivert changes the destination of a matched packet. The new destination is the primary
+        local IP address of this machine, on <code>transparent_port</code>. In the example above
+        this is <code>:8083</code>. It is not the loopback address. WinDivert then calculates the
+        checksums again and sends the packet. The TCP stack of the client does not see this
+        change. Windows has no function that gives the original destination. Linux has
+        <code>SO_ORIGINAL_DST</code>, but Windows does not. Therefore the redirector keeps its own
+        table of the flows. The key is the source <code>ip:port</code> of the client. To select
+        the processes, the redirector reads the vendor registry. The <strong>Vendors</strong> page
+        of the dashboard fills this registry. Do the discovery on that page first. If you do not,
+        transparent mode has no process filter and uses only the port.
+      </p>
+      <p>
+        A live test showed that this mode operates correctly with Claude Code. The test included
+        the redirection, the CA trust, no help from the CLI, and a terminal session that was
+        already open. There is no equivalent test for cursor-agent or agy. Linux has its own
+        implementation (<code>internal/mitm/redirector_linux.go</code>). It uses
+        <code>iptables</code> <code>REDIRECT</code> in the nat OUTPUT chain, and
+        <code>SO_ORIGINAL_DST</code> to get the true destination. On macOS the design is complete,
+        but no code exists: that platform gets a stub which gives an error at start. The macOS
+        design uses <code>pfctl</code>.
+      </p>
+
+      <h2 id="sticky">Cursor's Agent RPC plane (BidiAppend → RunSSE)</h2>
+      <p>
+        The Cursor protocol sends the prompt and the answer in two different RPCs. This section
+        and the two sections below apply to the Cursor MITM plane only. They are not a general
+        mechanism.
+      </p>
+      <ol>
+        <li><strong>BidiAppend.</strong> The prompt and the context arrive. Glider extracts the text of the most recent turn. Glider then makes a decision and calls <code>ArmLocal</code> or <code>ArmOrigin</code> on the hub. The key is the request UUID.</li>
+        <li><strong>RunSSE.</strong> The reply stream opens. The hub calls <code>Wait(reqID, 800ms)</code>. For a local decision, Glider encodes the text and sends the reply. If there is no local decision, Glider connects to the origin.</li>
+      </ol>
+      <p>
+        Glider can give a local text reply only for a <strong>root</strong> Agent RunSSE. A child
+        RunSSE and a tool-loop RunSSE go to the origin. You can turn on
+        <code>mitm.agent_rpc_tool_codec</code>, which gives a small map of the usual ToolCall
+        frames. The full list of frames does not exist yet. For agent work with tools, use the
+        gateway.
+      </p>
+
+      <h3 id="hub">How the fulfill hub operates</h3>
+      <p>
+        <code>AgentFulfillHub</code> connects the BidiAppend prompt to the RunSSE answer for the
+        same request UUID. One mutex protects three maps. <code>waiting</code> holds the requests
+        where RunSSE arrived first. <code>pending</code> holds the requests where BidiAppend
+        arrived first. <code>family</code> holds the sticky condition of a turn family.
+        <code>ArmLocal</code> and <code>ArmOrigin</code> tell a waiter if a waiter exists. If no
+        waiter exists, they write to <code>pending</code> and start a 30-second timer to remove
+        it. <code>Wait</code> looks in <code>pending</code> first. If it finds nothing, it adds a
+        waiter and then waits for an offer or for an 800-millisecond timer. After the timer,
+        <code>Wait</code> looks in <code>pending</code> one more time. This is necessary when
+        BidiAppend arrives at the same moment as the timer. If the local encode operation fails
+        after a partial write, Glider must not connect to the origin, because the client already
+        received part of a reply.
+      </p>
+
+      <h3 id="stickymachine">The sticky-cloud states</h3>
+      <p>
+        The turn-family sticky condition does not apply to the full conversation. An explicit flag
+        or a cloud <code>DecideLocal</code> decision opens a family for a short time. The key is
+        the root request UUID. The immediate follow-on messages, such as the reply summary and the
+        title, get the same condition. Without this mechanism, those messages look like small
+        local prompts. The router then sends them to the local model, but they must stay with the
+        cloud parent that just operated.
+      </p>
+      <table>
+        <tr><th>Constant</th><th>Value</th><th>Function</th></tr>
+        <tr><td><code>defaultRunSSEFulfillWait</code></td><td>800 ms</td><td>RunSSE waits this long for a BidiAppend decision. An idle reconnection goes to the origin.</td></tr>
+        <tr><td><code>DefaultTurnFamilyTTL</code></td><td>90 s</td><td>The length of the family window. The setting is <code>routing.turn_family_ttl</code>.</td></tr>
+        <tr><td><code>DefaultCloudPostRunGrace</code></td><td>120 s</td><td>The additional sticky time after the parent RunSSE ends</td></tr>
+      </table>
+      <p><strong>Rule:</strong> while a StickyCloud family is live, a concurrent StickyLocal must not replace it. The full policy is in <code>planning/routing_and_context.md</code>.</p>
+
+      <h2 id="config">The config settings</h2>
+      <table>
+        <tr><th>Key</th><th>Function</th></tr>
+        <tr><td><code>enabled</code></td><td>In the default profile this is <code>true</code></td></tr>
+        <tr><td><code>hosts</code></td><td>The hosts that Glider decrypts. Refer to the table above.</td></tr>
+        <tr><td><code>agent_rpc_fulfill</code></td><td>Lets Glider give a Cursor text reply from BidiAppend through RunSSE</td></tr>
+        <tr><td><code>agent_rpc_canned_on_error</code></td><td>Keep this <code>false</code> in normal operation</td></tr>
+        <tr><td><code>agent_rpc_tool_codec</code></td><td>Turns on the Cursor tool-call frames. For agent work with tools, use the gateway.</td></tr>
+        <tr><td><code>origin_on_local_error</code></td><td>Sends the request to the origin after a local failure. This is the default. Pure local mode sets it to <code>false</code>.</td></tr>
+        <tr><td><code>transparent</code>, <code>transparent_port</code>, <code>transparent_ports</code>, <code>windivert_dll_path</code></td><td>Refer to transparent redirection above</td></tr>
+        <tr><td><code>passthrough_default</code></td><td><code>true</code> sends a host that you did not list to its origin. <code>false</code> refuses it.</td></tr>
+        <tr><td><code>require_local_healthy</code></td><td>Glider selects the local model only after a health check succeeds. This stops a silent change to the origin.</td></tr>
+        <tr><td><code>agent_rpc_canned_text</code></td><td>The fixed text of <code>agent_rpc_canned_on_error</code>.</td></tr>
+        <tr><td><code>debug_agent_rpc</code>, <code>debug_dump_dir</code></td><td>Refer to <a href="#debug">the debug output</a> below.</td></tr>
+      </table>
+      <p>You must restart Glider after you change the port, the CA, the hosts or the transparent settings. Glider accepts all other changes while it runs.</p>
+      <p>
+        The <a href="configuration.html#mitm">configuration reference</a> gives the type and the
+        default of each key.
+      </p>
+
+      <h2 id="enrollment">How to make transparent mode more narrow</h2>
+      <p>
+        Transparent mode selects the traffic by port and by the image name of the process.
+        Therefore it catches EACH process on the machine with a name that agrees. To limit it to
+        the processes that you name, send their PIDs:
+      </p>
+      <pre>curl -X POST -H 'content-type: application/json' \
+     -d '{"pids":[1234,5678]}' \
+     http://127.0.0.1:8081/api/mitm/enrollment</pre>
+      <p>
+        Glider then uses these PIDs in addition to the test on the name. An empty array, or no
+        array, stops the narrow selection. That is the behaviour when you start.
+      </p>
+      <p class="note">
+        The call succeeds and does nothing when transparent mode does not operate, or when the
+        redirector of your platform does not support this. Therefore it is not dangerous to call it
+        against a setup with no transparent mode.
+      </p>
+
+      <h2 id="debug">The debug output</h2>
+      <p>
+        <code>mitm.debug_agent_rpc: true</code> adds three things. The environment variable
+        <code>GLIDER_MITM_DEBUG_RPC</code> does the same.
+      </p>
+      <table>
+        <tr><th>What you get</th><th>Where</th></tr>
+        <tr><td>Structured logs of the Agent RPC plane</td><td>The output of Glider</td></tr>
+        <tr><td>The bodies of the requests and the replies</td><td><code>~/.glider/mitm-debug/</code>, or <code>mitm.debug_dump_dir</code></td></tr>
+        <tr><td>The most recent intercepted requests</td><td><code>GET /api/mitm/debug/recent</code></td></tr>
+      </table>
+      <p class="note">
+        A dump holds the full body of a request. That body can contain your source code and your
+        prompts. Turn this off when you finish, and remove the directory.
+      </p>
+    </main>
+    <footer class="foot"><a href="delegation.html">← Delegation</a> · <a href="ngl.html">NGL →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

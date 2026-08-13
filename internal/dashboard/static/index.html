@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glider</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">Glider</div>
+      <nav class="tabs" aria-label="Primary">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="vram">VRAM & Models</button>
+        <button class="tab" data-tab="rules">Rules Engine</button>
+        <button class="tab" data-tab="mcp">MCP</button>
+        <button class="tab" data-tab="vendors">Vendors</button>
+        <button class="tab" data-tab="workspace">Workspace</button>
+        <button class="tab" data-tab="playground">Playground</button>
+        <button class="tab" data-tab="settings">Config</button>
+        <a class="tab tab-link" href="/docs/" target="_blank" rel="noopener" title="Hostable documentation">Docs</a>
+      </nav>
+      <div class="status" id="status">Status: OK</div>
+    </header>
+
+    <main>
+      <section id="panel-overview" class="panel active">
+        <div class="session-bar">
+          <label class="session-pick" data-tip-key="session-select">
+            Session
+            <select id="session-select"></select>
+          </label>
+          <button type="button" id="session-refresh" class="linkish">Refresh</button>
+          <span id="session-meta" class="session-meta"></span>
+        </div>
+        <aside class="banner warn" id="mitm-agent-gap" role="note">
+          <strong>MITM mode gives a text reply only.</strong>
+          With <code>agent_rpc_fulfill</code>, Glider reads the <code>BidiAppend</code> prompt and can answer a root <code>RunSSE</code> from the local model. Glider uses Ollama. It sends a fixed test reply only when you set <code>agent_rpc_canned_on_error</code>.
+          A child RunSSE and a tool-loop RunSSE always go to the Cursor origin. For agent work with tools, use the <strong>gateway</strong>: set Override Base URL to <code>http://localhost:8080/v1</code> and use a <code>cus-</code> model.
+          The log shows <code>local</code>, <code>origin_passthrough</code> or <code>canned</code>. The turn-family sticky condition applies <code>/cloud</code> or <code>/local</code> to the summary message and the title message only, for about 90 seconds. Glider writes the data to <code>~/.glider/mitm-debug</code> when you set <code>debug_agent_rpc</code>.
+        </aside>
+        <div class="metrics">
+          <div class="metric"><span class="label" title="Requests Glider acted on: routed local or cloud, answered from cache, delegated to another CLI, decrypted, or passed to the origin. 'Seen' adds traffic it deliberately declined to touch.">REQUESTS</span><span class="value" id="m-requests">0</span><span class="sub" id="m-requests-seen"></span></div>
+          <div class="metric"><span class="label" title="The live results from GET /api/metrics. Cloud contains the gateway cloud requests and the MITM origin requests. Canned is a fixed test reply.">LOCAL / CLOUD / CANNED</span><span class="value" id="m-split">—</span></div>
+          <div class="metric"><span class="label">TOKENS</span><span class="value" id="m-tokens">0</span></div>
+          <div class="metric"><span class="label">AVG LATENCY</span><span class="value" id="m-latency">—</span></div>
+        </div>
+        <div class="dist-bar" id="dist-bar" title="local / cloud / canned" aria-hidden="true" hidden>
+          <span class="dist-seg local" id="dist-local"></span>
+          <span class="dist-seg cloud" id="dist-cloud"></span>
+          <span class="dist-seg canned" id="dist-canned"></span>
+        </div>
+        <div class="class-rates" id="class-rates" title="The task classifier results and the route causes from this session"></div>
+        <div class="episode-rates" id="episode-chips" title="The most recent context episodes from /api/context/episodes" hidden></div>
+        <div class="log-wrap">
+          <div class="log-head">
+            <span>TIME</span><span>MODE</span><span>ACTION</span><span>HOST / MODEL</span><span>RULE</span><span>LATENCY</span><span>TOKENS</span>
+          </div>
+          <div id="request-log" class="log"></div>
+        </div>
+      </section>
+
+      <section id="panel-vram" class="panel">
+        <p class="hint">This list contains the models from the config and the models that Glider found. Glider reads Ollama <code>/api/tags</code>, and vLLM <code>/v1/models</code> if you use vLLM. If nvidia-smi is available, Glider also shows the GPU memory. Give a GPU number to each model, then push Save. Glider writes the numbers to <code>vram.gpu_assignments</code>. If Glider cannot connect to an optional backend, it shows a warning and not a failure. For example, this occurs with vLLM if you use only Ollama.</p>
+        <div id="gpu-gauges" class="gauges"></div>
+        <p id="vram-errors" class="cfg-error" hidden></p>
+        <p id="vram-warnings" class="cfg-warn" hidden></p>
+        <div class="vram-actions">
+          <button type="button" id="vram-refresh">Refresh</button>
+          <button type="button" id="vram-save-gpus">Save GPU assignments</button>
+        </div>
+        <table class="models" id="models-table">
+          <thead>
+            <tr>
+              <th>MODEL</th><th>BACKEND</th><th>SOURCE</th><th>VRAM</th><th>STATE</th><th>GPU</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="panel-rules" class="panel">
+        <div class="rules-toolbar">
+          <p class="hint">Make and change the routing rules here. The rule with the highest priority number has control. Glider writes your changes to the config and gives them to the router immediately.</p>
+          <button type="button" id="rule-add">Add rule</button>
+        </div>
+        <p id="rules-error" class="cfg-error" hidden></p>
+        <p id="rules-ok" class="cfg-ok" hidden>Rules saved.</p>
+        <div id="rules-editor" class="rules-editor"></div>
+        <div class="cfg-actions">
+          <button type="button" id="rules-save">Save rules</button>
+          <button type="button" id="rules-reload" class="linkish">Reload</button>
+        </div>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Module manager (hot-swap)</legend>
+          <p class="hint" style="margin:0 0 12px">Turn the routing modules and the infrastructure modules on or off. The counters change while this page is open.</p>
+          <div id="hotswap-list" class="hotswap-list"></div>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Config health</legend>
+          <p class="hint" style="margin:0 0 10px">
+            Glider examines your rules and shows possible problems. It finds two rules with the same trigger, and
+            a rule that Glider can never use. These messages do not prevent a save. Sometimes one rule in front of
+            another rule is correct, for example a pair of backup rules.
+          </p>
+          <div id="rules-lint-list"><p class="hint">Loading…</p></div>
+        </fieldset>
+
+        <fieldset class="cfg-section" style="margin-top:28px">
+          <legend>Explain</legend>
+          <p class="hint" style="margin:0 0 10px">
+            Test a message against your saved rules. Glider does not send the message to a model. It shows each
+            rule that it examined, in the sequence that the router uses. It also shows the rules that agree with
+            the message but have a lower priority.
+          </p>
+          <textarea id="rules-explain-input" class="pg-input" rows="2" spellcheck="false"
+            placeholder="For example: refactor this across the whole repo"></textarea>
+          <div class="rules-explain-extra">
+            <label class="rules-explain-field">Tools (comma-separated)
+              <input type="text" id="rules-explain-tools" placeholder="For example: bash, read_file">
+            </label>
+            <label class="rules-explain-field">Estimated tokens
+              <input type="number" id="rules-explain-tokens" min="0" placeholder="0">
+            </label>
+            <button type="button" id="rules-explain-run" class="primary">Explain</button>
+          </div>
+          <div id="rules-explain-result"></div>
+        </fieldset>
+      </section>
+
+      <section id="panel-mcp" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">MCP servers</h2>
+            <p class="hint" style="margin:6px 0 0">
+              The live Model Context Protocol connections. Each connected server gives its tools to Glider.
+              For more data, refer to <a href="/docs/mcp.html" target="_blank" rel="noopener">Tools &amp; MCP</a>.
+            </p>
+          </div>
+          <button type="button" id="mcp-refresh" class="linkish">Refresh</button>
+        </div>
+
+        <aside class="ux-help" aria-label="GitHub MCP status">
+          <strong class="ux-help-title">GitHub MCP</strong>
+          <div id="mcp-github-card" class="mcp-github-card">
+            <p class="hint" style="margin:0">Loading…</p>
+          </div>
+          <p class="ux-help-note">
+            Set <code>GITHUB_PERSONAL_ACCESS_TOKEN</code>, <code>GITHUB_TOKEN</code> or <code>GH_TOKEN</code> as an
+            environment variable. Do not put a token in the YAML file.
+            The endpoint is <code>https://api.githubcopilot.com/mcp/</code>.
+          </p>
+        </aside>
+
+        <p id="mcp-error" class="cfg-error" hidden></p>
+        <p id="mcp-ok" class="cfg-ok" hidden></p>
+
+        <div class="mcp-layout">
+          <fieldset class="cfg-section">
+            <legend>Servers</legend>
+            <div class="mcp-table-wrap">
+              <table class="mcp-table" id="mcp-servers-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Transport</th>
+                    <th>Health</th>
+                    <th>Tools</th>
+                    <th>Token</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="mcp-servers-body">
+                  <tr><td colspan="6" class="hint">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend>Tools catalog <span id="mcp-tools-server-label" class="graph-hint"></span></legend>
+            <p class="hint" id="mcp-tools-hint" style="margin:0 0 10px">Select a server to see its tools. A connected server gives the live list. For GitHub, Glider shows a recorded list when the server is not connected.</p>
+            <div id="mcp-tools-list" class="mcp-tools-list"></div>
+          </fieldset>
+        </div>
+      </section>
+
+      <section id="panel-vendors" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Agent CLIs</h2>
+            <p class="hint" style="margin:6px 0 0">
+              The other AI coding CLIs on this computer. Push <strong>Launch interactively</strong> to open a CLI
+              in its own window. To send a task to a CLI, type its name at the END of a message. For example,
+              "fix this bug /claude". The answer comes back to the session that you typed in.
+              <strong>/agy is different:</strong> it opens a window and returns nothing, because the default
+              template of agy is interactive. Use "/agy:headless" for an answer you can act on.
+            </p>
+          </div>
+          <button type="button" id="vendors-discover" class="linkish">Rescan for CLIs</button>
+        </div>
+
+        <p id="vendors-error" class="cfg-error" hidden></p>
+        <p id="vendors-ok" class="cfg-ok" hidden></p>
+
+        <fieldset class="cfg-section">
+          <legend>Default project folder</legend>
+          <p class="hint" style="margin:0 0 8px">
+            These CLIs use this folder when Glider cannot find your project. If you leave the field empty,
+            Glider asks you the first time that it needs the folder.
+          </p>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="vendors-default-workspace" placeholder="For example: C:\Users\me\myproject" style="flex:1">
+            <button type="button" id="vendors-default-workspace-save" class="linkish">Save</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Delegated task replies</legend>
+          <p class="hint" style="margin:0 0 8px">
+            This setting controls the reply that you see when Glider sends a task to another CLI.
+            <strong>Clean</strong> shows only the final answer. <strong>Raw</strong> shows all the text of that
+            CLI. Use <strong>Raw</strong> to find the cause of a problem.
+          </p>
+          <label style="display:flex;gap:8px;align-items:center;font-weight:normal">
+            <select id="vendors-response-detail">
+              <option value="clean">Clean (recommended)</option>
+              <option value="raw">Raw / debug</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <div class="vendor-cards" id="vendors-cards">
+          <p class="hint">Loading…</p>
+        </div>
+      </section>
+
+      <section id="panel-workspace" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Tools workspace</h2>
+            <p class="hint" style="margin:6px 0 0">
+              Look at the files in <code>runs/&lt;id&gt;/{work,out}</code> in the agent workspace
+              (<span id="ws-root-label" class="graph-hint">…</span>).
+              You can read a text file, compare two files, or see the Git differences in a clone.
+            </p>
+          </div>
+          <button type="button" id="ws-refresh" class="linkish">Refresh</button>
+        </div>
+
+        <p id="ws-error" class="cfg-error" hidden></p>
+
+        <div class="ws-toolbar">
+          <label class="ws-field">
+            Path
+            <input type="text" id="ws-path" value="runs" spellcheck="false" />
+          </label>
+          <label class="ws-field ws-field-sm">
+            Run id
+            <input type="text" id="ws-run" placeholder="hoop or turn id" spellcheck="false" />
+          </label>
+          <label class="ws-check">
+            <input type="checkbox" id="ws-recursive" /> Recursive
+          </label>
+          <button type="button" id="ws-load" class="primary">List</button>
+          <button type="button" id="ws-load-run" class="linkish">Load run</button>
+        </div>
+
+        <div class="ws-layout">
+          <fieldset class="cfg-section ws-files-section">
+            <legend>Files <span id="ws-files-meta" class="graph-hint"></span></legend>
+            <ul id="ws-file-list" class="ws-file-list"></ul>
+          </fieldset>
+
+          <div class="ws-detail">
+            <fieldset class="cfg-section">
+              <legend>Preview <span id="ws-preview-path" class="graph-hint"></span></legend>
+              <pre id="ws-preview" class="ws-preview" aria-label="File preview">Select a file to preview.</pre>
+            </fieldset>
+
+            <fieldset class="cfg-section">
+              <legend>Diff</legend>
+              <div class="ws-diff-toolbar">
+                <label class="ws-field">
+                  A
+                  <input type="text" id="ws-diff-a" spellcheck="false" placeholder="path a" />
+                </label>
+                <label class="ws-field">
+                  B
+                  <input type="text" id="ws-diff-b" spellcheck="false" placeholder="path b" />
+                </label>
+                <button type="button" id="ws-diff-files" class="linkish">Compare</button>
+                <button type="button" id="ws-diff-git" class="linkish" title="Shows the Git differences in the nearest .git directory below the preview path">Git diff</button>
+              </div>
+              <pre id="ws-diff" class="ws-preview ws-diff" aria-label="Diff view">Compare two paths, or run git diff on a clone.</pre>
+            </fieldset>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-playground" class="panel">
+        <div class="hoops-panel-head">
+          <div>
+            <h2 class="graphs-title" style="margin:0">Command playground</h2>
+            <p class="hint" style="margin:6px 0 0">
+              Use this page to learn the Glider commands that you type in a chat. Write a message below in the
+              same way as in Claude Code, cursor-agent or agy. This page does not run a CLI, does not give a
+              permission, and does not change a setting. Therefore you can try each command safely.
+            </p>
+          </div>
+        </div>
+
+        <fieldset class="cfg-section">
+          <legend>Try it</legend>
+          <textarea id="pg-input" class="pg-input" rows="3" spellcheck="false"
+            placeholder="For example: summarize recent commits /cursor-agent"></textarea>
+          <div class="pg-examples" id="pg-examples"></div>
+          <div id="pg-result" class="pg-result">
+            <p class="hint">Write a message above. This page then shows what Glider does with that message.</p>
+          </div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Lessons <span id="pg-progress" class="graph-hint"></span></legend>
+          <p class="hint" style="margin:0 0 10px">Do these lessons in sequence. Each lesson examines your message above and looks for one item. Glider does not record a result, and you can do the lessons in any sequence.</p>
+          <div id="pg-lessons" class="pg-lessons"></div>
+        </fieldset>
+
+        <fieldset class="cfg-section">
+          <legend>Reference</legend>
+          <div class="pg-reference" id="pg-reference"></div>
+        </fieldset>
+      </section>
+
+      <section id="panel-settings" class="panel">
+        <div class="cfg-toolbar">
+          <p class="hint cfg-reload-note">Use the form below as the primary editor. Save writes the config file. Glider then applies the routing rules, the aliases, the context limit, the log level and the backend and model clients (Ollama, vLLM and cloud). You must restart Glider to change the ports, the MITM CA or the MITM hosts. A completion that is in progress keeps the old backend client until it ends. To see this, open the Rules Engine page and look at the <code>backends</code> hot-swap module (<code>last_ok</code> and the generation number). You can also read the <code>X-Glider-Backend-Reload</code> header on a save.</p>
+          <button type="button" id="cfg-toggle-yaml" class="linkish" aria-expanded="false">Edit YAML (optional)</button>
+        </div>
+        <p id="cfg-error" class="cfg-error" hidden></p>
+        <p id="cfg-warn" class="cfg-warn" hidden></p>
+        <p id="cfg-ok" class="cfg-ok" hidden>Saved.</p>
+
+        <form id="settings-form" class="settings-full">
+          <fieldset class="cfg-section">
+            <legend title="The primary settings of the program. The gateway gives the OpenAI /v1 endpoints, and the dashboard is this interface.">Server</legend>
+            <div class="cfg-grid">
+              <label data-tip-key="cfg-proxy-port">Gateway proxy port<input type="number" id="cfg-proxy-port" min="1" /></label>
+              <label data-tip-key="cfg-dash-port">Dashboard port<input type="number" id="cfg-dash-port" min="1" /></label>
+              <label data-tip-key="cfg-log-level">Log level
+                <select id="cfg-log-level">
+                  <option value="debug">debug</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The limits for the local inference and for each request.">Thresholds</legend>
+            <div class="cfg-grid">
+              <label data-tip-key="cfg-tokens">Max local context tokens<input type="number" id="cfg-tokens" min="0" /></label>
+              <label data-tip-key="cfg-idle">Idle unload timeout<input type="text" id="cfg-idle" placeholder="5m" /></label>
+              <label data-tip-key="cfg-req-timeout">Request timeout<input type="text" id="cfg-req-timeout" placeholder="120s" /></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Intercepts the HTTPS CONNECT traffic of the Cursor hosts. Glider decrypts the TLS of the hosts in the list. With agent_rpc_fulfill, Glider can give a local text reply. A tool loop always goes to the origin. For agent work with tools, use the gateway.">MITM</legend>
+            <p class="hint" style="margin:0 0 12px"><code>agent_rpc_fulfill</code> lets Glider give a local text reply to a root RunSSE. For work with tools, use the gateway and a <code>cus-</code> model. Refer to <code>planning/cursor_agent_research.md</code> and <code>planning/routing_and_context.md</code>.</p>
+            <div class="cfg-grid">
+              <label class="check" data-tip-key="cfg-mitm-enabled"><input type="checkbox" id="cfg-mitm-enabled" /> Enabled</label>
+              <label data-tip-key="cfg-mitm-port">Listen port<input type="number" id="cfg-mitm-port" min="1" /></label>
+              <label class="check" data-tip-key="cfg-mitm-passthrough"><input type="checkbox" id="cfg-mitm-passthrough" /> Passthrough default</label>
+              <label class="span2" data-tip-key="cfg-mitm-hosts">Hosts (one per line)<textarea id="cfg-mitm-hosts" class="cfg-list" rows="4" spellcheck="false"></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The rules for the VRAM allocation. Set the GPU number of each model on the VRAM & Models page.">VRAM</legend>
+            <div class="cfg-grid">
+              <label data-tip-key="cfg-vram-strategy">Strategy
+                <select id="cfg-vram-strategy">
+                  <option value="dynamic">dynamic</option>
+                  <option value="hybrid">hybrid</option>
+                  <option value="static">static</option>
+                </select>
+              </label>
+              <label data-tip-key="cfg-vram-headroom">Headroom (MB)<input type="number" id="cfg-vram-headroom" min="0" /></label>
+              <label data-tip-key="cfg-vram-max">Max loaded models<input type="number" id="cfg-vram-max" min="1" /></label>
+              <label class="span2" data-tip-key="cfg-vram-gpus">GPU assignments (JSON object)<textarea id="cfg-vram-gpus" class="cfg-mono" rows="3" spellcheck="false" placeholder='{"qwen2.5-coder:14b": 0}'></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The settings of the dashboard.">Dashboard</legend>
+            <div class="cfg-grid">
+              <label class="check" data-tip-key="cfg-dash-enabled"><input type="checkbox" id="cfg-dash-enabled" /> Enabled</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Optional changes to a prompt. Glider makes them before it sends the prompt to a model.">Transform</legend>
+            <div class="cfg-grid">
+              <label class="check" data-tip-key="cfg-xform-enabled"><input type="checkbox" id="cfg-xform-enabled" /> Enabled</label>
+              <label class="check" data-tip-key="cfg-xform-trim"><input type="checkbox" id="cfg-xform-trim" /> Trim context</label>
+              <label class="span2" data-tip-key="cfg-xform-prepend">Augment prepend<textarea id="cfg-xform-prepend" class="cfg-mono" rows="2"></textarea></label>
+              <label class="span2" data-tip-key="cfg-xform-append">Augment append<textarea id="cfg-xform-append" class="cfg-mono" rows="2"></textarea></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Changes a client model name, for example a Cursor name, to a local model name before the routing. Glider applies a change immediately.">Model aliases</legend>
+            <label class="block" data-tip-key="cfg-aliases">JSON map (client model → local registry name)
+              <textarea id="cfg-aliases" class="cfg-mono" rows="5" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="Use the Rules Engine page to change one rule. Use this JSON array to change many rules together.">Routing rules</legend>
+            <label class="block" data-tip="JSON array of rules. Prefer Rules Engine UI; this field stays in sync after saves.">JSON array (or use Rules Engine tab)
+              <textarea id="cfg-routing" class="cfg-mono" rows="10" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The local models that Glider knows. Each name must agree with the tag of the backend.">Local models</legend>
+            <label class="block" data-tip-key="cfg-models">JSON array
+              <textarea id="cfg-models" class="cfg-mono" rows="10" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The local inference backends. Glider applies a change to the URL, the timeout or the model list immediately, and you do not restart the program.">Local backends</legend>
+            <label class="block" data-tip-key="cfg-backends">JSON array (ollama / vllm)
+              <textarea id="cfg-backends" class="cfg-mono" rows="6" spellcheck="false"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="cfg-section">
+            <legend title="The cloud providers for the gateway mode. They use your own key. A cloud route in MITM mode goes to the origin instead.">Cloud / BYOK</legend>
+            <div class="cfg-grid">
+              <label data-tip-key="cfg-budget">Budget cap (USD)<input type="number" id="cfg-budget" step="0.01" min="0" /></label>
+              <label data-tip-key="cfg-rpm">Requests / min<input type="number" id="cfg-rpm" min="0" /></label>
+              <label data-tip-key="cfg-tpm">Tokens / min<input type="number" id="cfg-tpm" min="0" /></label>
+              <label class="span2" data-tip-key="cfg-providers">Providers (JSON array — use <code>api_key_env</code>, never paste secrets)
+                <textarea id="cfg-providers" class="cfg-mono" rows="6" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="cfg-actions">
+            <button type="submit">Save config</button>
+            <button type="button" id="cfg-reload" class="linkish">Reload from server</button>
+          </div>
+        </form>
+
+        <div id="yaml-editor-wrap" class="yaml-wrap" hidden>
+          <label class="editor-label" for="cfg-yaml" data-tip-key="cfg-yaml">Complete glider.yaml (optional advanced path)</label>
+          <textarea id="cfg-yaml" class="editor yaml-editor" spellcheck="false"></textarea>
+          <div class="cfg-actions">
+            <button type="button" id="cfg-yaml-save">Save YAML</button>
+            <button type="button" id="cfg-yaml-reload" class="linkish">Reload from server</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="glider-tip" class="glider-tip" role="tooltip" hidden></div>
+
+  <!-- Application dialogs. gliderPrompt and gliderConfirm in app.js replace
+       window.prompt and window.confirm, which cannot be styled and which stop
+       the JavaScript event loop. Keep these two elements here, outside #app and
+       outside each panel. They were in the panel-graphs section before, and the
+       removal of that feature deleted them. The MCP token controls then stopped
+       silently, because the two functions did not find their elements. -->
+  <dialog id="glider-prompt-dialog" class="glider-dialog">
+    <form id="glider-prompt-form" class="glider-dialog-form" method="dialog">
+      <h3 id="glider-prompt-title">Input</h3>
+      <p class="hint" id="glider-prompt-hint" style="margin:0 0 10px"></p>
+      <label class="span2" data-tip-key="glider-prompt-input">Value<input type="text" id="glider-prompt-input" autocomplete="off" /></label>
+      <div class="cfg-actions" style="margin-top:14px">
+        <button type="submit" id="glider-prompt-ok">OK</button>
+        <button type="button" id="glider-prompt-cancel" class="linkish" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="glider-confirm-dialog" class="glider-dialog">
+    <form id="glider-confirm-form" class="glider-dialog-form" method="dialog">
+      <h3 id="glider-confirm-title">Confirm</h3>
+      <p class="hint" id="glider-confirm-message" style="margin:0 0 10px"></p>
+      <div class="cfg-actions" style="margin-top:14px">
+        <button type="submit" id="glider-confirm-ok">OK</button>
+        <button type="button" id="glider-confirm-cancel" class="linkish">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

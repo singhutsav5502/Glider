@@ -1,0 +1,881 @@
+package mitm
+
+import (
+	"bytes"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/glider-ai/glider/internal/backend"
+	"github.com/glider-ai/glider/internal/contextgraph"
+	"github.com/glider-ai/glider/internal/cursorrpc"
+	"github.com/glider-ai/glider/internal/router"
+	"github.com/glider-ai/glider/internal/tools"
+)
+
+// Default wait for BidiAppend decision after RunSSE opens (same-second in captures).
+// Kept short so idle/prewarm RunSSE reconnects fail-soft to origin quickly.
+const defaultRunSSEFulfillWait = 800 * time.Millisecond
+
+// DefaultTurnFamilyTTL is how long a DecideLocal / explicit turn family stays
+// open for immediate follow-ons (reply summary, title gen). Not conversation-wide:
+// the next real user message re-decides via classifier.
+// Renewed while a parent cloud RunSSE is in-flight and on each sticky bind.
+const DefaultTurnFamilyTTL = 90 * time.Second
+
+// DefaultCloudPostRunGrace extends StickyCloud after the last parent RunSSE in a
+// family closes so composer summary / title chrome (new UUID) still sticks.
+const DefaultCloudPostRunGrace = 120 * time.Second
+
+// StickyMode is the Path B preference for one turn family (explicit or DecideLocal).
+type StickyMode int
+
+const (
+	StickyNone StickyMode = iota
+	StickyCloud
+	StickyLocal
+)
+
+func (m StickyMode) String() string {
+	switch m {
+	case StickyCloud:
+		return "cloud"
+	case StickyLocal:
+		return "local"
+	default:
+		return "none"
+	}
+}
+
+// AgentFulfillOffer is the decision signaled from a context_envelope BidiAppend
+// to a waiting (or soon-to-arrive) RunSSE stream for the same request UUID.
+type AgentFulfillOffer struct {
+	Local    bool
+	Request  *backend.CompletionRequest
+	Decision *backend.RoutingDecision
+	UserText string
+	Source   string
+}
+
+// AgentFulfillHub connects the prompt that BidiAppend gives with the response
+// that RunSSE writes. The prompt arrives on BidiAppend, and the code writes the
+// answer on RunSSE. The protocol divides the work in this way.
+//
+// The sticky behaviour applies to one turn family, and not to the full
+// conversation. An explicit flag, or a DecideLocal decision for cloud or for
+// local, opens a family with a short life. The UUID of the root request is its
+// key.
+//
+// Each follow-on message that comes immediately after inherits that decision.
+// These are the reply summary, the title and the wrap-up of the chrome. Each
+// child in the middle of the turn also inherits it. The next true message from
+// the person makes a new decision. Each loop of a child tool makes a new
+// decision through tool_followup.
+type AgentFulfillHub struct {
+	mu        sync.Mutex
+	waiting   map[string]chan *AgentFulfillOffer // requestID → waiter
+	pending   map[string]*AgentFulfillOffer      // BidiAppend arrived first
+	family    *turnFamily
+	ttl       time.Duration
+	familyTTL time.Duration
+	Graph     *contextgraph.Store // optional; nil → graph writes skipped
+	Tools     *tools.Registry     // optional; binds runs/<turn>/{work,out} on /cloud|/local families
+}
+
+type turnFamily struct {
+	Mode          StickyMode
+	RootRequestID string
+	Until         time.Time
+	Source        string
+	ParentActive  int // in-flight root RunSSE count; keeps family live past Until
+	WorkRel       string
+	OutRel        string
+	WorkspaceRoot string
+}
+
+// NewAgentFulfillHub constructs a coordination hub.
+func NewAgentFulfillHub() *AgentFulfillHub {
+	return &AgentFulfillHub{
+		waiting:   make(map[string]chan *AgentFulfillOffer),
+		pending:   make(map[string]*AgentFulfillOffer),
+		ttl:       30 * time.Second,
+		familyTTL: DefaultTurnFamilyTTL,
+	}
+}
+
+var defaultAgentFulfillHub = NewAgentFulfillHub()
+
+func (h *AgentFulfillHub) graph() *contextgraph.Store {
+	if h != nil && h.Graph != nil {
+		return h.Graph
+	}
+	return nil
+}
+
+// ArmLocal records an offer of local intent for requestID, from BidiAppend. If
+// a RunSSE waiter exists, this function signals it immediately.
+func (h *AgentFulfillHub) ArmLocal(requestID string, offer *AgentFulfillOffer) {
+	if h == nil || requestID == "" || offer == nil {
+		return
+	}
+	offer.Local = true
+	h.signal(requestID, offer)
+}
+
+// ArmOrigin records that this request should stay on origin.
+func (h *AgentFulfillHub) ArmOrigin(requestID string) {
+	if h == nil || requestID == "" {
+		return
+	}
+	h.signal(requestID, &AgentFulfillOffer{Local: false})
+}
+
+func (h *AgentFulfillHub) signal(requestID string, offer *AgentFulfillOffer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if ch, ok := h.waiting[requestID]; ok {
+		delete(h.waiting, requestID)
+		select {
+		case ch <- offer:
+		default:
+		}
+		return
+	}
+	h.pending[requestID] = offer
+	// Best-effort GC of stale pending.
+	go h.expirePending(requestID, h.ttl)
+}
+
+func (h *AgentFulfillHub) expirePending(requestID string, d time.Duration) {
+	time.Sleep(d)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.pending, requestID)
+}
+
+// Wait waits up to timeout for a BidiAppend decision on requestID.
+// Returns (nil, false) on timeout — caller should origin-passthrough.
+func (h *AgentFulfillHub) Wait(requestID string, timeout time.Duration) (*AgentFulfillOffer, bool) {
+	if h == nil || requestID == "" {
+		return nil, false
+	}
+	if timeout <= 0 {
+		timeout = defaultRunSSEFulfillWait
+	}
+
+	h.mu.Lock()
+	if offer, ok := h.pending[requestID]; ok {
+		delete(h.pending, requestID)
+		h.mu.Unlock()
+		return offer, true
+	}
+	ch := make(chan *AgentFulfillOffer, 1)
+	h.waiting[requestID] = ch
+	h.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case offer := <-ch:
+		return offer, offer != nil
+	case <-timer.C:
+		h.mu.Lock()
+		if cur, ok := h.waiting[requestID]; ok && cur == ch {
+			delete(h.waiting, requestID)
+		}
+		// A race: BidiAppend can store a pending value at exactly the moment when this
+		// code reaches its time limit.
+		if offer, ok := h.pending[requestID]; ok {
+			delete(h.pending, requestID)
+			h.mu.Unlock()
+			return offer, true
+		}
+		h.mu.Unlock()
+		return nil, false
+	}
+}
+
+// OpenTurnFamily records a cloud|local binding for rootRequestID and a short TTL
+// window for summary/title follow-ons. Source may be explicit_* or decide_*.
+// Replaces any prior family, except StickyLocal will not downgrade a live
+// StickyCloud family (prevents mid-turn mis-routes from killing /cloud sticky).
+func (h *AgentFulfillHub) OpenTurnFamily(rootRequestID string, mode StickyMode, source string) {
+	if h == nil || mode == StickyNone {
+		return
+	}
+	ttl := h.familyTTL
+	if ttl <= 0 {
+		ttl = DefaultTurnFamilyTTL
+	}
+	h.mu.Lock()
+	if mode == StickyLocal && h.family != nil && h.family.Mode == StickyCloud {
+		if h.family.ParentActive > 0 || time.Now().Before(h.family.Until) {
+			// Keep cloud family; renew so wrap-up chrome still sticks.
+			h.family.Until = time.Now().Add(ttl)
+			h.mu.Unlock()
+			return
+		}
+	}
+	h.family = &turnFamily{
+		Mode:          mode,
+		RootRequestID: rootRequestID,
+		Until:         time.Now().Add(ttl),
+		Source:        source,
+	}
+	h.mu.Unlock()
+
+	// Associate work/out folders with this turn family (harness /cloud and /local).
+	if h.Tools != nil && rootRequestID != "" {
+		if lay, err := h.Tools.EnsureRunLayout(rootRequestID); err == nil {
+			h.mu.Lock()
+			if h.family != nil && h.family.RootRequestID == rootRequestID {
+				h.family.WorkRel = lay.RelWork
+				h.family.OutRel = lay.RelOut
+				h.family.WorkspaceRoot = lay.RootAbs
+			}
+			h.mu.Unlock()
+		}
+	}
+
+	attrs := map[string]string{
+		"route":           mode.String(),
+		"source":          source,
+		"root_request_id": rootRequestID,
+	}
+	h.mu.Lock()
+	if h.family != nil && h.family.WorkRel != "" {
+		attrs["work_rel"] = h.family.WorkRel
+		attrs["out_rel"] = h.family.OutRel
+		attrs["workspace_root"] = h.family.WorkspaceRoot
+	}
+	h.mu.Unlock()
+	g := h.graph()
+	if g != nil && ttl > 0 {
+		g.Grace = ttl
+	}
+	g.Append(contextgraph.Event{
+		Kind:      contextgraph.EventTurnOpened,
+		TurnID:    rootRequestID,
+		RequestID: rootRequestID,
+		Actor:     mode.String(),
+		Attrs:     attrs,
+	})
+	g.Append(contextgraph.Event{
+		Kind:      contextgraph.EventStickyBound,
+		TurnID:    rootRequestID,
+		RequestID: rootRequestID,
+		Actor:     "mitm",
+		Attrs:     attrs,
+	})
+}
+
+// TouchTurnFamily renews the live family's TTL (call on sticky binds / parent run).
+func (h *AgentFulfillHub) TouchTurnFamily() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.family == nil {
+		return
+	}
+	ttl := h.familyTTL
+	if ttl <= 0 {
+		ttl = DefaultTurnFamilyTTL
+	}
+	h.family.Until = time.Now().Add(ttl)
+}
+
+// BeginParentRun marks a root RunSSE as in-flight so StickyCloud survives past
+// wall-clock TTL until the parent stream ends (+ grace on EndParentRun).
+func (h *AgentFulfillHub) BeginParentRun(requestID string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.family == nil {
+		h.mu.Unlock()
+		return
+	}
+	ttl := h.familyTTL
+	if ttl <= 0 {
+		ttl = DefaultTurnFamilyTTL
+	}
+	h.family.ParentActive++
+	h.family.Until = time.Now().Add(ttl)
+	root := h.family.RootRequestID
+	h.mu.Unlock()
+	h.graph().Append(contextgraph.Event{
+		Kind:      contextgraph.EventRunSSEOpen,
+		TurnID:    root,
+		RequestID: requestID,
+		Actor:     "mitm",
+		Attrs:     map[string]string{"role": "parent"},
+	})
+}
+
+// EndParentRun drops an in-flight parent RunSSE and extends grace TTL so
+// final-summary / title chrome after the parent stream still sticks.
+func (h *AgentFulfillHub) EndParentRun(requestID string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.family == nil {
+		h.mu.Unlock()
+		return
+	}
+	if h.family.ParentActive > 0 {
+		h.family.ParentActive--
+	}
+	ttl := h.familyTTL
+	if ttl <= 0 {
+		ttl = DefaultTurnFamilyTTL
+	}
+	if ttl < DefaultCloudPostRunGrace {
+		ttl = DefaultCloudPostRunGrace
+	}
+	h.family.Until = time.Now().Add(ttl)
+	root := h.family.RootRequestID
+	h.mu.Unlock()
+	if g := h.graph(); g != nil {
+		g.Grace = ttl
+	}
+	h.graph().Append(contextgraph.Event{
+		Kind:      contextgraph.EventRunSSEClose,
+		TurnID:    root,
+		RequestID: requestID,
+		Actor:     "mitm",
+		Attrs:     map[string]string{"role": "parent"},
+	})
+}
+
+// SetFamilyTTL configures turn-family lifetime (from routing.turn_family_ttl).
+// Zero or negative resets to DefaultTurnFamilyTTL.
+func (h *AgentFulfillHub) SetFamilyTTL(d time.Duration) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if d <= 0 {
+		h.familyTTL = DefaultTurnFamilyTTL
+	} else {
+		h.familyTTL = d
+	}
+	ttl := h.familyTTL
+	h.mu.Unlock()
+	if g := h.graph(); g != nil {
+		g.Grace = ttl
+	}
+}
+
+// FamilyTTL returns the configured turn-family TTL.
+func (h *AgentFulfillHub) FamilyTTL() time.Duration {
+	if h == nil {
+		return DefaultTurnFamilyTTL
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.familyTTL <= 0 {
+		return DefaultTurnFamilyTTL
+	}
+	return h.familyTTL
+}
+
+// LookupTurnFamily returns the live turn family from the TTL map, if any.
+// Live when Until is in the future OR a parent RunSSE is still in-flight.
+// Graph fallback is intentionally NOT done here — short crumbs / unrelated
+// local arms must not inherit a stale cloud turn from the process-wide store.
+// Use ShouldStickyCloudOrigin / InheritTurnFollowOn for graph correlation.
+func (h *AgentFulfillHub) LookupTurnFamily() (mode StickyMode, rootID, source string, ok bool) {
+	if h == nil {
+		return StickyNone, "", "", false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.family == nil {
+		return StickyNone, "", "", false
+	}
+	if h.family.ParentActive <= 0 && time.Now().After(h.family.Until) {
+		h.family = nil
+		return StickyNone, "", "", false
+	}
+	return h.family.Mode, h.family.RootRequestID, h.family.Source, true
+}
+
+// InheritTurnFollowOn returns the turn-family mode only when userText looks like an
+// immediate chrome follow-on (reply summary / title / final wrap-up). Real user
+// messages → false so the classifier can offload local on the next turn after /cloud.
+// requestID, when set, is bound into the turn graph for later RunSSE correlation.
+func (h *AgentFulfillHub) InheritTurnFollowOn(userText string, requestID ...string) (StickyMode, string, bool) {
+	if h == nil || !IsTurnFollowOn(userText) {
+		return StickyNone, "", false
+	}
+	mode, root, src, ok := h.lookupCloudOrLocalFamily(true)
+	if !ok || mode == StickyNone {
+		return StickyNone, "", false
+	}
+	h.TouchTurnFamily()
+	child := ""
+	if len(requestID) > 0 {
+		child = strings.TrimSpace(requestID[0])
+	}
+	attrs := map[string]string{"source": src, "preview": truncateForGraph(userText, 80)}
+	h.graph().Append(contextgraph.Event{
+		Kind:      contextgraph.EventSummaryRequested,
+		TurnID:    root,
+		RequestID: child,
+		Actor:     mode.String(),
+		Attrs:     attrs,
+	})
+	if child != "" && child != root {
+		h.graph().BindRequest(root, child)
+	}
+	return mode, src, true
+}
+
+// ShouldStickyCloudOrigin says if this BidiAppend must stay on the origin. Such
+// a request must never go to a local model.
+//
+// The rule while StickyCloud is live, from the TTL map or from the session or
+// the graph:
+//
+//	Refuse a local model by default. ONLY a new TipTap send from the user, on
+//	the allowlist, can make a new decision. Each other request goes to
+//	ArmOrigin. These are the chrome of the composer, the titles from
+//	printable_hint, an extract that is empty or short, envelopes with a system
+//	message only, and the small parts of a child or a tool.
+//
+// The system chrome of the composer always returns the origin. These are
+// user_visible_*, high_level_summary and others. This applies also when the TTL
+// or the graph of StickyCloud is complete. A wrap-up must never use
+// runsse_local.
+//
+// A dump from July 2026 shows the leak: "Delhi weather today" and
+// "Refresh planning docs..." with user_visible_high_level_summary went to local.
+//
+// extractSource is cursorrpc.BidiExtract.Source, which is tiptap_text,
+// printable_hint or a similar value.
+func (h *AgentFulfillHub) ShouldStickyCloudOrigin(userText, extractSource string, r *http.Request, body []byte) (root, source string, ok bool) {
+	if h == nil {
+		return "", "", false
+	}
+	scan := chromeScanBytes(userText, body)
+	// Marker-only fail-closed (user_visible_*). Follow-on keywords are wrapChrome for
+	// StickyCloud deny-local but must not steal StickyLocal title/summary inherit.
+	markerChrome := IsSystemSummaryChrome(userText, scan)
+	wrapChrome := markerChrome || IsTurnFollowOnBody(userText, scan) || IsShortPrintableHintOrEmpty(userText, extractSource)
+	child := IsSubagentOrChildTurn(userText, r, body)
+	// Allowlist ONLY: TipTap-sourced fresh user messages. Body TipTap alone is
+	// not enough (history TipTap inside wrap-up packs must not re-decide).
+	fresh := IsAllowlistedFreshTipTapUser(userText, extractSource, scan) && !wrapChrome && !child
+
+	mode, famRoot, src, famOK := h.LookupTurnFamily()
+	if famOK && mode == StickyCloud {
+		if fresh {
+			return "", "", false // re-decide next user TipTap turn
+		}
+		// Deny-local default for every non-TipTap / chrome / child Bidi.
+		h.TouchTurnFamily()
+		return famRoot, src, true
+	}
+	// Live StickyLocal: InheritTurnFollowOn owns title/summary; do not consult
+	// graph cloud or fail-closed chrome (except markerChrome → origin below).
+	if famOK && mode == StickyLocal {
+		if markerChrome {
+			return "", "composer_chrome", true
+		}
+		return "", "", false
+	}
+
+	sess := ClientSessionKey(r)
+	reqHint := ""
+	if r != nil {
+		reqHint = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+		if reqHint == "" {
+			reqHint = strings.TrimSpace(r.Header.Get("x-request-id"))
+		}
+	}
+	g := h.graph()
+
+	// Bound into a live cloud turn via request/session?
+	if g != nil {
+		if reqHint != "" {
+			if tid := g.TurnIDForRequest(reqHint); tid != "" && g.CloudTurnLive(tid) {
+				if fresh {
+					return "", "", false
+				}
+				v, _ := g.Turn(tid)
+				h.rehydrateCloudFamily(v.RootRequestID, v.Source)
+				return v.RootRequestID, v.Source, true
+			}
+		}
+		if sess != "" {
+			if tid := g.TurnIDForSession(sess); tid != "" && g.CloudTurnLive(tid) {
+				if fresh {
+					return "", "", false
+				}
+				v, _ := g.Turn(tid)
+				h.rehydrateCloudFamily(v.RootRequestID, v.Source)
+				return v.RootRequestID, v.Source, true
+			}
+		}
+		// Non-fresh follow-on: inherit newest live cloud family (TTL map wipe).
+		if !fresh {
+			tid, gSrc, gRoot, live := g.LiveCloudFamily()
+			if live {
+				h.rehydrateCloudFamily(gRoot, gSrc)
+				_ = tid
+				return gRoot, gSrc, true
+			}
+		}
+	}
+
+	// Fail-closed: user_visible_* / high_level_summary never arm local even with no
+	// live family (dump 48f01fc5: title + user_visible_high_level_summary → local).
+	if markerChrome {
+		return "", "composer_chrome", true
+	}
+	return "", "", false
+}
+
+// chromeScanBytes builds a keyword-scan buffer from user text, raw wire, and
+// InspectBidiAppend printable strings (hex-wrapped inners otherwise hide chrome markers).
+func chromeScanBytes(userText string, body []byte) []byte {
+	var b []byte
+	if t := strings.TrimSpace(userText); t != "" {
+		b = append(b, t...)
+		b = append(b, 0)
+	}
+	if len(body) > 0 {
+		b = append(b, body...)
+		if insp, err := cursorrpc.InspectBidiAppend(body); err == nil && insp != nil {
+			for _, s := range insp.Strings {
+				b = append(b, s...)
+				b = append(b, 0)
+			}
+			if h := strings.TrimSpace(insp.PrintableHint); h != "" {
+				b = append(b, h...)
+			}
+		}
+	}
+	return b
+}
+
+// lookupCloudOrLocalFamily returns TTL family, or rehydrates StickyCloud from the
+// graph when allowGraph is set (summary inherit path only).
+func (h *AgentFulfillHub) lookupCloudOrLocalFamily(allowGraph bool) (mode StickyMode, rootID, source string, ok bool) {
+	mode, rootID, source, ok = h.LookupTurnFamily()
+	if ok {
+		return mode, rootID, source, true
+	}
+	if !allowGraph {
+		return StickyNone, "", "", false
+	}
+	tid, src, root, live := h.graph().LiveCloudFamily()
+	if !live {
+		return StickyNone, "", "", false
+	}
+	h.rehydrateCloudFamily(root, src)
+	_ = tid
+	return StickyCloud, root, src, true
+}
+
+func (h *AgentFulfillHub) rehydrateCloudFamily(root, source string) {
+	if h == nil || root == "" {
+		return
+	}
+	h.mu.Lock()
+	ttl := h.familyTTL
+	if ttl <= 0 {
+		ttl = DefaultTurnFamilyTTL
+	}
+	opens := 0
+	if g := h.graph(); g != nil {
+		if v, ok := g.Turn(root); ok {
+			opens = v.OpenRuns
+			if source == "" {
+				source = v.Source
+			}
+		}
+	}
+	h.family = &turnFamily{
+		Mode:          StickyCloud,
+		RootRequestID: root,
+		Until:         time.Now().Add(ttl),
+		Source:        source,
+		ParentActive:  opens,
+	}
+	h.mu.Unlock()
+}
+
+func truncateForGraph(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// turnFollowOnRE matches Cursor chrome prompts that belong to the same user turn
+// (reply summary, title generation, final wrap-up) — not a new user message.
+// Underscore forms matter: Go \b treats '_' as a word char, so \bsummary\b does
+// NOT match inside user_visible_high_level_summary — list those literals / prefixes.
+var turnFollowOnRE = regexp.MustCompile(`(?i)(` +
+	`\b(?:` +
+	`summariz(?:e|ing|ation)|summary|` +
+	`reply\s+summary|final\s+summary|brief\s+summary|executive\s+summary|` +
+	`one[\s-]?sentence|one[\s-]?line\s+summary|short\s+(?:title|summary|description)|` +
+	`generate\s+(?:a\s+)?title|title\s+(?:for|of|generation)|` +
+	`conversation\s+title|thread\s+title|chat\s+title|` +
+	`name\s+this\s+(?:chat|composer|conversation)|` +
+	`completed_subtitle|final_summary|wrap[\s-]?up|` +
+	`what\s+was\s+(?:done|changed)|concise\s+summary|recap` +
+	`)\b|` +
+	`user_visible_[a-z0-9_]+|` +
+	`high_level_summary|` +
+	`composer[_ ]?summary|progress_reporting` +
+	`)`)
+
+// systemSummaryChromeRE matches Cursor Agent chrome markers embedded in context
+// packs (often without TipTap) — e.g. composer wrap-up after /cloud.
+// Dump shapes (Jul 2026 weather/delhi): title crumb + user_visible_high_level_summary.
+var systemSummaryChromeRE = regexp.MustCompile(`(?i)(` +
+	`user_visible_[a-z0-9_]+|` +
+	`high_level_summary|` +
+	`composer[_ ]?summary|` +
+	`completed_subtitle|` +
+	`final_summary|` +
+	`progress_reporting|` +
+	`executive_summary|` +
+	`UpdateCurrentStep` +
+	`)`)
+
+// IsTurnFollowOn reports whether text looks like an immediate Agent chrome follow-on
+// for the current turn (summary / title / wrap-up), not a new user instruction.
+func IsTurnFollowOn(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	return turnFollowOnRE.MatchString(t)
+}
+
+// IsTurnFollowOnBody also peeks protobuf/printable body for chrome summary keywords
+// when TipTap extract picked a short crumb (e.g. "Hi!") instead of the system prompt.
+func IsTurnFollowOnBody(text string, body []byte) bool {
+	if IsTurnFollowOn(text) {
+		return true
+	}
+	if IsSystemSummaryChrome(text, body) {
+		return true
+	}
+	if len(body) == 0 {
+		return false
+	}
+	// Cap scan for hot path; keywords appear early in chrome packs.
+	scan := body
+	if len(scan) > 512<<10 {
+		scan = scan[:512<<10]
+	}
+	return turnFollowOnRE.Match(scan)
+}
+
+// IsSystemSummaryChrome reports Cursor system/composer summary chrome in text or body
+// (user_visible_* / high_level_summary etc.) — even when extract looks like a title.
+func IsSystemSummaryChrome(userText string, body []byte) bool {
+	if systemSummaryChromeRE.MatchString(userText) {
+		return true
+	}
+	if len(body) == 0 {
+		return false
+	}
+	scan := body
+	if len(scan) > 512<<10 {
+		scan = scan[:512<<10]
+	}
+	return systemSummaryChromeRE.Match(scan)
+}
+
+// IsComposerWrapUpChrome joins four groups: the keywords of a follow-on
+// message, the markers of a system summary, short titles from printable_hint,
+// and empty extracts. Each of those must never make a new decision for a
+// local model while StickyCloud is live.
+func IsComposerWrapUpChrome(userText, extractSource string, bodyOrScan []byte) bool {
+	if IsSystemSummaryChrome(userText, bodyOrScan) || IsTurnFollowOnBody(userText, bodyOrScan) {
+		return true
+	}
+	return IsShortPrintableHintOrEmpty(userText, extractSource)
+}
+
+// IsShortPrintableHintOrEmpty matches title-like crumbs and empty extracts
+// (dump shapes: "Delhi weather today", "Bangalore weather today"). Soft chrome:
+// deny-local only while StickyCloud is live — not a global origin force.
+func IsShortPrintableHintOrEmpty(userText, extractSource string) bool {
+	t := strings.TrimSpace(userText)
+	if t == "" {
+		return true
+	}
+	src := strings.ToLower(strings.TrimSpace(extractSource))
+	switch src {
+	case "printable_hint", "section_fallback":
+		return len(t) <= 96
+	}
+	return false
+}
+
+// IsAllowlistedFreshTipTapUser is the ONLY shape that may re-decide while StickyCloud
+// is live. Requires extract Source == tiptap_text (not body TipTap heuristics —
+// wrap-up packs embed conversation TipTap history).
+func IsAllowlistedFreshTipTapUser(userText, extractSource string, bodyOrScan []byte) bool {
+	if IsComposerWrapUpChrome(userText, extractSource, bodyOrScan) {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(extractSource)) != "tiptap_text" {
+		return false
+	}
+	t := strings.TrimSpace(userText)
+	if t == "" || len(t) < 16 {
+		return false
+	}
+	return true
+}
+
+// bodyHasTipTapDoc reports a TipTap/ProseMirror doc in the wire body.
+func bodyHasTipTapDoc(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	scan := body
+	if len(scan) > maxChildBodyScan {
+		scan = scan[:maxChildBodyScan]
+	}
+	return bytes.Contains(scan, []byte(`"type":"doc"`)) ||
+		bytes.Contains(scan, []byte(`"type": "doc"`)) ||
+		tipTapTextRE.Match(scan)
+}
+
+// tipTapTextRE is a lightweight check for TipTap text nodes in wire/hex bodies.
+var tipTapTextRE = regexp.MustCompile(`"type"\s*:\s*"text"\s*,\s*"text"\s*:`)
+
+// HasFreshUserTipTapTurn reports a deliberate next-user Composer TipTap send.
+// Printable_hint titles ("Stock market today status") and chrome packs without
+// TipTap are NOT fresh user turns — they inherit StickyCloud while the family lives.
+// extractSource is cursorrpc.BidiExtract.Source; when empty, falls back to TipTap
+// detection in scan bytes or treats substantial text-only calls as fresh.
+func HasFreshUserTipTapTurn(userText, extractSource string, bodyOrScan []byte) bool {
+	// Prefer the sticky allowlist when source is known.
+	if src := strings.ToLower(strings.TrimSpace(extractSource)); src != "" {
+		return IsAllowlistedFreshTipTapUser(userText, extractSource, bodyOrScan)
+	}
+	if IsTurnFollowOn(userText) || IsSystemSummaryChrome(userText, bodyOrScan) {
+		return false
+	}
+	t := strings.TrimSpace(userText)
+	if t == "" || len(t) < 16 {
+		return false
+	}
+	if len(bodyOrScan) == 0 {
+		return true // text-only unit paths
+	}
+	return bodyHasTipTapDoc(bodyOrScan)
+}
+
+// LooksLikeNewUserTurn reports a deliberate next-user instruction (re-decide),
+// as opposed to chrome wrap-up / tool-result continuation during a cloud family.
+func LooksLikeNewUserTurn(userText string, body []byte) bool {
+	if IsTurnFollowOnBody(userText, body) || IsSubagentOrChildTurn(userText, nil, body) {
+		return false
+	}
+	scan := chromeScanBytes(userText, body)
+	if IsComposerWrapUpChrome(userText, "", scan) && !bodyHasTipTapDoc(scan) {
+		return false
+	}
+	return HasFreshUserTipTapTurn(userText, "", scan)
+}
+
+// subagentPromptRE matches Cursor Task / subagent delegated prompts. These arrive
+// as separate root-looking BidiAppend+RunSSE pairs (often without parent headers)
+// and must not re-decide local while a StickyCloud turn family is live.
+var subagentPromptRE = regexp.MustCompile(`(?i)\b(` +
+	`subagent|` +
+	`generalpurpose\s+subagent|` +
+	`you are a (?:cursor )?subagent|` +
+	`the user asked you to|` +
+	`user asked (?:you |for )|` +
+	`say hi via subagent|` +
+	`through a subagent|` +
+	`local fallback` +
+	`)\b`)
+
+// toolCallIDInBodyRE matches Cursor tool-call ids embedded in child context packs.
+var toolCallIDInBodyRE = regexp.MustCompile(`call-[0-9a-f]{8}-[0-9a-f]{4}-`)
+
+// maxChildBodyScan is the distance that this code searches for "call-…"
+// markers. A pack with a tool result is frequently larger than 200 KiB. An
+// older limit of 200 KiB let StickyCloud lose traffic to a local model.
+const maxChildBodyScan = 4 << 20
+
+// IsSubagentOrChildTurn reports mid-turn child/subagent work that should inherit
+// a live StickyCloud family (never local-fulfill during /cloud).
+func IsSubagentOrChildTurn(userText string, r *http.Request, body []byte) bool {
+	if cursorrpc.IsChildAgentRequest(r) {
+		return true
+	}
+	if subagentPromptRE.MatchString(userText) {
+		return true
+	}
+	// Delegated packs often embed call-… ids without parent HTTP headers (Task tool).
+	if bodyHasToolCallID(body) {
+		t := strings.TrimSpace(userText)
+		// Empty extract or short chrome crumb still counts as mid-turn child work.
+		if t == "" || len(t) < 400 {
+			if !router.HasCloudOverride(t) && !router.HasLocalOverride(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func bodyHasToolCallID(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	scan := body
+	if len(scan) > maxChildBodyScan {
+		scan = scan[:maxChildBodyScan]
+	}
+	return toolCallIDInBodyRE.Match(scan)
+}
+
+// ResetFamilyForTest clears the in-memory TTL sticky map without touching the
+// context graph. Used to prove summary/child sticky consults the graph.
+func (h *AgentFulfillHub) ResetFamilyForTest() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.family = nil
+}
+
+// ClientSessionKey is an optional correlation id for metrics (x-session-id or CONNECT).
+// It is NOT used for routing sticky — sticky is turn-family only.
+func ClientSessionKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if sid := strings.TrimSpace(r.Header.Get("x-session-id")); sid != "" {
+		return "xs:" + sid
+	}
+	if sid := strings.TrimSpace(r.Header.Get("X-Session-Id")); sid != "" {
+		return "xs:" + sid
+	}
+	if cs := ConnectSessionFrom(r.Context()); cs != "" {
+		return "cs:" + cs
+	}
+	return ""
+}

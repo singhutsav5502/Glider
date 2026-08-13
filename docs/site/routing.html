@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Routing · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a class="active" href="routing.html">Routing</a>
+      <a href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose">
+      <div class="badge">Harness</div>
+      <h1>Routing</h1>
+      <p>The router reads the rules in sequence. The rule with the highest priority number has control. An explicit <code>/local</code> or <code>/cloud</code> command always has control. The token limits are the last test, not the first test of the difficulty of a task.</p>
+
+      <h2>The priority sequence (default profile)</h2>
+      <table>
+        <tr><th>Priority</th><th>Rule</th><th>Result</th></tr>
+        <tr><td>100 / 99</td><td>Explicit <code>/local</code> <code>/fast</code> / <code>/cloud</code> <code>/heavy</code></td><td>Sets the route. No other rule can change it.</td></tr>
+        <tr><td>95</td><td><code>composer_wrapup_origin</code></td><td>Sends a Cursor Composer summary message to the cloud or to the origin</td></tr>
+        <tr><td>~85–70</td><td><code>task_classifier</code></td><td>Sends a tool task or a cloud-only task to the cloud. Sends a small task to the local model.</td></tr>
+        <tr><td>75</td><td>Complexity test</td><td>You must turn this on with <code>complexity.enabled</code></td></tr>
+        <tr><td>55 / 50</td><td>Starlark scripts</td><td>A message with <code>/swarm</code> or <code>[fanout]</code> goes to the local model and uses fan-out. A refactor task also goes local. This profile sets <code>orchestration.fan_out.enabled</code>, so fan-out operates.</td></tr>
+        <tr><td>10 / 5</td><td>Context size</td><td>More than 8000 tokens goes to the cloud. A smaller context goes to the local model.</td></tr>
+        <tr><td>0</td><td>Default</td><td>Goes to the cloud. In the pure local profile it goes to the local model.</td></tr>
+      </table>
+      <p>Glider finds a delegate flag (<code>/claude</code>, <code>/cursor-agent</code>, <code>/agy</code>) before it reads these rules. Refer to <a href="delegation.html">Delegation</a>.</p>
+
+      <h2 id="rules">How to write a rule</h2>
+      <p>Each entry of <code>routing.rules</code> has this structure:</p>
+      <pre>routing:
+  rules:
+    - name: Explicit Local        # the name in the log and on the dashboard
+      priority: 100               # a larger number has control
+      enabled: true               # omit it, and the rule operates
+      trigger:
+        type: explicit            # one of the six types below
+        commands: ["/local", "/fast"]
+      action:
+        target: local             # local | cloud
+        model: qwen2.5-coder:14b</pre>
+      <table>
+        <tr><th>Field</th><th>Function</th></tr>
+        <tr><td><code>name</code></td><td>The name that the dashboard and the log show. Give a name that you can find.</td></tr>
+        <tr><td><code>priority</code></td><td>An integer. The router reads the rules from the largest number to the smallest. The first rule with a match has control.</td></tr>
+        <tr><td><code>enabled</code></td><td><code>false</code> keeps the rule in the file, and the router does not use it. With no value, the rule operates.</td></tr>
+      </table>
+
+      <h3 id="triggers">The six trigger types</h3>
+      <p>A type that is not in this table gives an error when Glider starts. The error names the rule.</p>
+      <table>
+        <tr><th>Type</th><th>Fields that it uses</th><th>Match condition</th></tr>
+        <tr><td><code>explicit</code></td><td><code>commands</code></td><td>The message contains one of these commands. The command can go at any position.</td></tr>
+        <tr><td><code>regex</code></td><td><code>pattern</code></td><td>The regular expression agrees with the most recent message.</td></tr>
+        <tr><td><code>context_size</code></td><td><code>operator</code>, <code>value</code></td><td>The count of tokens agrees with the test.</td></tr>
+        <tr><td><code>always</code></td><td>&mdash;</td><td>Each message. Use it at priority 0, as the last rule.</td></tr>
+        <tr><td><code>script</code></td><td><code>file</code></td><td>A Starlark script decides. Refer to <a href="#starlark">below</a>.</td></tr>
+        <tr><td><code>composer_wrapup</code></td><td>&mdash;</td><td>A summary message of Cursor Composer. The names <code>wrapup_origin</code> and <code>composer_wrapup_origin</code> also operate.</td></tr>
+      </table>
+      <p>These are the operators of <code>context_size</code>:</p>
+      <table>
+        <tr><th>Operator</th><th>Test</th></tr>
+        <tr><td><code>&gt;</code> &middot; <code>&gt;=</code></td><td>More than the value, or the value.</td></tr>
+        <tr><td><code>&lt;</code> &middot; <code>&lt;=</code></td><td>Less than the value, or the value.</td></tr>
+        <tr><td><code>==</code> &middot; <code>=</code></td><td>The same as the value.</td></tr>
+      </table>
+
+      <h3 id="action">The action</h3>
+      <table>
+        <tr><th>Field</th><th>Values</th><th>Function</th></tr>
+        <tr><td><code>target</code></td><td><code>local</code> &middot; <code>cloud</code></td><td>Which side answers.</td></tr>
+        <tr><td><code>backend</code></td><td>a name in <code>backends</code></td><td>Which backend, when the target is the cloud.</td></tr>
+        <tr><td><code>model</code></td><td>a model name</td><td>Which model that backend uses.</td></tr>
+        <tr><td><code>adapter</code></td><td>a LoRA name</td><td>An adapter for that model. vLLM only.</td></tr>
+      </table>
+
+      <h3 id="starlark">A rule in Starlark</h3>
+      <p>
+        A <code>script</code> rule gives the decision to a file. The file must supply a function
+        <code>evaluate(request)</code>. The function returns nothing for no match, or a dictionary.
+        <strong>A script that returns an action wins against the <code>action</code> block of the
+        rule.</strong> Therefore keep the two in agreement.
+      </p>
+      <pre>def evaluate(request):
+    if "refactor" in request.messages[-1].content:
+        return {
+            "matched": True,
+            "action": {"target": "local", "model": "qwen2.5-coder:14b"},
+        }</pre>
+      <p>These are the fields of <code>request</code>:</p>
+      <table>
+        <tr><th>Field</th><th>Type</th><th>Content</th></tr>
+        <tr><td><code>model</code></td><td>string</td><td>The model that the CLI asked for.</td></tr>
+        <tr><td><code>stream</code></td><td>bool</td><td>The CLI asked for a stream.</td></tr>
+        <tr><td><code>messages</code></td><td>list</td><td>Each item has <code>role</code> and <code>content</code>.</td></tr>
+        <tr><td><code>estimated_tokens</code></td><td>int</td><td>The size of the context.</td></tr>
+        <tr><td><code>has_tools</code></td><td>bool</td><td>The request carries <code>tools[]</code>.</td></tr>
+        <tr><td><code>complexity_score</code></td><td>int</td><td>0 to 100.</td></tr>
+        <tr><td><code>complexity_source</code></td><td>string</td><td><code>heuristic</code> or <code>cursor</code>.</td></tr>
+        <tr><td><code>temperature</code></td><td>float</td><td>Present only when the CLI sent it.</td></tr>
+        <tr><td><code>max_tokens</code></td><td>int</td><td>Present only when the CLI sent it.</td></tr>
+      </table>
+      <p>The dictionary that you return accepts these keys:</p>
+      <table>
+        <tr><th>Key</th><th>Function</th></tr>
+        <tr><td><code>matched</code></td><td>True for a match.</td></tr>
+        <tr><td><code>action.target</code> &middot; <code>.backend</code> &middot; <code>.model</code> &middot; <code>.adapter</code></td><td>The same as the action above.</td></tr>
+        <tr><td><code>action.strategy</code></td><td><code>single</code>, <code>fan_out</code>, <code>pipeline</code> or <code>ensemble</code>. <code>fan_out</code> also needs <code>orchestration.fan_out.enabled</code>.</td></tr>
+      </table>
+      <p class="note">
+        <code>POST /api/playground/parse</code> reads a script and gives its errors.
+        <code>POST /api/router/explain</code> shows which rule a message obeys, and
+        <code>GET /api/router/lint</code> finds an error in the full set.
+      </p>
+
+      <h3 id="classifier">The rules that Glider adds</h3>
+      <p>
+        Two sections put rules in the sequence which are not in <code>routing.rules</code>. The
+        <a href="configuration.html#routing">configuration reference</a> gives each setting.
+      </p>
+      <table>
+        <tr><th>Section</th><th>What it adds</th></tr>
+        <tr><td><code>routing.task_classifier</code></td><td>Three rules: a request with tools goes to the cloud (85), a message that agrees with the cloud patterns goes to the cloud (80), and a message that agrees with the small patterns goes to the local model (70).</td></tr>
+        <tr><td><code>routing.complexity</code></td><td>One rule at priority 75. A score of <code>cloud_above</code> or more goes to the cloud. It is off until you turn it on.</td></tr>
+      </table>
+      <p>
+        <code>routing.tool_followup</code> is different. It adds no rule. It decides where the calls
+        of a tool go after a parent turn has its route, with an allowlist and a denylist of tool
+        names.
+      </p>
+
+      <h2>The Cursor MITM turn policy</h2>
+      <ul>
+        <li><strong>Turn-family sticky.</strong> Glider keeps the reply summary, the title and the mid-turn subagents at the origin. This starts after a <code>/cloud</code> command, or after a cloud <code>DecideLocal</code> decision. It continues for a TTL and for a grace time after the parent run.</li>
+        <li><strong>Deny-local.</strong> While the sticky condition is live, Glider refuses the local model for each follow-on message that is not a new user message.</li>
+        <li><strong>The next real user message</strong> can make a new decision. That message can go to the local model again.</li>
+        <li><strong>Tool follow-up.</strong> Each child tool call gets a new allow decision or deny decision.</li>
+      </ul>
+      <p>This mechanism applies only to the Cursor MITM protocol. Refer to <a href="mitm.html#sticky">MITM</a> for the details. The full policy is in <code>planning/routing_and_context.md</code>.</p>
+    </main>
+    <footer class="foot"><a href="architecture.html">← Architecture</a> · <a href="delegation.html">Delegation →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

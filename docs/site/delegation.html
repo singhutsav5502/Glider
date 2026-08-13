@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Delegation · Glider Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="brand" href="../../index.html">Glider</a>
+      <a href="index.html">Home</a>
+      <a href="tutorial.html">Walkthrough</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="configuration.html">Config</a>
+      <a href="routing.html">Routing</a>
+      <a class="active" href="delegation.html">Delegation</a>
+      <a href="instructions.html">Auto-rules</a>
+      <a href="mitm.html">MITM</a>
+      <a href="ngl.html">NGL</a>
+      <a href="context.html">Context</a>
+      <a href="pure-local.html">Pure local</a>
+      <a href="api.html">API</a>
+      <a href="mcp.html">Tools &amp; MCP</a>
+    </nav>
+    <main class="prose deep">
+      <div class="badge">Cross-CLI</div>
+      <h1>Delegation &amp; permission relay</h1>
+      <p>
+        You can send a prompt from your CLI to a <em>different</em> CLI on the same machine.
+        Glider runs that CLI without a console. If the CLI stops for a permission decision,
+        Glider sends the question to you as a usual reply. Glider does not refuse the permission
+        automatically.
+      </p>
+
+      <h2 id="vendors">The CLIs you can send a task to</h2>
+      <p>
+        Three CLIs are supported today. Glider finds the CLIs that are on your machine when you
+        push <strong>Rescan</strong> on the Vendors page of the dashboard. The equivalent request
+        is <code>POST /api/vendors/discover</code>. A CLI that Glider does not find is not a flag
+        that you can use.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Flag</th><th>CLI</th><th>Program</th><th>Default template</th><th>Templates</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/claude</code></td>
+            <td>Claude Code</td>
+            <td><code>claude</code></td>
+            <td>headless — the answer comes back to you</td>
+            <td><code>default</code>, <code>resume</code>, <code>interactive</code></td>
+          </tr>
+          <tr>
+            <td><code>/cursor-agent</code></td>
+            <td>Cursor Agent</td>
+            <td><code>cursor-agent</code></td>
+            <td>headless — the answer comes back to you</td>
+            <td><code>default</code>, <code>resume</code>, <code>interactive</code></td>
+          </tr>
+          <tr>
+            <td><code>/agy</code></td>
+            <td>Antigravity</td>
+            <td><code>agy</code></td>
+            <td><strong>interactive</strong> — a window opens, and no text comes back</td>
+            <td><code>default</code>, <code>headless</code>, <code>resume</code>, <code>interactive</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Each CLI operates in two directions. It can send a task with a flag, and it can do a task
+        that a different CLI sends to it. Glider does not stop you from sending a task to the CLI
+        that you use. But this gives you no advantage, and it adds the start time of a second
+        process.
+      </p>
+      <p>
+        <strong>The number three is not a limit in the design.</strong> Glider keeps the list of
+        CLIs as data in <code>configs/vendor_candidates.yaml</code>. The shared Go code does not
+        contain a condition on a vendor name. Behaviour that is different for one CLI goes into an
+        adapter for that CLI. To add a fourth CLI, you write one YAML entry and one adapter, and
+        you change no shared code.
+        <a href="ngl.html#checklist">How to add a fourth vendor</a> gives the full list of files.
+      </p>
+
+      <h2 id="flag">The flag</h2>
+      <pre>fix the failing test in internal/foo /claude
+refactor this function /cursor-agent
+summarize recent commits /agy</pre>
+      <p>
+        <code>vendors.ParseDelegateCommand</code> looks for a <code>/vendor-name</code> flag at
+        the <strong>end</strong> of the message. The flag must not be at the start, and it must
+        not be in the middle. <code>DelegateHandler</code> takes the message before the usual
+        routing. On the gateway, the Messages route takes it. Therefore the flag does not change
+        a usual request. Add a <code>:template</code> suffix to select a different command
+        template. For example, <code>fix the auth bug /agy:headless</code>. Each vendor has an
+        <code>interactive</code> template in <code>configs/vendor_candidates.yaml</code>. That
+        template does not run the CLI without a console and does not send the text back. It opens
+        the native session of the vendor in a new console window, with your task as the first
+        message. You then control that session. No text comes back to this chat.
+      </p>
+      <p class="note">
+        <strong>Why the flag must be at the end.</strong> A live test showed the cause. The client
+        of Claude Code reads an unknown <code>/word</code> at the start as a local command. It then
+        shows <em>"Unknown command: /agy"</em> and does not send the message. Therefore a flag at
+        the start never comes to Glider from that CLI. The parser cannot correct this. A flag at
+        the end prevents the problem for each CLI, not only for Claude Code. It also keeps the
+        full text before the flag as the prompt. An earlier parser looked for the flag at each
+        position, and it deleted the text before the first flag.
+      </p>
+
+      <h2 id="why">Why Glider cannot stop the run and ask you</h2>
+      <p>
+        The supported vendors do not <strong>stop</strong> for a permission decision when they operate
+        without a console (<code>-p</code> mode):
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>What the vendor does with a permission</th></tr>
+        <tr><td>cursor-agent</td><td>It does not stop. It records the refusal in the stream-json output, and the model continues.</td></tr>
+        <tr><td>claude (Claude Code)</td><td>It does not stop. The refused tool gets an error immediately, and the last event contains a list of the refusals.</td></tr>
+        <tr><td>agy (Antigravity)</td><td>It always fails. Its stderr says that this mode cannot ask a question.</td></tr>
+      </table>
+      <p>
+        Therefore Glider uses a <strong>resume loop</strong>. Glider runs the CLI without a
+        console, finds the refusal in the recorded output, and asks you. After your answer, Glider
+        continues the session of that CLI with the new permission. The run is complete before
+        Glider asks the question, but the loop is quick.
+      </p>
+
+      <h2 id="sequence">Sequence</h2>
+      <pre class="seq">User (in claude, say)     DelegateHandler         vendors.RunWithOptions      agy subprocess
+  |                             |                          |                        |
+  | "fix the bug /agy"         |                          |                        |
+  |---------------------------->| ParseDelegateCommand     |                        |
+  |                             |------------------------->| exec agy -p --add-dir  |
+  |                             |                          |----------------------->|
+  |                             |                          |                        | denies a tool
+  |                             |                          |<-----------------------|
+  |                             |<-------------------------| DetectDenials          |
+  |                             | RegisterPendingResume(token)                      |
+  |<----------------------------| reply: "needs permission… abc123 /agy:allow"      |
+  |                             |                          |                        |
+  | "abc123 /agy:allow"        |                          |                        |
+  |---------------------------->| TakePendingResume(token) |                        |
+  |                             | GrantResumePermission (vendor-specific)           |
+  |                             |------------------------->| exec agy -p --add-dir  |
+  |                             |                          |----------------------->|
+  |                             |                          |          edits a file  |
+  |                             |                          |<-----------------------|
+  |                             |<-------------------------| ExtractEditViews       |
+  |<----------------------------| reply: result + diff block                        |</pre>
+
+      <h2 id="grant">How Glider gives the permission</h2>
+      <p>
+        Your approval must change a condition before Glider runs the CLI again. If it does not,
+        the new run stops at the same permission. Each CLI has a different mechanism, and there
+        are two types:
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>What your approval does</th></tr>
+        <tr>
+          <td>claude</td>
+          <td>Glider adds <code>--allowedTools &lt;refused tools&gt;</code> to the resume command.
+            Glider knows the tool name only after the refusal. Therefore the name cannot be in a
+            fixed template, and Glider makes the argument from the refusal.</td>
+        </tr>
+        <tr>
+          <td>cursor-agent</td>
+          <td>Glider adds nothing. <code>--resume [chatId] --trust</code> is sufficient. This CLI
+            has no flag for one tool. The only other flag is <code>--force</code> or
+            <code>--yolo</code>, which permits each tool. Glider does not use these flags for
+            you.</td>
+        </tr>
+        <tr>
+          <td>agy</td>
+          <td>Glider writes a limited rule into the <code>settings.json</code> of agy. If the
+            workspace has its own config, Glider writes to that file also. Glider then puts the
+            original bytes back into the two files. The changelog of agy shows that this is the
+            <strong>correct</strong> mechanism for a permission in this mode. It is not an
+            unofficial method.</td>
+        </tr>
+      </table>
+      <p>
+        Because of this difference, the interface has two methods and not one.
+        <code>ExtraResumeArgs</code> gives the <em>command-line arguments</em>.
+        <code>GrantResumePermission</code> makes a change <em>outside</em> the command line. Each
+        vendor uses the method that its CLI supports. The shared code calls the two methods and
+        does not know which one operates.
+      </p>
+      <p>
+        Two other methods for agy were tested first, and they failed. The
+        <code>--dangerously-skip-permissions</code> flag was more simple, and it was the same as
+        the other vendors. But in a live test the model gave an explanation of the flag and
+        did not obey it. The <code>--continue</code> and <code>--conversation &lt;id&gt;</code>
+        flags also failed, because agy continued a different conversation.
+      </p>
+      <p>
+        The <code>VendorAdapter</code> interface contains each difference between the vendors. The
+        methods are <code>DetectDenials</code>, <code>ExtractSessionID</code>,
+        <code>GrantResumePermission</code>, <code>ExtraResumeArgs</code>,
+        <code>WrapResumePrompt</code> and <code>ExtractEditViews</code>. The shared code never
+        makes a decision from a vendor name.
+      </p>
+
+      <h2 id="workspace">How Glider finds the workspace</h2>
+      <p>
+        The protocols that Glider intercepts do not contain a file path. Therefore a delegate call
+        cannot find the project directory of the origin CLI from the request. Glider tried to read
+        the path from the memory of the origin process (the PEB). This method failed: on a usual
+        installation, Windows Defender protects the memory of a process, and it makes the read
+        incomplete.
+      </p>
+      <p>
+        Glider uses the PID of the origin process instead. It gets the PID from the TCP
+        connection, and it does not read the memory. The PID is the key to a small registry of
+        directories. For a new PID, Glider asks you one time. Reply with
+        <code>&lt;path&gt; /workspace</code>. This uses the same flag position as above. Glider
+        keeps the directory while that process operates. Glider asks each new session, also when you
+        set a default workspace on the <strong>Vendors</strong> page of the dashboard. That default
+        goes in the question, and you send it back. Glider does not use it as a silent answer,
+        because it cannot see which project a new CLI is in.
+      </p>
+
+      <h2 id="context">The context for the delegate</h2>
+      <p>
+        A delegate CLI received only two items: the prompt text and a work directory. It did not
+        know the full task, and it did not know which CLI sent the task. Now each delegate run
+        gets its own directory at <code>~/.glider/delegates/&lt;id&gt;</code>. That directory holds
+        one context file. Glider gives the file to the CLI with a flag that the vendor supports.
+        The CLI reads the file when the session starts, and the file does not use the prompt
+        space.
+      </p>
+      <table>
+        <tr><th>Vendor</th><th>How the context comes to the CLI</th></tr>
+        <tr><td>claude</td><td><code>--append-system-prompt-file=&lt;file&gt;</code>. Glider gives the full path, and the name of the file is not important.</td></tr>
+        <tr><td>cursor-agent</td><td><code>--add-dir=&lt;dir&gt;</code>. The CLI reads an <code>AGENTS.md</code> file in that directory.</td></tr>
+        <tr><td>agy</td><td><code>--add-dir=&lt;dir&gt;</code>. This is the same method, and it also uses <code>AGENTS.md</code>.</td></tr>
+      </table>
+      <p>
+        These flags are usual template arguments in <code>configs/vendor_candidates.yaml</code>.
+        They use <code>{{context_file}}</code> and <code>{{context_dir}}</code>. The flag for each
+        vendor is data. The shared code does not make a decision from the vendor name. If a vendor
+        has no context setting, Glider runs it with no context flag. Glider removes the flag.
+      </p>
+      <p>
+        The context file contains the task, the name of the CLI that sent the task, and the
+        workspace. It also contains the recent instructions from the session that sent
+        the task. The oldest instruction is first, and each one has a mark that shows it is
+        background data.
+      </p>
+      <p class="note">
+        <strong>Glider does not write in your files.</strong> Glider never changes the
+        <code>CLAUDE.md</code> file or the <code>AGENTS.md</code> file of your project. An earlier
+        design wrote to these files. That design had to lock them, put the original bytes back,
+        and correct them after a run stopped incorrectly. One directory for each delegate removes
+        these problems. The directory belongs to one run, and Glider deletes it when the run ends.
+      </p>
+
+      <h2 id="rendering">How Glider shows the result</h2>
+      <p>
+        Glider adds the edits of a delegate to the reply as a diff. This is the same for each
+        vendor. <code>VendorAdapter.ExtractEditViews</code> reads the edit format of the vendor and
+        makes a standard <code>EditViews</code> structure. Claude gives patch hunks, cursor-agent
+        gives a before-and-after string, and agy replaces a range or writes a full file. Then
+        <code>FormatEditSummary</code> shows the standard structure in one format.
+      </p>
+      <h3>Clean or raw</h3>
+      <p>
+        A headless run writes a full transcript to its output. Glider does not give you that
+        transcript by default. The setting is on the <strong>Vendors</strong> page of the dashboard,
+        and <code>POST /api/vendors/response-detail</code> also writes it.
+      </p>
+      <table>
+        <tr><th>Value</th><th>What you receive</th></tr>
+        <tr><td><code>clean</code></td><td>The final answer only. <code>DelegateRenderer</code> removes the frames of the protocol. This is the default, and an unknown value becomes this value.</td></tr>
+        <tr><td><code>raw</code></td><td>The recorded output, with no change. Use it when a delegate gives a strange answer and you must see what the CLI truly wrote.</td></tr>
+      </table>
+      <p>
+        The value stays on disk, in the vendor registry. Therefore it continues after a restart.
+        Refer to <a href="ngl.html">NGL</a> for how a renderer finds the answer in the output of a
+        vendor.
+      </p>
+
+      <h3>What Glider records about a vendor</h3>
+      <p>
+        <code>GET /api/vendors</code> gives the registry. Discovery writes it, and the dashboard
+        changes it.
+      </p>
+      <table>
+        <tr><th>Field</th><th>Content</th></tr>
+        <tr><td><code>name</code> · <code>binary</code> · <code>path</code></td><td>The name that a flag uses, the name of the program, and where discovery found it.</td></tr>
+        <tr><td><code>version</code></td><td>What <code>probe_args</code> gave back.</td></tr>
+        <tr><td><code>printFlag</code></td><td>The flag for a run with no console.</td></tr>
+        <tr><td><code>templates</code></td><td>The command shapes. A <code>:name</code> after the flag selects one.</td></tr>
+        <tr><td><code>contextFile</code></td><td>The file that this CLI reads when a session starts: <code>CLAUDE.md</code> for claude, <code>AGENTS.md</code> for the others. Glider writes the pack of the delegate there, and puts the original content back after the run. An empty value stops the sharing of context for that vendor.</td></tr>
+        <tr><td><code>enabled</code> · <code>discoveredAt</code></td><td>Whether Glider uses it, and when it found it.</td></tr>
+      </table>
+      <p>
+        The registry also holds <code>defaultWorkspace</code> and <code>responseDetail</code>.
+        Discovery never changes those two, therefore a rescan does not remove your settings.
+      </p>
+
+      <h3>An interactive template opens a window</h3>
+      <p>
+        A template with <code>mode: interactive</code> does not go through any of the above.
+        <code>LaunchInteractive</code> opens a new, visible console with the native session of that
+        CLI, and your task is its first message. Glider records nothing from that window and relays
+        nothing back. You control it.
+      </p>
+      <p>
+        <code>POST /api/vendors/{name}/launch-interactive</code> does the same thing from the
+        dashboard.
+      </p>
+
+      <h2 id="gaps">The known limits</h2>
+      <ul>
+        <li><strong>agy can ask a question after you give the permission.</strong> The agent is careful with a destructive task, and this is not a defect. But the loop is not always one cycle.</li>
+        <li><strong>There is no true interactive relay (Path B).</strong> To stop a run in the middle and ask you, Glider needs Windows ConPTY code and a recorded prompt format for each vendor. This code does not exist. Do not confuse this with the <code>:interactive</code> template above. That template gives the task to a new native session, and it does not relay a prompt.</li>
+        <li><strong>There is no cost control.</strong> Only the flag itself controls a delegate call. That call can use a different subscription or a different API key.</li>
+        <li><strong>Delegation is slow, and Glider is not the primary cause.</strong> A delegate CLI does its full start procedure for each call. It starts the process, does the authorization, gets the list of models, and then does the inference. There is no session to use again. A test with Glider out of the path showed that a small <code>cursor-agent</code> task needs approximately 20 seconds. Calculate this time for work with many steps. Glider does not apply its own time limit. The call ends when the CLI of the vendor completes the task, when that CLI reaches its own time limit, or when you stop the request.</li>
+      </ul>
+      <h2 id="automatic">Send the task without a flag</h2>
+      <p>
+        Each example on this page has a flag that you type. Your CLI can also write that flag
+        itself. Put rules in the context file of your project, and the CLI applies them.
+        <a href="instructions.html">Automatic rules</a> gives a template and the conditions that
+        operate correctly. This needs no new function in Glider, because the flag is only text at
+        the end of a message.
+      </p>
+
+      <p>The full design is in <code>planning/permission_relay_design.md</code>. The adapter interface is in <code>planning/ngl_and_adapters.md</code>.</p>
+    </main>
+    <footer class="foot"><a href="routing.html">← Routing</a> · <a href="mitm.html">MITM →</a>
+      <p class="lic">
+        <a href="https://github.com/singhutsav5502/Glider">Glider</a> &copy; 2026 by
+        <a href="https://utsv.work/">Utsav Singh</a> is licensed under
+        <a href="https://polyformproject.org/licenses/noncommercial/1.0.0">PolyForm Noncommercial 1.0.0</a>.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>
