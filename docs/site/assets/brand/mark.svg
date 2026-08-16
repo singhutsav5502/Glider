@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <path d="M 88 10 L 12 78 L 44 58 Z" fill="var(--mark-body, #f5f1e8)"/>
+  <path d="M 88 10 L 44 58 L 58 90 Z" fill="var(--mark-wing, #c9f24d)"/>
+</svg>

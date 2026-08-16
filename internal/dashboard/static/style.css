@@ -180,13 +180,39 @@ body.graphs-tab-active .topbar {
   padding-bottom: 14px;
 }
 
+/* The mark. The dashboard is a light ground throughout, so the pair is fixed:
+   an ink body and a teal wing. Citron is a fill on this palette and never a
+   line colour, so it cannot be the wing here. The two paths are declared once,
+   in the <symbol> at the top of index.html, and the brand pulls that symbol in
+   with <use>. Custom properties inherit into the shadow tree that <use> makes,
+   which is why the pair rides on variables. See design-system/glider/MASTER.md. */
+:root {
+  --mark-body: var(--fg);
+  --mark-wing: var(--select);
+}
+
+.mk {
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* The topbar brand is the only place the mark appears in the dashboard. */
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-family: var(--display);
   font-size: 1.85rem;
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
   color: var(--ink);
+}
+
+.brand .mk {
+  width: 26px;
+  height: 26px;
 }
 
 .tabs {
@@ -1535,6 +1561,7 @@ button.primary:hover { background: #12100e; }/* ── Scrollbars (telemetry pan
   }
 
   .brand { font-size: 1.55rem; }
+  .brand .mk { width: 22px; height: 22px; }
 
   .tabs {
     justify-content: flex-start;
@@ -1573,6 +1600,7 @@ button.primary:hover { background: #12100e; }/* ── Scrollbars (telemetry pan
 @media (max-width: 480px) {
   .metrics { grid-template-columns: 1fr; }
   .brand { font-size: 1.4rem; }
+  .brand .mk { width: 20px; height: 20px; }
 }
 
 /* Custom tooltips (native title disabled on tipped controls) */

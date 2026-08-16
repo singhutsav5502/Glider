@@ -8,7 +8,15 @@
 <meta property="og:title" content="Glider — multiple CLIs, one prompt" />
 <meta property="og:description" content="Claude Code, Cursor Agent and Antigravity, as one tool — and built to take a fourth. Delegation with a permission relay." />
 <meta property="og:type" content="website" />
+<meta property="og:image" content="https://utsv.work/Glider/docs/site/assets/brand/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
 <meta name="theme-color" content="#12100e" />
+<!-- The mark. Every file under assets/brand/ comes out of tools/genbrand;
+     none of them is drawn by hand. -->
+<link rel="icon" href="docs/site/assets/brand/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="docs/site/assets/brand/icon-192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;900&family=Newsreader:opsz,wght@6..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
@@ -83,6 +91,9 @@ ul{margin:0;padding:0;list-style:none}
 }
 
 .eyebrow{
+  display:flex;
+  align-items:center;
+  gap:0.55rem;
   font-family:var(--mono);
   font-size:clamp(0.66rem,1.7vw,0.72rem);
   font-weight:600;
@@ -90,11 +101,66 @@ ul{margin:0;padding:0;list-style:none}
   text-transform:uppercase;
 }
 
+/* ═══════════ the mark ═══════════
+   A folded paper dart, leaning at the angle of the flag you type. The two
+   paths are declared once, in the <symbol> at the top of <body>, and every
+   place that shows the mark pulls that one symbol in with <use>. Nothing on
+   this page redraws it. The same two paths are in
+   docs/site/assets/brand/mark.svg, and tools/genbrand writes both.
+
+   Only four colour pairs exist, and a field picks the pair rather than the
+   mark picking it. Therefore the body and the wing can never be recoloured
+   independently of each other. Custom properties inherit into the shadow tree
+   that <use> makes, which is why the pair is carried on variables and not on
+   a class the stylesheet could not reach.
+
+   The mark never rotates, never takes an outline, and never sits inside a
+   circle or a rounded square. */
+:root{--mark-body:var(--ink);--mark-wing:var(--teal)}
+
+.mk{
+  flex:none;
+  /* The mark's own clear space is its nose-to-tail height / 4. Nothing sets a
+     margin here: the gap belongs to whatever holds the mark, so a caller can
+     never make the space smaller than the rule by nesting. */
+  display:inline-block;
+  vertical-align:middle;
+}
+
+/* Every place the mark appears on this page, and there are no others: the nav,
+   the section eyebrows, the two plate header strips, the terminal header strip
+   and the footer. The hero deliberately has none — the /agy syntax is the hero
+   graphic, and a logo above it competes for the same job. */
+.wordmark .mk{width:22px;height:22px}
+.eyebrow .mk{width:11px;height:11px}
+.plate-head .mk{width:14px;height:14px}
+.term-strip .mk{width:13px;height:13px}
+.foot-in .mk{width:16px;height:16px}
+
+/* The three header strips and the footer row all set a wide column gap between
+   their own items. The mark belongs to the label beside it, not to the row, so
+   each label wraps the pair in its own box with a gap of its own. Every one of
+   these clears the brand's clear space, which is the nose-to-tail height / 4. */
+.plate-name,.term-name,.foot-name{
+  display:inline-flex;
+  align-items:center;
+  gap:0.5rem;
+}
+
+/* As a bullet the mark recedes: the body drops to the secondary text colour of
+   its ground and only the wing keeps the accent. At full strength, ten of them
+   down the page would read as ten logos. */
+.eyebrow .mk{--mark-body:var(--muted-lo)}
+.field-ink .eyebrow .mk{--mark-body:var(--muted)}
+.field-citron .eyebrow .mk{--mark-body:var(--ink)}
+
 /* ═══════════ fields ═══════════ */
-.field-ink{background:var(--ink);color:var(--muted)}
-.field-citron{background:var(--citron);color:var(--citron-ink)}
-.field-bone{background:var(--bone);color:var(--muted-lo)}
-.field-paper{background:var(--paper);color:var(--muted-lo)}
+.field-ink{background:var(--ink);color:var(--muted);--mark-body:var(--bone);--mark-wing:var(--citron)}
+/* Citron on citron disappears, and a third colour breaks the field, so the
+   mark goes solid ink here — one colour, both paths. */
+.field-citron{background:var(--citron);color:var(--citron-ink);--mark-body:var(--ink);--mark-wing:var(--ink)}
+.field-bone{background:var(--bone);color:var(--muted-lo);--mark-body:var(--ink);--mark-wing:var(--teal)}
+.field-paper{background:var(--paper);color:var(--muted-lo);--mark-body:var(--ink);--mark-wing:var(--teal)}
 
 .field-ink a{color:var(--citron);text-decoration-color:rgba(201,242,77,.4)}
 .field-ink a:hover{color:#fff;text-decoration-color:#fff}
@@ -125,7 +191,12 @@ ul{margin:0;padding:0;list-style:none}
   padding-block:0.85rem;
 }
 
+/* Mark and wordmark are one link, not two. The tracking stays where it was:
+   the wordmark is not shrunk to make room for the mark. */
 .wordmark{
+  display:inline-flex;
+  align-items:center;
+  gap:0.65rem;
   font-family:var(--display);
   font-weight:900;
   font-size:1.05rem;
@@ -1213,10 +1284,24 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 </head>
 <body>
 
+<!-- ══════════ the mark ══════════
+     The only copy of the dart on this page. Everything below reaches it with
+     <use href="#gl-dart">. It is identical to docs/site/assets/brand/mark.svg;
+     tools/genbrand writes that file and this block follows it. -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <symbol id="gl-dart" viewBox="0 0 100 100">
+    <path d="M 88 10 L 12 78 L 44 58 Z" fill="var(--mark-body, #f5f1e8)"/>
+    <path d="M 88 10 L 44 58 L 58 90 Z" fill="var(--mark-wing, #c9f24d)"/>
+  </symbol>
+</svg>
+
 <!-- ══════════ nav ══════════ -->
 <div class="field-ink nav">
   <div class="wrap nav-in">
-    <a class="wordmark" href="#top">Glider</a>
+    <a class="wordmark" href="#top">
+      <svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>
+      <span>Glider</span>
+    </a>
 
     <nav class="nav-links" aria-label="Sections">
       <a href="#demo">Demo</a>
@@ -1244,7 +1329,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ hero: the syntax ══════════ -->
 <header class="field-ink hero" id="top">
   <div class="wrap hero-in">
-    <p class="eyebrow">The whole syntax</p>
+    <p class="eyebrow"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>The whole syntax</p>
     <p class="syntax">
       <span class="cmd-verb">fix this</span><span class="cmd-tail"><span class="flag">/agy</span><span class="caret" aria-hidden="true"></span></span>
     </p>
@@ -1271,7 +1356,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ demo film ══════════ -->
 <section class="field-ink film" id="demo">
   <div class="wrap film-in">
-    <p class="eyebrow rise">Thirty seconds</p>
+    <p class="eyebrow rise"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Thirty seconds</p>
     <p class="film-line rise d1">
       One flag typed in Claude Code, the task run in another CLI, and the
       answer back in the same window.
@@ -1318,7 +1403,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ spec: the handoff ══════════ -->
 <section class="field-paper spec" id="handoff">
   <div class="wrap spec-in">
-    <p class="eyebrow rise">The handoff</p>
+    <p class="eyebrow rise"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>The handoff</p>
     <h2 class="spec-head rise d1">
       One flag at the end of a message, and the work moves.
     </h2>
@@ -1399,7 +1484,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ spec: redirect ══════════ -->
 <section class="field-paper spec" id="redirect">
   <div class="wrap spec-in">
-    <p class="eyebrow rise">Redirect</p>
+    <p class="eyebrow rise"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Redirect</p>
     <div class="spec-top rise d1">
       <h2 class="spec-head">
         The handoff works because Glider is already in the traffic.
@@ -1414,7 +1499,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 
     <div class="plate rise d2">
       <div class="plate-head">
-        <span>Route plate · one turn</span>
+        <span class="plate-name"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Route plate · one turn</span>
         <span class="active" id="fx-flag">/claude</span>
       </div>
 
@@ -1572,7 +1657,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ spec: the memory ══════════ -->
 <section class="field-bone spec" id="memory">
   <div class="wrap spec-in">
-    <p class="eyebrow rise">The memory</p>
+    <p class="eyebrow rise"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>The memory</p>
     <h2 class="spec-head rise d1">
       The second CLI knows what the first one already did.
     </h2>
@@ -1593,7 +1678,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 
     <div class="plate rise d2">
       <div class="plate-head">
-        <span>Memory plate · one session</span>
+        <span class="plate-name"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Memory plate · one session</span>
         <span class="active">3 turns · 2 CLIs</span>
       </div>
 
@@ -1691,7 +1776,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <section class="field-paper spec">
   <div class="wrap">
     <div class="footnote rise">
-      <p class="eyebrow">One more thing</p>
+      <p class="eyebrow"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>One more thing</p>
       <h2>Since it is already in the path</h2>
       <p>
         Glider can send the cheap turns to a model on your own machine instead
@@ -1717,7 +1802,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
   <div class="wrap install-in">
     <div class="install-lead rise">
       <div class="install-head">
-        <p class="eyebrow">Install</p>
+        <p class="eyebrow"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Install</p>
         <h2>Build it, run it, done</h2>
       </div>
       <p>
@@ -1729,7 +1814,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 
     <div class="termbox rise d1">
       <div class="term-strip">
-        <span>bash</span>
+        <span class="term-name"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>bash</span>
         <button type="button" class="term-copy" data-copy>Copy</button>
       </div>
       <div class="term-lines">
@@ -1766,7 +1851,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ support ══════════ -->
 <section class="field-bone support" id="support">
   <div class="wrap support-in">
-    <p class="eyebrow rise">Support</p>
+    <p class="eyebrow rise"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Support</p>
     <h2 class="rise d1">Fund the work</h2>
     <p class="rise d1">
       Glider is free for noncommercial use, source-available, and built in the
@@ -1792,7 +1877,7 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 <!-- ══════════ footer ══════════ -->
 <div class="field-bone foot">
   <div class="wrap foot-in">
-    <span>Glider</span>
+    <span class="foot-name"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg>Glider</span>
     <a href="docs/site/index.html">Docs</a>
     <a href="https://github.com/singhutsav5502/Glider">Source</a>
     <span class="push">Operates on your machine</span>

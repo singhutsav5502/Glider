@@ -4,15 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Glider</title>
+  <meta name="theme-color" content="#12100e" />
+  <!-- Written by tools/genbrand, together with the copy under
+       docs/site/assets/brand/. Neither is edited by hand. -->
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 </head>
 <body>
+  <!-- The mark: the only copy of the dart in this app. tools/genbrand writes
+       docs/site/assets/brand/mark.svg, and this block follows it. -->
+  <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+    <symbol id="gl-dart" viewBox="0 0 100 100">
+      <path d="M 88 10 L 12 78 L 44 58 Z" fill="var(--mark-body, #f5f1e8)"/>
+      <path d="M 88 10 L 44 58 L 58 90 Z" fill="var(--mark-wing, #c9f24d)"/>
+    </symbol>
+  </svg>
+
   <div id="app">
     <header class="topbar">
-      <div class="brand">Glider</div>
+      <div class="brand"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg><span>Glider</span></div>
       <nav class="tabs" aria-label="Primary">
         <button class="tab active" data-tab="overview">Overview</button>
         <button class="tab" data-tab="vram">VRAM & Models</button>

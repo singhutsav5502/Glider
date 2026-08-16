@@ -1,3 +1,5 @@
+<img src="docs/site/assets/brand/og.png" alt="Glider — one terminal, every CLI" width="640">
+
 # Glider
 
 **Multiple CLIs. One prompt.**

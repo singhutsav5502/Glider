@@ -21,3 +21,8 @@ STATUS.md
 # Scratch space for reading and experiments. Local only, never part of a
 # build, and nothing here is imported by the product.
 _research/
+
+# Archivo, fetched by tools/genbrand/wordmark.py to cut the wordmark outlines.
+# The outlines it produces are committed; the font itself is not ours to ship.
+tools/genbrand/.archivo-900.ttf
+tools/genbrand/.plexmono-600.ttf

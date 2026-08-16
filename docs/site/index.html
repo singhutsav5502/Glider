@@ -8,11 +8,22 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
+  <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/brand/icon-192.png" />
 </head>
 <body>
+
+<!-- The mark: the only copy of the dart on this page. tools/genbrand writes
+     assets/brand/mark.svg, and this block follows it. -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <symbol id="gl-dart" viewBox="0 0 100 100">
+    <path d="M 88 10 L 12 78 L 44 58 Z" fill="var(--mark-body, #f5f1e8)"/>
+    <path d="M 88 10 L 44 58 L 58 90 Z" fill="var(--mark-wing, #c9f24d)"/>
+  </symbol>
+</svg>
   <div class="wrap">
     <nav class="nav">
-      <a class="brand" href="../../index.html">Glider</a>
+      <a class="brand" href="../../index.html"><svg class="mk" aria-hidden="true"><use href="#gl-dart"/></svg><span>Glider</span></a>
       <a class="active" href="index.html">Home</a>
       <a href="tutorial.html">Walkthrough</a>
       <a href="architecture.html">Architecture</a>

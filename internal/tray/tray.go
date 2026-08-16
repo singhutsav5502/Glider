@@ -16,8 +16,8 @@ package tray
 
 import _ "embed"
 
-// Icon is Glider's tray icon — a simple two-tone paper-plane silhouette
-// (tools/geniconpaperplane generates it; re-run that tool rather than
+// Icon is Glider's tray icon — the brand mark, a two-tone folded paper dart on
+// an ink field (tools/genbrand generates it; re-run that tool rather than
 // hand-editing the .ico). Multi-resolution ICO (16/24/32/48/64/256), so
 // Windows picks whichever size actually renders best.
 //

@@ -7,6 +7,20 @@ The look is adapted from utsv.work: **warm paper, ink text, one teal accent, a
 serif display face against a clean sans body.** Not a dark developer-tool
 theme — it should read like a well-set document, not a terminal.
 
+## The mark
+
+Every page carries the Dart once, as a `<symbol id="gl-dart">` at the top of
+`<body>`, and the nav brand pulls it in with `<use>`. That is the only place it
+appears on a docs page. Do not add it to a heading, a callout or a footer.
+
+The pair here is fixed — an ink body and a teal wing — because every docs page
+is a light ground and citron is invisible on one. `assets/style.css` sets it on
+`--mark-body` and `--mark-wing`.
+
+The files under `assets/brand/` are written by `tools/genbrand`. Never edit one
+by hand, and never redraw the two paths. The full rules, including clear space
+and the four colour pairs, are in `design-system/glider/MASTER.md`.
+
 ## Tokens
 
 All defined in `assets/style.css` under `:root`. Use the variables, never

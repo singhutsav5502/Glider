@@ -242,7 +242,28 @@ pre code {
   z-index: 5;
 }
 
+/* The mark. Every docs page is a light ground, so the pair is fixed: an ink
+   body and a teal wing. Citron never appears on a light ground, and the wing
+   would be invisible there. The two paths are declared once per page, in the
+   <symbol> at the top of <body>, and the brand link pulls that symbol in with
+   <use>. Custom properties inherit into the shadow tree that <use> makes, so
+   the pair is carried on variables. See design-system/glider/MASTER.md. */
+:root {
+  --mark-body: var(--ink);
+  --mark-wing: var(--accent);
+}
+
+.mk {
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* The nav brand is the only place the mark appears on a docs page. */
 .nav .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 1.15rem;
@@ -250,6 +271,11 @@ pre code {
   letter-spacing: -0.02em;
   margin-right: auto;
   text-decoration: none;
+}
+
+.nav .brand .mk {
+  width: 20px;
+  height: 20px;
 }
 
 .nav .brand:hover {
